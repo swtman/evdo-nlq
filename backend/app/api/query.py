@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
+from app.llm.base import LLMProvider
 from app.llm.factory import get_provider
 from app.ontology.loader import load_summary
 from app.prompts.loader import fill, load
@@ -74,7 +75,7 @@ def query(request: QueryRequest) -> QueryResponse:
     )
 
 
-def _generate_with_retry(provider, system: str, question: str, ontology: str):
+def _generate_with_retry(provider: LLMProvider, system: str, question: str, ontology: str):
     """Call the LLM, validate SPARQL output, retry up to _MAX_RETRIES times.
 
     On each retry the system prompt is replaced with the retry template,
