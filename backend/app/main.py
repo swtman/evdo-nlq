@@ -3,6 +3,7 @@
 Run with: uv run fastapi dev app/main.py
 TODO: future — add auth/rate limiting before any public deployment.
 """
+
 import logging
 
 from fastapi import FastAPI

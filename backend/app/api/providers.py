@@ -1,4 +1,5 @@
 """GET /providers — returns the list of LLM providers and models for the UI dropdown."""
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 

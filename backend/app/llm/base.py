@@ -1,4 +1,5 @@
 """LLMProvider protocol and response dataclass shared by all provider implementations."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,10 +15,6 @@ class LLMResponse:
 
 @runtime_checkable
 class LLMProvider(Protocol):
-    def generate(
-        self, system: str, user: str, *, max_tokens: int = 1024
-    ) -> LLMResponse: ...
+    def generate(self, system: str, user: str, *, max_tokens: int = 1024) -> LLMResponse: ...
 
-    def stream(
-        self, system: str, user: str, *, max_tokens: int = 1024
-    ) -> Iterator[str]: ...
+    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]: ...

@@ -1,4 +1,5 @@
 """Application settings — all values are env-backed via .env."""
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
 

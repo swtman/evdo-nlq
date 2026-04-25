@@ -3,6 +3,7 @@
 The summary is read once and cached in a module-level variable for the process lifetime.
 No SPARQL is executed at startup — the ontology does not change.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

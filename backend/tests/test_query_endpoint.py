@@ -1,10 +1,10 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.query import router, QueryRequest, QueryResponse
+from app.api.query import router
 from app.llm.fake_provider import FakeProvider
 from app.sparql.client import SparqlResult
 
@@ -12,6 +12,7 @@ from app.sparql.client import SparqlResult
 @pytest.fixture
 def client():
     from app.api.providers import router as providers_router
+
     app = FastAPI()
     app.include_router(router)
     app.include_router(providers_router)
@@ -60,6 +61,7 @@ def test_post_query_retries_on_invalid_sparql(client, mock_sparql_result):
     def fake_generate(system, user, *, max_tokens=1024):
         nonlocal call_count
         from app.llm.base import LLMResponse
+
         call_count += 1
         return LLMResponse(
             text=bad_sparql if call_count == 1 else good_sparql,
@@ -122,9 +124,11 @@ def test_post_query_stream_yields_sse_events(client, mock_sparql_result):
     ):
         MockClient.return_value.execute.return_value = mock_sparql_result
 
-        with client.stream("POST", "/query/stream", json={
-            "question": "Ποια βιβλία;", "provider": "fake", "model": "fake-v1"
-        }) as response:
+        with client.stream(
+            "POST",
+            "/query/stream",
+            json={"question": "Ποια βιβλία;", "provider": "fake", "model": "fake-v1"},
+        ) as response:
             assert response.status_code == 200
             assert "text/event-stream" in response.headers["content-type"]
             raw = response.read().decode()

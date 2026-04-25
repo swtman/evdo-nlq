@@ -1,4 +1,5 @@
 """Loads versioned prompt templates from the top-level prompts/ directory."""
+
 from __future__ import annotations
 
 import re

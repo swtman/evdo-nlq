@@ -6,6 +6,7 @@ from app.llm.cache import DiskCache
 
 def _make_provider(tmp_path, model="claude-haiku-4-5"):
     from app.llm.claude_provider import ClaudeProvider
+
     cache = DiskCache(str(tmp_path / "cache"))
     return ClaudeProvider(model=model, api_key="test-key", cache=cache)
 
@@ -73,6 +74,7 @@ def test_live_generate_returns_sparql(tmp_path):
     """Requires ANTHROPIC_API_KEY in .env. Run with: uv run pytest -m live"""
     import os
     from app.llm.claude_provider import ClaudeProvider
+
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
         pytest.skip("ANTHROPIC_API_KEY not set")

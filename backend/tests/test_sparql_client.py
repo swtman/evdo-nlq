@@ -72,6 +72,7 @@ def test_execute_handles_missing_binding_columns():
 def test_live_execute_returns_results():
     """Requires live GraphDB endpoint. Run with: uv run pytest -m live"""
     from app.config import settings
+
     client = SparqlClient(settings.graphdb_endpoint)
     result = client.execute(
         "PREFIX evdx: <https://w3id.org/evdoxus#> "

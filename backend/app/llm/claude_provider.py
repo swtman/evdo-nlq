@@ -3,6 +3,7 @@
 Only this file may import anthropic — all other modules must go through the
 LLMProvider protocol to keep the provider abstraction honest.
 """
+
 from __future__ import annotations
 
 import logging
@@ -10,7 +11,7 @@ from typing import Iterator
 
 import anthropic
 
-from app.llm.base import LLMProvider, LLMResponse
+from app.llm.base import LLMResponse
 from app.llm.cache import DiskCache
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,7 @@ class ClaudeProvider:
         self.last_input_tokens: int = 0
         self.last_output_tokens: int = 0
 
-    def generate(
-        self, system: str, user: str, *, max_tokens: int = 1024
-    ) -> LLMResponse:
+    def generate(self, system: str, user: str, *, max_tokens: int = 1024) -> LLMResponse:
         """Generate a response. Returns cached result if available."""
         cached = self._cache.get(system, user, self._model)
         if cached is not None:
@@ -56,9 +55,7 @@ class ClaudeProvider:
             output_tokens=message.usage.output_tokens,
         )
 
-    def stream(
-        self, system: str, user: str, *, max_tokens: int = 1024
-    ) -> Iterator[str]:
+    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]:
         """Yield raw text tokens from the Claude streaming API.
 
         After the generator is exhausted, last_input_tokens and last_output_tokens

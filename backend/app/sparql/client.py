@@ -3,6 +3,7 @@
 validate_sparql() uses rdflib for offline parse checking (no network).
 SparqlClient.execute() makes a live HTTP call to GraphDB.
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,8 +51,5 @@ class SparqlClient:
 
         columns: list[str] = raw.get("head", {}).get("vars", [])
         bindings: list[dict] = raw.get("results", {}).get("bindings", [])
-        rows = [
-            {col: b[col]["value"] if col in b else None for col in columns}
-            for b in bindings
-        ]
+        rows = [{col: b[col]["value"] if col in b else None for col in columns} for b in bindings]
         return SparqlResult(columns=columns, rows=rows)

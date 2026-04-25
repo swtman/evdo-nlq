@@ -4,6 +4,7 @@ POST /query/stream — SSE streaming endpoint (added in Task 15).
 TODO: future — convert to fully async pipeline for higher concurrency.
 TODO: future — add auth/rate limiting before any public deployment.
 """
+
 from __future__ import annotations
 
 import json
@@ -202,13 +203,15 @@ async def query_stream(request: QueryRequest) -> EventSourceResponse:
             # Phase 4: done
             yield {
                 "event": "done",
-                "data": json.dumps({
-                    "provider": request.provider,
-                    "model": request.model,
-                    "input_tokens": total_input,
-                    "output_tokens": total_output,
-                    "retries": retries,
-                }),
+                "data": json.dumps(
+                    {
+                        "provider": request.provider,
+                        "model": request.model,
+                        "input_tokens": total_input,
+                        "output_tokens": total_output,
+                        "retries": retries,
+                    }
+                ),
             }
 
         except Exception as exc:

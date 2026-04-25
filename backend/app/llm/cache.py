@@ -3,6 +3,7 @@
 Prevents re-calling the API for identical prompts during development.
 Cache directory is gitignored. Disable with LLM_CACHE_DISABLED=1.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -23,9 +24,7 @@ class DiskCache:
             self._dir.mkdir(parents=True, exist_ok=True)
 
     def _key(self, system: str, user: str, model: str) -> str:
-        payload = json.dumps(
-            {"system": system, "user": user, "model": model}, ensure_ascii=False
-        )
+        payload = json.dumps({"system": system, "user": user, "model": model}, ensure_ascii=False)
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def get(self, system: str, user: str, model: str) -> str | None:
