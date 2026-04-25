@@ -23,6 +23,33 @@ Template:
 
 ---
 
+## 2026-04-25 — Backend pipeline complete
+
+### Done
+- Full backend pipeline implemented (16 tasks, all tests green).
+- config.py, LLMProvider protocol, FakeProvider, ClaudeProvider (generate + stream), DiskCache.
+- PromptLoader (strips frontmatter, extracts # System, safe SPARQL fill), OntologyLoader (static file, module-level cache).
+- SparqlClient (rdflib offline validation + SPARQLWrapper execution), ProviderFactory.
+- POST /query (sync JSON, retry logic, _clean_sparql, _is_not_answerable).
+- POST /query/stream (SSE, token streaming, non-streaming retry, done event with token counts).
+- GET /providers (static list for UI dropdown).
+- prompts/nl-to-sparql-retry-v1.md, prompts/ontology-summary.md created.
+- 33 non-live tests pass; 2 live tests available with `uv run pytest -m live`.
+- git repo initialized at monorepo root; all commits on master.
+
+### Next
+1. Push to GitHub (create remote, `git push -u origin master`).
+2. Run live tests: `uv run pytest -m live` (needs GraphDB up + ANTHROPIC_API_KEY in .env).
+3. Start the frontend — React + Vite scaffold.
+4. Build the React query hook using `fetch + ReadableStream` for POST /query/stream (see TODO in query.py).
+
+### Blockers / notes
+- Internship starts 2026-05-18 — frontend MVP must be stable before then.
+- SSE transport: frontend must use `fetch + ReadableStream`, NOT `EventSource` (GET-only).
+- GitHub remote not yet set up (gh CLI not installed; create repo at github.com then push manually).
+
+---
+
 ## 2026-04-25 — GraphDB endpoint confirmed reachable
 
 ### Done

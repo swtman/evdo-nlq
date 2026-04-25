@@ -29,6 +29,21 @@ backend/
 └── CLAUDE.md  ← you are here
 ```
 
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/query` | Sync JSON — full pipeline response after completion |
+| `POST` | `/query/stream` | SSE — streams SPARQL tokens then results |
+| `GET` | `/providers` | Static list of available providers + models |
+
+Both `/query` and `/query/stream` accept:
+```json
+{"question": "...", "provider": "claude", "model": "claude-haiku-4-5"}
+```
+
+**Frontend SSE note:** `/query/stream` must be called with `fetch + ReadableStream` (not `EventSource`) because `EventSource` only supports GET. Revisit when building the React query hook.
+
 ## Commands
 
 ```bash
