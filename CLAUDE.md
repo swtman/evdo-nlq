@@ -7,33 +7,36 @@
 ```
 User (NL, Greek/English)
   → React UI
-  → FastAPI /query
-  → LLMProvider (Claude / OpenAI / Deepseek)  ←  ontology summary + few-shot examples
-  → SPARQL string
+  → FastAPI POST /query/stream  (SSE, streams SPARQL tokens live)
+  → LLMProvider (Claude / Fake)  ←  ontology summary (prompts/ontology-summary.md)
+  → SPARQL string  →  rdflib validation  →  retry up to 2× if invalid
   → GraphDB endpoint (http://lod.csd.auth.gr:7200/repositories/Evdoxus)
   → results (JSON)
   → React UI (table + generated SPARQL shown)
+
+Provider and model are selected per-request from the UI dropdown (GET /providers).
 ```
 
 ## Stack at a glance
 
-- **Backend:** Python 3.12, FastAPI, `rdflib`, `SPARQLWrapper`, `anthropic` SDK, `pytest`, `ruff`.
-- **Frontend:** React 18 + Vite + TypeScript, plain CSS (no Tailwind unless decided later — see ADRs).
+- **Backend:** Python 3.12, FastAPI, `rdflib`, `SPARQLWrapper`, `anthropic` SDK, `sse-starlette`, `pytest`, `ruff`. **Status: complete.**
+- **Frontend:** React 18 + Vite + TypeScript, plain CSS. **Status: not started yet.**
 - **Triple store:** remote GraphDB at `http://lod.csd.auth.gr:7200/repositories/Evdoxus` — EvdoGraph repository. We do not self-host.
-- **LLM:** pluggable (`LLMProvider` protocol). Default model for development: `claude-haiku-4-5`.
+- **LLM:** pluggable (`LLMProvider` protocol). Implemented: `claude` (Anthropic) and `fake` (no-network, for tests). Default query model: `claude-haiku-4-5`.
 - **Package managers:** `uv` for Python, `pnpm` for Node.
 
 ## Repository map
 
 | Path | What's there |
 |------|--------------|
-| `backend/` | FastAPI service, LLM providers, SPARQL client, prompt loading, cache |
-| `frontend/` | React + Vite app |
+| `backend/` | FastAPI service — fully implemented (34 tests green) |
+| `frontend/` | React + Vite app — scaffold only, not yet started |
 | `thesis/` | Thesis document (Greek), chapter drafts, figures, cited PDFs |
-| `decisions/` | Architecture Decision Records — read these to understand *why* code is shaped this way |
-| `prompts/` | Versioned LLM prompt templates (each one is a file, never inlined in code) |
+| `decisions/` | Architecture Decision Records (ADRs 001–004) — read these to understand *why* code is shaped this way |
+| `prompts/` | Versioned LLM prompt templates: `nl-to-sparql-v1.md`, `nl-to-sparql-retry-v1.md`, `ontology-summary.md` |
 | `notes/` | Running notes: `PROGRESS.md` (session log), `ONTOLOGY-NOTES.md` (EvdoGraph schema notes) |
 | `scripts/` | Standalone helpers (SPARQL smoke test, ontology introspection) |
+| `docs/` | Design specs and implementation plans (`docs/superpowers/`) |
 
 ## Language conventions
 
@@ -64,7 +67,7 @@ User (NL, Greek/English)
 - **Cache all LLM responses on disk during dev** — same prompt hashes to the same response. The cache lives under `backend/.llm_cache/` (gitignored).
 - **Fake provider for tests and frontend work.** Real API calls only when you are deliberately testing or measuring the pipeline.
 - **Print token usage** for every real call (`response.usage.input_tokens` / `output_tokens`) — catch prompt bloat early.
-- **Ontology probably won't fit whole in a prompt.** Plan for summarization / schema retrieval. This is a thesis-worthy problem on its own.
+- **Ontology summary:** solved via a hand-curated static file (`prompts/ontology-summary.md`, ~400 tokens). Loaded once at process start, injected into every prompt. See `backend/app/ontology/loader.py`.
 
 ## How to run (dev)
 
