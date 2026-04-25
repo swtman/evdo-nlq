@@ -112,3 +112,24 @@ def test_get_providers_returns_list(client):
     assert "fake" in ids
     for p in body["providers"]:
         assert len(p["models"]) > 0
+
+
+def test_post_query_stream_yields_sse_events(client, mock_sparql_result):
+    """The streaming endpoint must emit sparql_token, sparql_complete, results, and done events."""
+    with (
+        patch("app.api.query.get_provider", return_value=FakeProvider()),
+        patch("app.api.query.SparqlClient") as MockClient,
+    ):
+        MockClient.return_value.execute.return_value = mock_sparql_result
+
+        with client.stream("POST", "/query/stream", json={
+            "question": "Ποια βιβλία;", "provider": "fake", "model": "fake-v1"
+        }) as response:
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers["content-type"]
+            raw = response.read().decode()
+
+    assert "event: sparql_token" in raw
+    assert "event: sparql_complete" in raw
+    assert "event: results" in raw
+    assert "event: done" in raw

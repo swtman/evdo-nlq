@@ -6,11 +6,13 @@ TODO: future — add auth/rate limiting before any public deployment.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from app.config import settings
 from app.llm.base import LLMProvider
@@ -129,3 +131,88 @@ def _clean_sparql(text: str) -> str:
 def _is_not_answerable(text: str) -> bool:
     """Detect the NOT_ANSWERABLE sentinel defined in the prompt rules."""
     return bool(re.match(r"^#\s*NOT_ANSWERABLE", text.strip()))
+
+
+@router.post("/query/stream")
+async def query_stream(request: QueryRequest) -> EventSourceResponse:
+    """SSE streaming endpoint. Emits events:
+      sparql_token    — one per LLM output token
+      sparql_retry    — when the first attempt fails SPARQL validation
+      sparql_complete — the final (validated) SPARQL string
+      results         — JSON execution results from GraphDB
+      done            — final metadata (provider, model, tokens, retries)
+      error           — on any unrecoverable failure
+
+    NOTE: provider.stream() is a sync iterator called inside an async generator.
+    This blocks the event loop per token — acceptable at thesis demo concurrency.
+    TODO: future — run provider.stream() in a thread pool (asyncio.to_thread).
+    TODO: future — revisit transport when building the React frontend:
+          browser EventSource only supports GET; use fetch + ReadableStream (POST).
+    """
+
+    async def event_generator():
+        try:
+            provider = get_provider(request.provider, request.model)
+            ontology = load_summary()
+            system = fill(load("nl-to-sparql", 1), ontology_summary=ontology)
+
+            # Phase 1: stream SPARQL tokens
+            full_sparql = ""
+            for token in provider.stream(system, request.question):
+                full_sparql += token
+                yield {"event": "sparql_token", "data": token}
+
+            total_input = getattr(provider, "last_input_tokens", 0)
+            total_output = getattr(provider, "last_output_tokens", 0)
+            full_sparql = _clean_sparql(full_sparql)
+
+            # Phase 2: validate + retry (non-streaming retries)
+            retries = 0
+            retry_template = load("nl-to-sparql-retry", 1)
+            error = validate_sparql(full_sparql) or ""
+
+            while error and retries < _MAX_RETRIES:
+                retries += 1
+                yield {
+                    "event": "sparql_retry",
+                    "data": json.dumps({"attempt": retries, "error": error}),
+                }
+                retry_system = fill(
+                    retry_template,
+                    ontology_summary=ontology,
+                    failed_sparql=full_sparql,
+                    error=error,
+                )
+                response_obj = provider.generate(retry_system, request.question)
+                full_sparql = _clean_sparql(response_obj.text)
+                total_input += response_obj.input_tokens
+                total_output += response_obj.output_tokens
+                error = validate_sparql(full_sparql) or ""
+
+            yield {"event": "sparql_complete", "data": full_sparql}
+
+            # Phase 3: execute against GraphDB
+            client = SparqlClient(settings.graphdb_endpoint)
+            result = client.execute(full_sparql)
+            yield {
+                "event": "results",
+                "data": json.dumps({"columns": result.columns, "rows": result.rows}),
+            }
+
+            # Phase 4: done
+            yield {
+                "event": "done",
+                "data": json.dumps({
+                    "provider": request.provider,
+                    "model": request.model,
+                    "input_tokens": total_input,
+                    "output_tokens": total_output,
+                    "retries": retries,
+                }),
+            }
+
+        except Exception as exc:
+            logger.error("Stream error: %s", exc)
+            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+
+    return EventSourceResponse(event_generator())
