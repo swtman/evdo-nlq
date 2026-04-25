@@ -66,3 +66,18 @@ def test_execute_handles_missing_binding_columns():
         result = client.execute(_VALID_SPARQL)
 
     assert result.rows[0]["code"] is None
+
+
+@pytest.mark.live
+def test_live_execute_returns_results():
+    """Requires live GraphDB endpoint. Run with: uv run pytest -m live"""
+    from app.config import settings
+    client = SparqlClient(settings.graphdb_endpoint)
+    result = client.execute(
+        "PREFIX evdx: <https://w3id.org/evdoxus#> "
+        "SELECT (COUNT(*) AS ?n) WHERE { ?s a evdx:Book } LIMIT 1"
+    )
+    assert result.columns == ["n"]
+    assert len(result.rows) == 1
+    count = int(result.rows[0]["n"])
+    assert count > 0
