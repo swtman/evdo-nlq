@@ -11,8 +11,10 @@ from app.sparql.client import SparqlResult
 
 @pytest.fixture
 def client():
+    from app.api.providers import router as providers_router
     app = FastAPI()
     app.include_router(router)
+    app.include_router(providers_router)
     return TestClient(app)
 
 
@@ -98,3 +100,15 @@ def test_post_query_returns_502_on_sparql_execution_failure(client):
         )
 
     assert response.status_code == 502
+
+
+def test_get_providers_returns_list(client):
+    response = client.get("/providers")
+    assert response.status_code == 200
+    body = response.json()
+    assert "providers" in body
+    ids = [p["id"] for p in body["providers"]]
+    assert "claude" in ids
+    assert "fake" in ids
+    for p in body["providers"]:
+        assert len(p["models"]) > 0

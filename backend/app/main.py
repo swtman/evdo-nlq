@@ -8,6 +8,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.providers import router as providers_router
 from app.api.query import router as query_router
 from app.config import settings
 
@@ -26,3 +27,4 @@ app.add_middleware(
 )
 
 app.include_router(query_router)
+app.include_router(providers_router)
