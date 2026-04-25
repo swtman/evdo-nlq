@@ -137,3 +137,34 @@ def test_post_query_stream_yields_sse_events(client, mock_sparql_result):
     assert "event: sparql_complete" in raw
     assert "event: results" in raw
     assert "event: done" in raw
+
+
+def test_post_query_stream_not_answerable_skips_execution(client):
+    """NOT_ANSWERABLE sentinel must short-circuit — no GraphDB call, no error event."""
+    not_answerable_response = "# NOT_ANSWERABLE: question is out of scope"
+
+    from app.llm.base import LLMResponse
+
+    class NotAnswerableProvider:
+        def generate(self, system, user, *, max_tokens=1024):
+            return LLMResponse(text=not_answerable_response, input_tokens=5, output_tokens=3)
+
+        def stream(self, system, user, *, max_tokens=1024):
+            yield not_answerable_response
+
+    with (
+        patch("app.api.query.get_provider", return_value=NotAnswerableProvider()),
+        patch("app.api.query.SparqlClient") as MockClient,
+    ):
+        with client.stream("POST", "/query/stream", json={
+            "question": "Ποιος είναι ο καλύτερος παίκτης;",
+            "provider": "fake",
+            "model": "fake-v1",
+        }) as response:
+            raw = response.read().decode()
+
+    # Must have sparql_complete and done, must NOT have error or results
+    assert "event: sparql_complete" in raw
+    assert "event: done" in raw
+    assert "event: error" not in raw
+    MockClient.return_value.execute.assert_not_called()

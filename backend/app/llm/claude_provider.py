@@ -40,7 +40,10 @@ class ClaudeProvider:
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        text = message.content[0].text
+        block = message.content[0]
+        if not hasattr(block, "text"):
+            raise RuntimeError(f"Unexpected content block type from Claude: {type(block).__name__}")
+        text = block.text
         self._cache.set(system, user, self._model, text)
 
         logger.info(

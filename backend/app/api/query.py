@@ -78,7 +78,9 @@ def query(request: QueryRequest) -> QueryResponse:
     )
 
 
-def _generate_with_retry(provider: LLMProvider, system: str, question: str, ontology: str):
+def _generate_with_retry(
+    provider: LLMProvider, system: str, question: str, ontology: str
+) -> tuple[str, int, int, int]:
     """Call the LLM, validate SPARQL output, retry up to _MAX_RETRIES times.
 
     On each retry the system prompt is replaced with the retry template,
@@ -166,6 +168,20 @@ async def query_stream(request: QueryRequest) -> EventSourceResponse:
             total_input = getattr(provider, "last_input_tokens", 0)
             total_output = getattr(provider, "last_output_tokens", 0)
             full_sparql = _clean_sparql(full_sparql)
+
+            if _is_not_answerable(full_sparql):
+                yield {"event": "sparql_complete", "data": full_sparql}
+                yield {
+                    "event": "done",
+                    "data": json.dumps({
+                        "provider": request.provider,
+                        "model": request.model,
+                        "input_tokens": total_input,
+                        "output_tokens": total_output,
+                        "retries": 0,
+                    }),
+                }
+                return
 
             # Phase 2: validate + retry (non-streaming retries)
             retries = 0
