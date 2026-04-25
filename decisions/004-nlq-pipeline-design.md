@@ -101,8 +101,8 @@ With the core abstractions in place (FastAPI — ADR-001, pluggable LLM — ADR-
 ## Follow-ups
 
 - [x] Write spec to `docs/superpowers/specs/2026-04-25-backend-design.md`
-- [ ] Add `sse-starlette` to `pyproject.toml`
-- [ ] Create `prompts/nl-to-sparql-retry-v1.md`
-- [ ] Create `prompts/ontology-summary.md` (promote compact block from `notes/ONTOLOGY-NOTES.md`)
-- [ ] Update `backend/CLAUDE.md` to document the streaming endpoint and per-request provider selection
-- [ ] Add ADR-004 to `decisions/README.md`
+- [x] Add `sse-starlette` to `pyproject.toml`
+- [x] Create `prompts/nl-to-sparql-retry-v1.md`
+- [x] Create `prompts/ontology-summary.md` (promoted compact block from `notes/ONTOLOGY-NOTES.md`)
+- [x] Update `backend/CLAUDE.md` to document the streaming endpoint and per-request provider selection
+- [x] Add ADR-004 to `decisions/README.md`

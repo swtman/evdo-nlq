@@ -28,19 +28,19 @@ We chose **Option B — a minimal in-house `LLMProvider` protocol**.
 
 ```python
 class LLMProvider(Protocol):
-    name: str
-    model: str
     def generate(self, system: str, user: str, *, max_tokens: int = 1024) -> LLMResponse: ...
+    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]: ...
 
 @dataclass
 class LLMResponse:
     text: str
-    input_tokens: int | None
-    output_tokens: int | None
-    raw: dict
+    input_tokens: int
+    output_tokens: int
 ```
 
-Implementations: `ClaudeProvider`, `OpenAIProvider` (later), `OllamaProvider` (later), `FakeProvider` (always).
+`stream()` was added alongside `generate()` when the SSE streaming endpoint was implemented (see ADR-004). It is an additive change — `generate()` is unchanged. `FakeProvider.stream()` yields the canned SPARQL character-by-character; `ClaudeProvider.stream()` uses the Anthropic SDK's real token streaming and sets `last_input_tokens`/`last_output_tokens` after exhaustion.
+
+Implementations: `ClaudeProvider` ✅, `FakeProvider` ✅ (always), `OpenAIProvider` (future).
 
 ## Consequences
 
@@ -52,5 +52,5 @@ Implementations: `ClaudeProvider`, `OpenAIProvider` (later), `OllamaProvider` (l
 
 ## Follow-ups
 
-- [ ] Implement `FakeProvider` first, then `ClaudeProvider`.
-- [ ] Add a provider comparison script under `scripts/eval.py` (Phase 3).
+- [x] Implement `FakeProvider` first, then `ClaudeProvider`.
+- [ ] Add a provider comparison script under `scripts/eval.py` (Phase 3 — after frontend is complete).
