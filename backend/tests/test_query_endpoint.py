@@ -68,17 +68,9 @@ def test_post_query_retries_on_invalid_sparql(client, mock_sparql_result):
     fake = FakeProvider()
     fake.generate = fake_generate
 
-    # Mock load() so the retry template doesn't need to exist on disk yet
-    def mock_load(name, version):
-        if name == "nl-to-sparql-retry":
-            return "Fix this: {failed_sparql} Error: {error} Ontology: {ontology_summary}"
-        from app.prompts.loader import load as real_load
-        return real_load(name, version)
-
     with (
         patch("app.api.query.get_provider", return_value=fake),
         patch("app.api.query.SparqlClient") as MockClient,
-        patch("app.api.query.load", side_effect=mock_load),
     ):
         MockClient.return_value.execute.return_value = mock_sparql_result
 
