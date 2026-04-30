@@ -66,5 +66,39 @@ class GeminiProvider:
         )
 
     def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]:
-        """Stub — implemented in Task 3."""
-        raise NotImplementedError
+        """Yield raw text tokens from the Gemini streaming API.
+
+        After the generator is exhausted, last_input_tokens and last_output_tokens
+        are set so callers can include them in the SSE 'done' event.
+        """
+        cached = self._cache.get(system, user, self._model)
+        if cached is not None:
+            yield cached
+            return
+
+        full_text = ""
+        last_usage = None
+        for chunk in self._client.models.generate_content_stream(
+            model=self._model,
+            contents=user,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=max_tokens,
+            ),
+        ):
+            if chunk.text:
+                full_text += chunk.text
+                yield chunk.text
+            if chunk.usage_metadata:
+                last_usage = chunk.usage_metadata
+
+        self._cache.set(system, user, self._model, full_text)
+        if last_usage is not None:
+            self.last_input_tokens = last_usage.prompt_token_count or 0
+            self.last_output_tokens = last_usage.candidates_token_count or 0
+        logger.info(
+            "Gemini stream [%s] input=%d output=%d",
+            self._model,
+            self.last_input_tokens,
+            self.last_output_tokens,
+        )

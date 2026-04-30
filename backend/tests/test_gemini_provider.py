@@ -52,3 +52,44 @@ def test_generate_does_not_call_api_when_cache_hit(tmp_path):
         result = provider.generate("system", "user")
     mock_generate.assert_not_called()
     assert result.text == "CACHED SPARQL"
+
+
+def test_stream_yields_tokens_and_sets_usage(tmp_path):
+    provider = _make_provider(tmp_path)
+
+    def _make_chunk(text, prompt_tokens=None, candidate_tokens=None):
+        chunk = MagicMock()
+        chunk.text = text
+        if prompt_tokens is not None:
+            chunk.usage_metadata = MagicMock()
+            chunk.usage_metadata.prompt_token_count = prompt_tokens
+            chunk.usage_metadata.candidates_token_count = candidate_tokens
+        else:
+            chunk.usage_metadata = None
+        return chunk
+
+    chunks = [
+        _make_chunk("PREFIX"),
+        _make_chunk(" evdx:"),
+        _make_chunk("SELECT *", prompt_tokens=80, candidate_tokens=30),
+    ]
+
+    with patch.object(
+        provider._client.models,
+        "generate_content_stream",
+        return_value=iter(chunks),
+    ):
+        result = list(provider.stream("system", "user"))
+
+    assert result == ["PREFIX", " evdx:", "SELECT *"]
+    assert provider.last_input_tokens == 80
+    assert provider.last_output_tokens == 30
+
+
+def test_stream_uses_cache_on_second_call(tmp_path):
+    provider = _make_provider(tmp_path)
+    provider._cache.set("system", "user", provider._model, "CACHED SPARQL")
+    with patch.object(provider._client.models, "generate_content_stream") as mock_stream:
+        result = list(provider.stream("system", "user"))
+    mock_stream.assert_not_called()
+    assert result == ["CACHED SPARQL"]
