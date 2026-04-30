@@ -23,6 +23,29 @@ Template:
 
 ---
 
+## 2026-04-30 — GeminiProvider added (free alternative to Claude)
+
+### Done
+- Designed and implemented `GeminiProvider` using `google-genai>=1.0` SDK.
+- `generate()` and `stream()` both wrap `DiskCache`, mirror `ClaudeProvider` patterns, set `last_input_tokens`/`last_output_tokens`.
+- Registered in `factory.py` under `"gemini"`, listed in `GET /providers` dropdown with `gemini-2.0-flash` and `gemini-1.5-flash`.
+- `GEMINI_API_KEY` added to `Settings` and `.env.example`.
+- 5 unit tests + 1 `@pytest.mark.live` test — 39/40 non-live tests pass (1 pre-existing failure in `test_settings_defaults` due to local `.env`).
+- Design spec: `docs/superpowers/specs/2026-04-30-gemini-provider-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-04-30-gemini-provider.md`
+
+### Next
+1. Get a free Gemini API key at https://aistudio.google.com/apikey, add to `.env`, run `uv run pytest -m live -v` to confirm full pipeline works end-to-end.
+2. Push to GitHub (remote not yet set up).
+3. Start the frontend — React + Vite scaffold, then the query hook using `fetch + ReadableStream` for SSE.
+
+### Blockers / notes
+- Internship starts 2026-05-18 — frontend MVP must be stable before then (~2.5 weeks).
+- `test_settings_defaults` fails because local `.env` has `LLM_PROVIDER=fake`. Fix: either patch env in the test or temporarily rename `.env` when running that test.
+- SSE transport: frontend must use `fetch + ReadableStream`, NOT `EventSource` (GET-only).
+
+---
+
 ## 2026-04-25 — Backend pipeline complete
 
 ### Done
