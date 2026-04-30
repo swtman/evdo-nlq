@@ -111,6 +111,7 @@ def test_get_providers_returns_list(client):
     assert "providers" in body
     ids = [p["id"] for p in body["providers"]]
     assert "claude" in ids
+    assert "gemini" in ids
     assert "fake" in ids
     for p in body["providers"]:
         assert len(p["models"]) > 0
