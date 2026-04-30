@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
+import pytest  # noqa: F401  — used by @pytest.mark.live test added in Task 5
 
 from app.llm.base import LLMResponse
 from app.llm.cache import DiskCache

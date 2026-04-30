@@ -44,19 +44,25 @@ class GeminiProvider:
             ),
         )
         text = response.text
+        if text is None:
+            raise RuntimeError("Gemini returned no text content")
         usage = response.usage_metadata
+        if usage is None:
+            raise RuntimeError("Gemini returned no usage metadata")
+        prompt_tokens = usage.prompt_token_count or 0
+        candidate_tokens = usage.candidates_token_count or 0
         self._cache.set(system, user, self._model, text)
 
         logger.info(
             "Gemini [%s] input=%d output=%d",
             self._model,
-            usage.prompt_token_count,
-            usage.candidates_token_count,
+            prompt_tokens,
+            candidate_tokens,
         )
         return LLMResponse(
             text=text,
-            input_tokens=usage.prompt_token_count,
-            output_tokens=usage.candidates_token_count,
+            input_tokens=prompt_tokens,
+            output_tokens=candidate_tokens,
         )
 
     def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]:
