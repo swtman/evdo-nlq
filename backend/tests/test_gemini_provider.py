@@ -84,6 +84,7 @@ def test_stream_yields_tokens_and_sets_usage(tmp_path):
     assert result == ["PREFIX", " evdx:", "SELECT *"]
     assert provider.last_input_tokens == 80
     assert provider.last_output_tokens == 30
+    assert provider._cache.get("system", "user", provider._model) == "PREFIX evdx:SELECT *"
 
 
 def test_stream_uses_cache_on_second_call(tmp_path):

@@ -73,6 +73,8 @@ class GeminiProvider:
         """
         cached = self._cache.get(system, user, self._model)
         if cached is not None:
+            self.last_input_tokens = 0
+            self.last_output_tokens = 0
             yield cached
             return
 
@@ -96,6 +98,8 @@ class GeminiProvider:
         if last_usage is not None:
             self.last_input_tokens = last_usage.prompt_token_count or 0
             self.last_output_tokens = last_usage.candidates_token_count or 0
+        else:
+            logger.warning("Gemini stream [%s] returned no usage metadata", self._model)
         logger.info(
             "Gemini stream [%s] input=%d output=%d",
             self._model,
