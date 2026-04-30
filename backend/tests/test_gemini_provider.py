@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-import pytest  # noqa: F401  — used by @pytest.mark.live test added in Task 5
+import pytest
 
 from app.llm.base import LLMResponse
 from app.llm.cache import DiskCache
@@ -94,3 +94,19 @@ def test_stream_uses_cache_on_second_call(tmp_path):
         result = list(provider.stream("system", "user"))
     mock_stream.assert_not_called()
     assert result == ["CACHED SPARQL"]
+
+
+@pytest.mark.live
+def test_live_generate_returns_sparql(tmp_path):
+    """Requires GEMINI_API_KEY in .env. Run with: uv run pytest -m live"""
+    import os
+    from app.llm.gemini_provider import GeminiProvider
+
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        pytest.skip("GEMINI_API_KEY not set")
+    cache = DiskCache(str(tmp_path / "cache"))
+    provider = GeminiProvider(model="gemini-2.0-flash", api_key=key, cache=cache)
+    result = provider.generate("Respond with only: SELECT * WHERE {}", "test")
+    assert "SELECT" in result.text
+    assert result.input_tokens > 0
