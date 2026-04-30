@@ -1,0 +1,21 @@
+export const t = {
+  title: 'EvdoGraph',
+  titleAccent: 'NLQ',
+  subtitle: 'Φυσική γλώσσα → SPARQL → Αποτελέσματα',
+  searchPlaceholder: 'Ρωτήστε για βιβλία, συγγραφείς, μαθήματα...',
+  searchButton: 'Αναζήτηση',
+  searching: 'Αναζήτηση...',
+  sparqlLabel: 'SPARQL',
+  sparqlGenerating: '● generating',
+  sparqlComplete: '✓ complete',
+  sparqlCollapse: '▼',
+  sparqlExpand: '▶',
+  resultsLabel: 'Αποτελέσματα',
+  noResults: 'Δεν βρέθηκαν αποτελέσματα.',
+  tokenInfo: (input: number, output: number, retries: number): string =>
+    `${input} input · ${output} output tokens${retries > 0 ? ` · ${retries} retries` : ''}`,
+  errorPrefix: 'Σφάλμα:',
+  errorDismiss: '✕',
+  providerLabel: 'Πάροχος',
+  modelLabel: 'Μοντέλο',
+}
