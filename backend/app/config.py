@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="claude", alias="LLM_PROVIDER")
     llm_model: str = Field(default="claude-haiku-4-5", alias="LLM_MODEL")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     graphdb_endpoint: str = Field(
         default="http://lod.csd.auth.gr:7200/repositories/Evdoxus",
         alias="GRAPHDB_ENDPOINT",
