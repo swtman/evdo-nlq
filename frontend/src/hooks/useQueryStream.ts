@@ -94,7 +94,7 @@ export function useQueryStream() {
 
   // Fetch available providers once on mount.
   useEffect(() => {
-    let cancelled = false
+    const providerController = new AbortController()
 
     if (import.meta.env.VITE_USE_MOCK_API === '1') {
       // Hard-coded providers for UI development — no network call needed.
@@ -104,17 +104,19 @@ export function useQueryStream() {
         { id: 'fake', models: ['fake-v1'] },
       ])
     } else {
-      fetch('/providers')
+      fetch('/providers', { signal: providerController.signal })
         .then(r => r.json())
         .then((data: { providers: Provider[] }) => {
-          if (!cancelled) setProviders(data.providers ?? [])
+          setProviders(data.providers ?? [])
         })
-        .catch(console.error)
+        .catch(err => {
+          if (err instanceof Error && err.name !== 'AbortError') console.error(err)
+        })
     }
 
     return () => {
-      // Cancel the fetch guard and abort any live SSE stream.
-      cancelled = true
+      // Abort the providers fetch and any live SSE stream on unmount.
+      providerController.abort()
       abortRef.current?.abort()
     }
   }, [])
