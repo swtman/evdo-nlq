@@ -38,6 +38,7 @@ export function ResultsTable({ columns, rows, inputTokens, outputTokens, retries
             </thead>
             <tbody>
               {rows.map((row, i) => (
+                // SPARQL rows have no stable identifier; index key is intentional.
                 <tr key={i}>
                   {columns.map(col => (
                     // Use nullish coalescing to render an empty cell when a

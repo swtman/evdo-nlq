@@ -16,6 +16,7 @@ export const t = {
     `${input} input · ${output} output tokens${retries > 0 ? ` · ${retries} retries` : ''}`,
   errorPrefix: 'Σφάλμα:',
   errorDismiss: '✕',
+  errorDismissLabel: 'Κλείσιμο ειδοποίησης',
   providerLabel: 'Πάροχος',
   modelLabel: 'Μοντέλο',
 }

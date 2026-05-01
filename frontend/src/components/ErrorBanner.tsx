@@ -22,10 +22,10 @@ export function ErrorBanner({ message, onDismiss }: Props) {
       <button
         className="dismiss-btn"
         onClick={onDismiss}
-        aria-label={t.errorDismiss}
+        aria-label={t.errorDismissLabel}
         type="button"
       >
-        {t.errorDismiss}
+        <span aria-hidden="true">{t.errorDismiss}</span>
       </button>
     </div>
   )

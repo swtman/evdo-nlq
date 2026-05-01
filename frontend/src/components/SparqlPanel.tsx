@@ -38,7 +38,7 @@ export function SparqlPanel({ sparql, streaming }: Props) {
         <button
           className="collapse-btn"
           onClick={() => setCollapsed(c => !c)}
-          aria-label={collapsed ? 'expand' : 'collapse'}
+          aria-expanded={!collapsed}
           type="button"
         >
           {collapsed ? t.sparqlExpand : t.sparqlCollapse}
