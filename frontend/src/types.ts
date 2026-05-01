@@ -10,12 +10,12 @@ export type ParsedSSEEvent = {
 
 export type QueryState =
   | { status: 'idle' }
-  | { status: 'streaming'; sparql: string; columns?: string[]; rows?: Record<string, string>[] }
+  | { status: 'streaming'; sparql: string; columns?: string[]; rows?: Record<string, string | undefined>[] }
   | {
       status: 'done'
       sparql: string
       columns: string[]
-      rows: Record<string, string>[]
+      rows: Record<string, string | undefined>[]
       inputTokens: number
       outputTokens: number
       retries: number
