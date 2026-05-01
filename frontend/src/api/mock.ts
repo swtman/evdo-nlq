@@ -19,12 +19,13 @@ const MOCK_RESULTS = {
 
 /** Returns a promise that resolves after `ms` milliseconds, or rejects if the AbortSignal fires first. */
 function delay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
   return new Promise((resolve, reject) => {
     const t = setTimeout(resolve, ms)
     signal.addEventListener('abort', () => {
       clearTimeout(t)
       reject(new DOMException('Aborted', 'AbortError'))
-    })
+    }, { once: true })
   })
 }
 
@@ -47,6 +48,9 @@ export async function* mockStreamQuery(
     await delay(18, signal)
     yield { event: 'sparql_token', data: char }
   }
+
+  // Note: sparql_retry events are not modelled here — retry UI can only be
+  // tested with the real backend (LLM_PROVIDER=claude/gemini + invalid prompt).
 
   // Signal that the full SPARQL string is available.
   yield { event: 'sparql_complete', data: MOCK_SPARQL }

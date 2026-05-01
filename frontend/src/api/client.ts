@@ -10,6 +10,9 @@ import type { ParsedSSEEvent } from '../types'
  * local mock module so no network calls are made — useful for UI development
  * without spending LLM tokens.
  *
+ * Throws DOMException('AbortError') when signal fires — callers should check
+ * `error.name === 'AbortError'` to distinguish user cancellation from failures.
+ *
  * @param question  Natural-language question from the user.
  * @param provider  LLM provider id (e.g. "claude", "fake").
  * @param model     Model id within the provider (e.g. "claude-haiku-4-5").
@@ -50,7 +53,10 @@ export async function* streamQuery(
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        buffer += decoder.decode() // flush any remaining multi-byte sequence
+        break
+      }
 
       buffer += decoder.decode(value, { stream: true })
 
