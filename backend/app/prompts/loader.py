@@ -8,12 +8,20 @@ from pathlib import Path
 # prompts/ lives four levels up from this file (backend/app/prompts/loader.py → repo root)
 _PROMPTS_DIR = Path(__file__).parent.parent.parent.parent / "prompts"
 
+# Module-level cache — populated on first read, reused for the process lifetime.
+_cache: dict[str, str] = {}
+
 
 def load(name: str, version: int) -> str:
     """Return the '# System' section of a versioned prompt template.
 
     Strips YAML frontmatter and discards all sections after '# System'.
+    Result is cached after the first disk read.
     """
+    key = f"{name}-v{version}"
+    if key in _cache:
+        return _cache[key]
+
     path = _PROMPTS_DIR / f"{name}-v{version}.md"
     if not path.exists():
         raise FileNotFoundError(f"Prompt not found: {path}")
@@ -28,7 +36,9 @@ def load(name: str, version: int) -> str:
     if not m:
         raise ValueError(f"No '# System' section found in {path.name}")
 
-    return m.group(1).strip()
+    result = m.group(1).strip()
+    _cache[key] = result
+    return result
 
 
 def fill(template: str, **kwargs: str) -> str:

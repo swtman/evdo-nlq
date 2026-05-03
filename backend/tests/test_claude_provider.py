@@ -62,11 +62,12 @@ def test_stream_yields_tokens_and_sets_usage(tmp_path):
     mock_stream_ctx.get_final_message.return_value = mock_final
 
     with patch.object(provider._client.messages, "stream", return_value=mock_stream_ctx):
-        result = list(provider.stream("system", "user"))
+        sr = provider.stream("system", "user")
+        collected = list(sr.tokens)
 
-    assert result == tokens
-    assert provider.last_input_tokens == 80
-    assert provider.last_output_tokens == 30
+    assert collected == tokens
+    assert sr.input_tokens == 80
+    assert sr.output_tokens == 30
 
 
 @pytest.mark.live

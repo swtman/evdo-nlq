@@ -18,9 +18,12 @@ def test_generate_returns_llm_response():
 
 def test_stream_yields_characters_that_assemble_to_generate_output():
     provider = FakeProvider()
-    streamed = "".join(provider.stream(_SYSTEM, _USER))
+    sr = provider.stream(_SYSTEM, _USER)
+    streamed = "".join(sr.tokens)
     expected = provider.generate(_SYSTEM, _USER).text
     assert streamed == expected
+    assert sr.input_tokens >= 0
+    assert sr.output_tokens >= 0
 
 
 def test_fake_provider_satisfies_protocol():

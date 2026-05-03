@@ -11,7 +11,7 @@ from typing import Iterator
 
 import anthropic
 
-from app.llm.base import LLMResponse
+from app.llm.base import LLMResponse, StreamResult
 from app.llm.cache import DiskCache
 
 logger = logging.getLogger(__name__)
@@ -24,9 +24,6 @@ class ClaudeProvider:
         self._model = model
         self._client = anthropic.Anthropic(api_key=api_key)
         self._cache = cache
-        # Set after stream() completes — read by the streaming endpoint for the done event.
-        self.last_input_tokens: int = 0
-        self.last_output_tokens: int = 0
 
     def generate(self, system: str, user: str, *, max_tokens: int = 1024) -> LLMResponse:
         """Generate a response. Returns cached result if available."""
@@ -58,37 +55,41 @@ class ClaudeProvider:
             output_tokens=message.usage.output_tokens,
         )
 
-    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]:
-        """Yield raw text tokens from the Claude streaming API.
+    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> StreamResult:
+        """Return a StreamResult whose tokens iterator yields raw text tokens.
 
-        After the generator is exhausted, last_input_tokens and last_output_tokens
-        are set so callers can include them in the SSE 'done' event.
-
-        TODO: future — run in a thread pool to avoid blocking the async event loop.
+        input_tokens and output_tokens on the returned StreamResult are populated
+        after the tokens iterator is fully exhausted.
         """
-        cached = self._cache.get(system, user, self._model)
-        if cached is not None:
-            yield cached
-            return
+        result = StreamResult(tokens=iter([]))
 
-        full_text = ""
-        with self._client.messages.stream(
-            model=self._model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        ) as stream:
-            for token in stream.text_stream:
-                full_text += token
-                yield token
+        def _gen() -> Iterator[str]:
+            cached = self._cache.get(system, user, self._model)
+            if cached is not None:
+                yield cached
+                return
 
-        self._cache.set(system, user, self._model, full_text)
-        usage = stream.get_final_message().usage
-        self.last_input_tokens = usage.input_tokens
-        self.last_output_tokens = usage.output_tokens
-        logger.info(
-            "Claude stream [%s] input=%d output=%d",
-            self._model,
-            self.last_input_tokens,
-            self.last_output_tokens,
-        )
+            full_text = ""
+            with self._client.messages.stream(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            ) as s:
+                for token in s.text_stream:
+                    full_text += token
+                    yield token
+
+            self._cache.set(system, user, self._model, full_text)
+            usage = s.get_final_message().usage
+            result.input_tokens = usage.input_tokens
+            result.output_tokens = usage.output_tokens
+            logger.info(
+                "Claude stream [%s] input=%d output=%d",
+                self._model,
+                result.input_tokens,
+                result.output_tokens,
+            )
+
+        result.tokens = _gen()
+        return result

@@ -79,11 +79,12 @@ def test_stream_yields_tokens_and_sets_usage(tmp_path):
         "generate_content_stream",
         return_value=iter(chunks),
     ):
-        result = list(provider.stream("system", "user"))
+        sr = provider.stream("system", "user")
+        collected = list(sr.tokens)
 
-    assert result == ["PREFIX", " evdx:", "SELECT *"]
-    assert provider.last_input_tokens == 80
-    assert provider.last_output_tokens == 30
+    assert collected == ["PREFIX", " evdx:", "SELECT *"]
+    assert sr.input_tokens == 80
+    assert sr.output_tokens == 30
     assert provider._cache.get("system", "user", provider._model) == "PREFIX evdx:SELECT *"
 
 
@@ -91,9 +92,10 @@ def test_stream_uses_cache_on_second_call(tmp_path):
     provider = _make_provider(tmp_path)
     provider._cache.set("system", "user", provider._model, "CACHED SPARQL")
     with patch.object(provider._client.models, "generate_content_stream") as mock_stream:
-        result = list(provider.stream("system", "user"))
+        sr = provider.stream("system", "user")
+        collected = list(sr.tokens)
     mock_stream.assert_not_called()
-    assert result == ["CACHED SPARQL"]
+    assert collected == ["CACHED SPARQL"]
 
 
 @pytest.mark.live

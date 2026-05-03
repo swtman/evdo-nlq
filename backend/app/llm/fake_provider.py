@@ -5,9 +5,7 @@ Use this for all unit tests and frontend development to avoid burning API tokens
 
 from __future__ import annotations
 
-from typing import Iterator
-
-from app.llm.base import LLMResponse
+from app.llm.base import LLMResponse, StreamResult
 
 _CANNED_SPARQL = (
     "PREFIX evdx: <https://w3id.org/evdoxus#>\n"
@@ -29,6 +27,11 @@ class FakeProvider:
             output_tokens=len(_CANNED_SPARQL.split()),
         )
 
-    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]:
-        """Yield the canned SPARQL one character at a time to simulate streaming."""
-        yield from _CANNED_SPARQL
+    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> StreamResult:
+        """Return a StreamResult yielding the canned SPARQL one character at a time."""
+        resp = self.generate(system, user)
+        return StreamResult(
+            tokens=iter(resp.text),
+            input_tokens=resp.input_tokens,
+            output_tokens=resp.output_tokens,
+        )

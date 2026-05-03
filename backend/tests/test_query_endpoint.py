@@ -144,14 +144,14 @@ def test_post_query_stream_not_answerable_skips_execution(client):
     """NOT_ANSWERABLE sentinel must short-circuit — no GraphDB call, no error event."""
     not_answerable_response = "# NOT_ANSWERABLE: question is out of scope"
 
-    from app.llm.base import LLMResponse
+    from app.llm.base import LLMResponse, StreamResult
 
     class NotAnswerableProvider:
         def generate(self, system, user, *, max_tokens=1024):
             return LLMResponse(text=not_answerable_response, input_tokens=5, output_tokens=3)
 
         def stream(self, system, user, *, max_tokens=1024):
-            yield not_answerable_response
+            return StreamResult(tokens=iter([not_answerable_response]), input_tokens=5, output_tokens=3)
 
     with (
         patch("app.api.query.get_provider", return_value=NotAnswerableProvider()),

@@ -12,7 +12,7 @@ from typing import Iterator
 import google.genai as genai
 from google.genai import types
 
-from app.llm.base import LLMResponse
+from app.llm.base import LLMResponse, StreamResult
 from app.llm.cache import DiskCache
 
 logger = logging.getLogger(__name__)
@@ -25,9 +25,6 @@ class GeminiProvider:
         self._model = model
         self._client = genai.Client(api_key=api_key)
         self._cache = cache
-        # Set after stream() completes — read by the streaming endpoint for the done event.
-        self.last_input_tokens: int = 0
-        self.last_output_tokens: int = 0
 
     def generate(self, system: str, user: str, *, max_tokens: int = 1024) -> LLMResponse:
         """Generate a response. Returns cached result if available."""
@@ -65,44 +62,48 @@ class GeminiProvider:
             output_tokens=candidate_tokens,
         )
 
-    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> Iterator[str]:
-        """Yield raw text tokens from the Gemini streaming API.
+    def stream(self, system: str, user: str, *, max_tokens: int = 1024) -> StreamResult:
+        """Return a StreamResult whose tokens iterator yields raw text tokens.
 
-        After the generator is exhausted, last_input_tokens and last_output_tokens
-        are set so callers can include them in the SSE 'done' event.
+        input_tokens and output_tokens on the returned StreamResult are populated
+        after the tokens iterator is fully exhausted.
         """
-        cached = self._cache.get(system, user, self._model)
-        if cached is not None:
-            self.last_input_tokens = 0
-            self.last_output_tokens = 0
-            yield cached
-            return
+        result = StreamResult(tokens=iter([]))
 
-        full_text = ""
-        last_usage = None
-        for chunk in self._client.models.generate_content_stream(
-            model=self._model,
-            contents=user,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=max_tokens,
-            ),
-        ):
-            if chunk.text:
-                full_text += chunk.text
-                yield chunk.text
-            if chunk.usage_metadata:
-                last_usage = chunk.usage_metadata
+        def _gen() -> Iterator[str]:
+            cached = self._cache.get(system, user, self._model)
+            if cached is not None:
+                yield cached
+                return
 
-        self._cache.set(system, user, self._model, full_text)
-        if last_usage is not None:
-            self.last_input_tokens = last_usage.prompt_token_count or 0
-            self.last_output_tokens = last_usage.candidates_token_count or 0
-        else:
-            logger.warning("Gemini stream [%s] returned no usage metadata", self._model)
-        logger.info(
-            "Gemini stream [%s] input=%d output=%d",
-            self._model,
-            self.last_input_tokens,
-            self.last_output_tokens,
-        )
+            full_text = ""
+            last_usage = None
+            for chunk in self._client.models.generate_content_stream(
+                model=self._model,
+                contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=max_tokens,
+                ),
+            ):
+                if chunk.text:
+                    full_text += chunk.text
+                    yield chunk.text
+                if chunk.usage_metadata:
+                    last_usage = chunk.usage_metadata
+
+            self._cache.set(system, user, self._model, full_text)
+            if last_usage is not None:
+                result.input_tokens = last_usage.prompt_token_count or 0
+                result.output_tokens = last_usage.candidates_token_count or 0
+            else:
+                logger.warning("Gemini stream [%s] returned no usage metadata", self._model)
+            logger.info(
+                "Gemini stream [%s] input=%d output=%d",
+                self._model,
+                result.input_tokens,
+                result.output_tokens,
+            )
+
+        result.tokens = _gen()
+        return result
