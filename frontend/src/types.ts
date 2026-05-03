@@ -10,7 +10,14 @@ export type ParsedSSEEvent = {
 
 export type QueryState =
   | { status: 'idle' }
-  | { status: 'streaming'; sparql: string; columns?: string[]; rows?: Record<string, string | undefined>[] }
+  | {
+      status: 'streaming'
+      sparql: string
+      /** True between sparql_complete and results — GraphDB is running the query. */
+      executing?: boolean
+      columns?: string[]
+      rows?: Record<string, string | undefined>[]
+    }
   | {
       status: 'done'
       sparql: string
@@ -20,4 +27,9 @@ export type QueryState =
       outputTokens: number
       retries: number
     }
-  | { status: 'error'; message: string }
+  | {
+      status: 'error'
+      message: string
+      /** SPARQL that was generated before the error, if any. */
+      sparql?: string
+    }

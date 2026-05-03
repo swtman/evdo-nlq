@@ -19,4 +19,7 @@ export const t = {
   errorDismissLabel: 'Κλείσιμο ειδοποίησης',
   providerLabel: 'Πάροχος',
   modelLabel: 'Μοντέλο',
+  graphdbExecuting: 'Εκτέλεση ερωτήματος στο GraphDB...',
+  switchToLight: 'Εναλλαγή σε φωτεινό θέμα',
+  switchToDark: 'Εναλλαγή σε σκοτεινό θέμα',
 }

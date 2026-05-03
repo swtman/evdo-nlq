@@ -37,14 +37,14 @@ function reducer(state: QueryState, action: Action): QueryState {
       return { ...state, sparql: state.sparql + action.payload }
 
     case 'COMPLETE':
-      // Replace sparql with the final, authoritative SPARQL string.
+      // Replace sparql with the final authoritative string and flag that GraphDB is now running.
       if (state.status !== 'streaming') return state
-      return { ...state, sparql: action.payload }
+      return { ...state, sparql: action.payload, executing: true }
 
     case 'RESULTS':
-      // Store query results while still streaming — they arrive before `done`.
+      // Store query results and clear the executing flag — GraphDB has responded.
       if (state.status !== 'streaming') return state
-      return { ...state, columns: action.payload.columns, rows: action.payload.rows }
+      return { ...state, columns: action.payload.columns, rows: action.payload.rows, executing: false }
 
     case 'DONE':
       // Transition to the terminal `done` state; pull columns/rows from streaming state.
@@ -60,7 +60,12 @@ function reducer(state: QueryState, action: Action): QueryState {
       }
 
     case 'ERROR':
-      return { status: 'error', message: action.payload }
+      // Preserve any SPARQL that was already generated so the panel stays visible.
+      return {
+        status: 'error',
+        message: action.payload,
+        ...(state.status === 'streaming' && state.sparql ? { sparql: state.sparql } : {}),
+      }
 
     case 'DISMISS_ERROR':
       return { status: 'idle' }
