@@ -1,6 +1,6 @@
 import type { ParsedSSEEvent } from '../types'
 
-const MOCK_SPARQL = `PREFIX evdx: <http://evdoxus.csd.auth.gr/ontology#>
+const MOCK_SPARQL = `PREFIX evdx: <https://w3id.org/evdoxus#>
 SELECT ?title ?author WHERE {
   ?book a evdx:Book ;
         evdx:title ?title ;

@@ -11,7 +11,7 @@
 - [x] Scaffold repo structure (CLAUDE.md files, decisions/, prompts/, notes/, scripts/)
 - [x] Confirm GraphDB endpoint is reachable (`scripts/sparql_hello.py` — Q1 & Q2 pass)
 - [x] Virtual environments set up for `backend/` and `scripts/` via `uv`
-- [ ] Push scaffolded repo to GitHub
+- [x] Push scaffolded repo to GitHub
 
 ---
 
