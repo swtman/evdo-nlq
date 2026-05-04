@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from app.llm.base import LLMProvider
 from app.ontology.loader import load_summary
+from app.prompts.examples_loader import select_few_shot
 from app.prompts.loader import fill, load
 from app.sparql.client import SparqlClient, validate_sparql
 
@@ -117,10 +118,25 @@ class QueryPipeline:
     def run(self, question: str) -> PipelineResult:
         """Synchronous pipeline: generate SPARQL, validate/retry, execute, return result."""
         ontology = load_summary()
-        system = fill(load("nl-to-sparql", 1), ontology_summary=ontology)
+        system = fill(
+            load("nl-to-sparql", 2),
+            ontology_summary=ontology,
+            few_shot_block=select_few_shot(k=6),
+        )
         sparql, total_input, total_output, retries = self._generate_with_retry(
             system, question, ontology
         )
+        if _is_not_answerable(sparql):
+            return PipelineResult(
+                sparql=sparql,
+                columns=[],
+                rows=[],
+                provider=self._provider_name,
+                model=self._model_name,
+                input_tokens=total_input,
+                output_tokens=total_output,
+                retries=retries,
+            )
         result = self._sparql_client.execute(sparql)
         return PipelineResult(
             sparql=sparql,
@@ -142,7 +158,11 @@ class QueryPipeline:
         Phase 4 — done metadata.
         """
         ontology = load_summary()
-        system = fill(load("nl-to-sparql", 1), ontology_summary=ontology)
+        system = fill(
+            load("nl-to-sparql", 2),
+            ontology_summary=ontology,
+            few_shot_block=select_few_shot(k=6),
+        )
 
         # Phase 1: stream SPARQL tokens without blocking the event loop.
         # next() is called in a thread pool so the event loop stays responsive.

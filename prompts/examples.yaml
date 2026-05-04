@@ -1,0 +1,837 @@
+# prompts/examples.yaml
+# Gold example bank for NL → SPARQL evaluation and static few-shot prompting.
+#
+# Promoted from notes/draftedQueries.txt (Q1–Q18) + 3 NOT_ANSWERABLE entries.
+# NL questions (question_english) taken from the original query descriptions.
+# question_greek fields marked "TODO" must be filled in by the author before eval.
+#
+# Schema reference: decisions/005-eval-methodology.md
+# query_shape values: traversal-lookup | multi-level-count | multi-level-aggregate-with-concat |
+#   set-difference-by-year | set-difference-by-book | set-intersection-by-book |
+#   negative-existence | ranking-by-count | multi-book-comparison | not-answerable
+# comparison_mode values: set | ordered | scalar | not-answerable
+# skip_eval: true → example excluded from eval metrics (e.g. known GraphDB heap crash)
+
+version: 1
+examples:
+
+  # ---------------------------------------------------------------------------
+  # Q1 — traversal-lookup
+  # ---------------------------------------------------------------------------
+  - id: ex-001
+    source: "notes/draftedQueries.txt#Q1"
+    question_english: >
+      Return all modules that use book 94700120 in the academic year 2022,
+      along with the department and university.
+    question_greek: "Σε ποια μαθήματα χρησιμοποιείται το βιβλίο με κωδικό 94700120 το ακαδημαϊκό έτος 2022; Εμφάνισε και το Τμήμα και το Πανεπιστήμιο."
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (?mt AS ?Module)
+      WHERE {
+        ?s a evdx:Book .
+        VALUES ?code {"94700120"}
+        ?s evdx:hasCode ?code .
+        ?m a evdx:Module .
+        ?m evdx:title ?mt .
+        ?m evdx:hasBook ?s .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+        ?c evdx:hasModule ?m .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+        ?d evdx:name ?dn .
+        ?u a evdx:University .
+        ?u evdx:hasDepartment ?d .
+        ?u evdx:name ?un .
+      }
+    query_shape: traversal-lookup
+    granularity: module
+    comparison_mode: set
+    few_shot_priority: 1
+    notes: >
+      Core 4-hop traversal Book→Module→Course→Dept→Uni. Multiple book codes
+      can be listed inside VALUES (e.g. different editions).
+
+  # ---------------------------------------------------------------------------
+  # Q2 — multi-level-aggregate-with-concat
+  # ---------------------------------------------------------------------------
+  - id: ex-002
+    source: "notes/draftedQueries.txt#Q2"
+    question_english: >
+      How many modules use books 102070469 or 13909 in 2022, and what are
+      their names? Group by department.
+    question_greek: "Πόσα μαθήματα χρησιμοποιούν τα βιβλία 102070469 ή 13909 το 2022 και ποιες είναι οι ονομασίες τους; Ομαδοποίησε ανά Τμήμα."
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code { "102070469" "13909" }
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: multi-level-aggregate-with-concat
+    granularity: department
+    comparison_mode: set
+    few_shot_priority: 2
+    notes: >
+      Uses inner SELECT DISTINCT + outer GROUP_CONCAT to avoid duplicate
+      ?mt bindings. The inner subquery deduplicates modules before aggregation.
+
+  # ---------------------------------------------------------------------------
+  # Q3 — multi-level-count (scalar)
+  # ---------------------------------------------------------------------------
+  - id: ex-003
+    source: "notes/draftedQueries.txt#Q3"
+    question_english: >
+      In how many modules, departments, and universities are books 102070469
+      and 13909 used in 2022?
+    question_greek: "Σε πόσα μαθήματα, Τμήματα και Πανεπιστήμια χρησιμοποιούνται τα βιβλία με κωδικούς 102070469 και 13909 το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?u) AS ?Universities) (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?m) AS ?NoOfModules)
+      WHERE {
+        ?s a evdx:Book .
+        VALUES ?code { "102070469" "13909" }
+        ?s evdx:hasCode ?code .
+        ?m a evdx:Module .
+        ?m evdx:hasBook ?s .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+        ?c evdx:hasModule ?m .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+        ?u a evdx:University .
+        ?u evdx:hasDepartment ?d .
+      }
+    query_shape: multi-level-count
+    granularity: n/a
+    comparison_mode: scalar
+    few_shot_priority: 3
+    notes: >
+      COUNT(DISTINCT) is allowed here because the result is scoped by VALUES ?code.
+      Confirmed working against live GraphDB (2026-05-04).
+
+  # ---------------------------------------------------------------------------
+  # Q4 — multi-level-count (ordered, by year range)
+  # ---------------------------------------------------------------------------
+  - id: ex-004
+    source: "notes/draftedQueries.txt#Q4"
+    question_english: >
+      In how many modules, departments, and universities are books 94700120
+      and 12867416 used, broken down per year for 2019–2022?
+    question_greek: "Σε πόσα μαθήματα, Τμήματα και Πανεπιστήμια χρησιμοποιούνται τα βιβλία 94700120 και 12867416 ανά ακαδημαϊκό έτος από το 2019 έως το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT ?year (COUNT(DISTINCT ?u) AS ?Universities) (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?m) AS ?NoOfModules)
+      WHERE {
+        ?s a evdx:Book .
+        VALUES ?code { "94700120" "12867416" }
+        ?s evdx:hasCode ?code .
+        ?m a evdx:Module .
+        ?m evdx:hasBook ?s .
+        ?c a evdx:Course .
+        ?c evdx:year ?year .
+        FILTER ((?year >= 2019) && (?year < 2023)) .
+        ?c evdx:hasModule ?m .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+        ?u a evdx:University .
+        ?u evdx:hasDepartment ?d .
+      } GROUP BY ?year
+        ORDER BY ?year
+    query_shape: multi-level-count
+    granularity: n/a
+    comparison_mode: ordered
+    few_shot_priority: 7
+    notes: >
+      Year is an integer. FILTER uses >= and < (not <=) for the upper bound.
+      ORDER BY ?year makes this an ordered comparison.
+
+  # ---------------------------------------------------------------------------
+  # Q5 — set-difference-by-year (department)
+  # ---------------------------------------------------------------------------
+  - id: ex-005
+    source: "notes/draftedQueries.txt#Q5"
+    question_english: >
+      Which departments (with university and module details) adopted books
+      102070469 or 13909 in 2022 that did not use them in 2021?
+    question_greek: "Ποια Τμήματα (με στοιχεία Πανεπιστημίου και Μαθημάτων) χρησιμοποίησαν τα βιβλία 102070469 ή 13909 το 2022, ενώ δεν τα χρησιμοποιούσαν το 2021;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code {"102070469" "13909"}
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER NOT EXISTS {
+              ?m1 a evdx:Module .
+              VALUES ?code1 { "102070469" "13909" }
+              ?s1 evdx:hasCode ?code1 .
+              ?m1 evdx:hasBook ?s1 .
+              ?c1 a evdx:Course .
+              ?c1 evdx:year 2021 .
+              ?c1 evdx:hasModule ?m1 .
+              ?d evdx:hasCourse ?c1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-difference-by-year
+    granularity: department
+    comparison_mode: set
+    few_shot_priority: 4
+    notes: >
+      The outer query is year 2022; FILTER NOT EXISTS checks the same ?d
+      had no course with this book in 2021. Swap years to get departments
+      removed from 2021→2022.
+
+  # ---------------------------------------------------------------------------
+  # Q6 — set-difference-by-year (university)
+  # ---------------------------------------------------------------------------
+  - id: ex-006
+    source: "notes/draftedQueries.txt#Q6"
+    question_english: >
+      Which universities (with department and module details) adopted books
+      102070469 or 13909 in 2022 that did not use them in 2021?
+    question_greek: "Ποια Πανεπιστήμια (με στοιχεία Τμημάτων και Μαθημάτων) χρησιμοποίησαν τα βιβλία 102070469 ή 13909 το 2022, ενώ δεν τα χρησιμοποιούσαν το 2021;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code { "102070469" "13909" }
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER NOT EXISTS {
+              ?m1 a evdx:Module .
+              VALUES ?code1 { "102070469" "13909" }
+              ?s1 evdx:hasCode ?code1 .
+              ?m1 evdx:hasBook ?s1 .
+              ?c1 a evdx:Course .
+              ?c1 evdx:year 2021 .
+              ?c1 evdx:hasModule ?m1 .
+              ?d1 a evdx:Department .
+              ?d1 evdx:hasCourse ?c1 .
+              ?u evdx:hasDepartment ?d1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-difference-by-year
+    granularity: university
+    comparison_mode: set
+    few_shot_priority: 8
+    notes: >
+      University-level variant of ex-005. FILTER NOT EXISTS uses a fresh ?d1
+      (not the outer ?d) — the whole university must have had no module with
+      this book in 2021, not just one department.
+
+  # ---------------------------------------------------------------------------
+  # Q7 — set-difference-by-year (module)
+  # ---------------------------------------------------------------------------
+  - id: ex-007
+    source: "notes/draftedQueries.txt#Q7"
+    question_english: >
+      Which specific modules (with department and university) were newly
+      added for books 102070469 or 13909 in 2022 compared to 2021?
+    question_greek: "Ποια συγκεκριμένα Μαθήματα (με Τμήμα και Πανεπιστήμιο) εισήγαγαν για πρώτη φορά τα βιβλία 102070469 ή 13909 το 2022 σε σχέση με το 2021;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code { "102070469" "13909" }
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?m evdx:title ?mtitle .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER NOT EXISTS {
+              ?c1 evdx:year 2021 .
+              ?c1 evdx:hasModule ?m1 .
+              ?m1 a evdx:Module .
+              VALUES ?code1 { "102070469" "13909" }
+              ?s1 evdx:hasCode ?code1 .
+              ?m1 evdx:hasBook ?s1 .
+              ?m1 evdx:title ?mtitle .
+              ?c1 a evdx:Course .
+              ?d evdx:hasCourse ?c1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-difference-by-year
+    granularity: module
+    comparison_mode: set
+    few_shot_priority: 9
+    notes: >
+      Module-level variant. Unlike ex-005/006, this constrains on ?mtitle
+      inside FILTER NOT EXISTS — a module with the same title must not have
+      existed in 2021. This is a stricter, different query than ex-005.
+
+  # ---------------------------------------------------------------------------
+  # Q8 — multi-book-comparison
+  # ---------------------------------------------------------------------------
+  - id: ex-008
+    source: "notes/draftedQueries.txt#Q8"
+    question_english: >
+      Compare the reach of book group A (codes 94700120, 12867416) vs group B
+      (codes 102070469, 13909) in 2022: how many universities, departments,
+      and modules use each group?
+    question_greek: "Σύγκρινε την εμβέλεια της ομάδας βιβλίων 94700120 και 12867416 με την ομάδα 102070469 και 13909 για το 2022: σε πόσα Πανεπιστήμια, Τμήματα και Μαθήματα χρησιμοποιείται η κάθε ομάδα;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (GROUP_CONCAT(DISTINCT ?code;SEPARATOR=", ") AS ?Book) (COUNT(DISTINCT ?u) AS ?Universities) (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?m) AS ?NoOfModules)
+      WHERE {
+        ?s a evdx:Book .
+        VALUES (?book ?code) { (1 "94700120") (1 "12867416") (2 "102070469") (2 "13909")}
+        ?s evdx:hasCode ?code .
+        ?m a evdx:Module .
+        ?m evdx:hasBook ?s .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+        ?c evdx:hasModule ?m .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+        ?u a evdx:University .
+        ?u evdx:hasDepartment ?d .
+      } GROUP BY ?book
+    query_shape: multi-book-comparison
+    granularity: n/a
+    comparison_mode: set
+    few_shot_priority: 10
+    notes: >
+      Uses a 2-column VALUES tuple (?book ?code) to assign an integer group ID
+      to each code, then groups by ?book. Scoped COUNT(DISTINCT) is safe here.
+
+  # ---------------------------------------------------------------------------
+  # Q9 — set-difference-by-book (module)
+  # ---------------------------------------------------------------------------
+  - id: ex-009
+    source: "notes/draftedQueries.txt#Q9"
+    question_english: >
+      Which modules (with department and university) use books 102070469 or
+      13909 but NOT book 94700120 in 2022?
+    question_greek: "Ποια Μαθήματα (με Τμήμα και Πανεπιστήμιο) χρησιμοποιούν τα βιβλία 102070469 ή 13909 αλλά ΟΧΙ το βιβλίο 94700120 το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code {"102070469" "13909"}
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER NOT EXISTS {
+              VALUES ?code1 {"94700120"}
+              ?s1 evdx:hasCode ?code1 .
+              ?m evdx:hasBook ?s1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-difference-by-book
+    granularity: module
+    comparison_mode: set
+    few_shot_priority: 5
+    notes: >
+      FILTER NOT EXISTS checks that the same ?m does not also link to the
+      excluded book. No ?m1 alias needed — the module identity is the same.
+
+  # ---------------------------------------------------------------------------
+  # Q10 — set-difference-by-book (department)
+  # ---------------------------------------------------------------------------
+  - id: ex-010
+    source: "notes/draftedQueries.txt#Q10"
+    question_english: >
+      Which departments (with university and module details) use book 94700120
+      but NOT books 102070469 or 13909 in 2022?
+    question_greek: "Ποια Τμήματα (με Πανεπιστήμιο και Μαθήματα) χρησιμοποιούν το βιβλίο 94700120 αλλά ΟΧΙ τα βιβλία 102070469 ή 13909 το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code {"94700120"}
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER NOT EXISTS {
+              ?m1 a evdx:Module .
+              VALUES ?code1 {"102070469" "13909"}
+              ?s1 evdx:hasCode ?code1 .
+              ?m1 evdx:hasBook ?s1 .
+              ?c evdx:hasModule ?m1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-difference-by-book
+    granularity: department
+    comparison_mode: set
+    few_shot_priority: 11
+    notes: >
+      Department-level variant: FILTER NOT EXISTS checks that no ?m1 module
+      in the same ?c course uses the excluded books.
+
+  # ---------------------------------------------------------------------------
+  # Q11 — set-difference-by-book (university)
+  # ---------------------------------------------------------------------------
+  - id: ex-011
+    source: "notes/draftedQueries.txt#Q11"
+    question_english: >
+      Which universities (with department and module details) use book 94700120
+      but NOT books 102070469 or 13909 in 2022?
+    question_greek: "Ποια Πανεπιστήμια (με Τμήματα και Μαθήματα) χρησιμοποιούν το βιβλίο 94700120 αλλά ΟΧΙ τα βιβλία 102070469 ή 13909 το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code {"94700120"}
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER NOT EXISTS {
+              ?m1 a evdx:Module .
+              VALUES ?code1 {"102070469" "13909"}
+              ?s1 evdx:hasCode ?code1 .
+              ?m1 evdx:hasBook ?s1 .
+              ?c1 a evdx:Course .
+              ?c1 evdx:year 2022 .
+              ?c1 evdx:hasModule ?m1 .
+              ?d1 evdx:hasCourse ?c1 .
+              ?u evdx:hasDepartment ?d1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-difference-by-book
+    granularity: university
+    comparison_mode: set
+    few_shot_priority: 12
+    notes: >
+      University-level: FILTER NOT EXISTS requires no department of this
+      university to have used the excluded books in 2022.
+
+  # ---------------------------------------------------------------------------
+  # Q12 — set-intersection-by-book (module)
+  # ---------------------------------------------------------------------------
+  - id: ex-012
+    source: "notes/draftedQueries.txt#Q12"
+    question_english: >
+      Which modules (with department and university) use BOTH book 94700120
+      AND books 102070469 or 13909 in 2022?
+    question_greek: "Ποια Μαθήματα (με Τμήμα και Πανεπιστήμιο) χρησιμοποιούν ΚΑΙ το βιβλίο 94700120 ΚΑΙ τα βιβλία 102070469 ή 13909 το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code {"102070469" "13909"}
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER EXISTS {
+              VALUES ?code1 {"94700120"}
+              ?s1 evdx:hasCode ?code1 .
+              ?m evdx:hasBook ?s1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-intersection-by-book
+    granularity: module
+    comparison_mode: set
+    few_shot_priority: 6
+    notes: >
+      FILTER EXISTS (not NOT EXISTS) confirms the same ?m also links to the
+      required second book. Mirror of ex-009.
+
+  # ---------------------------------------------------------------------------
+  # Q13 — set-intersection-by-book (department)
+  # ---------------------------------------------------------------------------
+  - id: ex-013
+    source: "notes/draftedQueries.txt#Q13"
+    question_english: >
+      Which departments (with university and module details) use BOTH book
+      94700120 AND books 102070469 or 13909 in 2022?
+    question_greek: "Ποια Τμήματα (με Πανεπιστήμιο και Μαθήματα) χρησιμοποιούν ΚΑΙ το βιβλίο 94700120 ΚΑΙ τα βιβλία 102070469 ή 13909 το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (?dn AS ?Department) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        {
+          SELECT DISTINCT ?un ?dn ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code {"102070469" "13909"}
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?d evdx:name ?dn .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER EXISTS {
+              ?m1 a evdx:Module .
+              VALUES ?code1 {"94700120"}
+              ?s1 evdx:hasCode ?code1 .
+              ?m1 evdx:hasBook ?s1 .
+              ?c evdx:hasModule ?m1 .
+            }
+          }
+        }
+      } GROUP BY ?un ?dn
+    query_shape: set-intersection-by-book
+    granularity: department
+    comparison_mode: set
+    few_shot_priority: 13
+    notes: "Department-level intersection. FILTER EXISTS checks some ?m1 in the same ?c."
+
+  # ---------------------------------------------------------------------------
+  # Q14 — set-intersection-by-book (university)
+  # ---------------------------------------------------------------------------
+  - id: ex-014
+    source: "notes/draftedQueries.txt#Q14"
+    question_english: >
+      Which universities (with department and module details) use BOTH book
+      94700120 AND books 102070469 or 13909 in 2022?
+    question_greek: "Ποια Πανεπιστήμια (με Τμήματα και Μαθήματα) χρησιμοποιούν ΚΑΙ το βιβλίο 94700120 ΚΑΙ τα βιβλία 102070469 ή 13909 το 2022;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (?un AS ?University) (COUNT(DISTINCT ?d) AS ?NumberOfDepts) (GROUP_CONCAT(?dn;SEPARATOR=", ") AS ?Departments) (COUNT(?m) AS ?NoOfModules) (GROUP_CONCAT(?mt;SEPARATOR=", ") AS ?Modules)
+      WHERE {
+        ?m evdx:title ?mt .
+        ?d evdx:name ?dn .
+        {
+          SELECT DISTINCT ?un ?d ?m
+          WHERE {
+            ?s a evdx:Book .
+            VALUES ?code {"102070469" "13909"}
+            ?s evdx:hasCode ?code .
+            ?m a evdx:Module .
+            ?m evdx:hasBook ?s .
+            ?c a evdx:Course .
+            ?c evdx:year 2022 .
+            ?c evdx:hasModule ?m .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name ?un .
+            FILTER EXISTS {
+              ?m1 a evdx:Module .
+              VALUES ?code1 {"94700120"}
+              ?s1 evdx:hasCode ?code1 .
+              ?m1 evdx:hasBook ?s1 .
+              ?c1 a evdx:Course .
+              ?c1 evdx:year 2022 .
+              ?c1 evdx:hasModule ?m1 .
+              ?d1 evdx:hasCourse ?c1 .
+              ?u evdx:hasDepartment ?d1 .
+            }
+          }
+        }
+      } GROUP BY ?un
+    query_shape: set-intersection-by-book
+    granularity: university
+    comparison_mode: set
+    few_shot_priority: 14
+    notes: >
+      University-level intersection. Output groups by ?un (not ?un ?dn) and
+      aggregates departments inside the outer SELECT.
+
+  # ---------------------------------------------------------------------------
+  # Q15 — negative-existence (department)
+  # ---------------------------------------------------------------------------
+  - id: ex-015
+    source: "notes/draftedQueries.txt#Q15"
+    question_english: >
+      Which departments (and their university) have a course in 2022 but no
+      assigned modules — i.e. are effectively inactive that year?
+    question_greek: "Ποια Τμήματα (με το Πανεπιστήμιό τους) έχουν πρόγραμμα σπουδών το 2022 αλλά δεν έχει ανατεθεί κανένα μάθημα — δηλαδή είναι ανενεργά εκείνη τη χρονιά;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT ?dn ?un
+      WHERE {
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+        ?d evdx:hasCourse ?c .
+        ?d evdx:name ?dn .
+        ?u evdx:hasDepartment ?d .
+        ?u evdx:name ?un .
+        FILTER NOT EXISTS {
+          ?c evdx:hasModule ?m .
+        }
+      }
+    query_shape: negative-existence
+    granularity: department
+    comparison_mode: set
+    few_shot_priority: 2
+    notes: >
+      Note: evdx:Course is a study programme — NOT a single course offering.
+      A "course with no modules" means the programme had no course offerings
+      (evdx:Module) that year. This exercises the Course-vs-Module distinction.
+
+  # ---------------------------------------------------------------------------
+  # Q16 — negative-existence (university)
+  # ---------------------------------------------------------------------------
+  - id: ex-016
+    source: "notes/draftedQueries.txt#Q16"
+    question_english: >
+      Which universities had no active modules at all in 2022 — i.e. none of
+      their departments offered any course modules that year?
+    question_greek: "Ποια Πανεπιστήμια δεν είχαν κανένα ενεργό μάθημα το 2022 — δηλαδή κανένα Τμήμα τους δεν πρόσφερε μαθήματα εκείνη τη χρονιά;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT ?u ?un
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name ?un .
+        FILTER NOT EXISTS {
+          ?u evdx:hasDepartment ?d .
+          ?d evdx:hasCourse ?c .
+          ?c evdx:year 2022 .
+          ?c evdx:hasModule ?m .
+        }
+      }
+    query_shape: negative-existence
+    granularity: university
+    comparison_mode: set
+    few_shot_priority: 15
+    notes: >
+      FILTER NOT EXISTS spans the full traversal from ?u through ?d, ?c, ?m.
+      University-level variant of ex-015.
+
+  # ---------------------------------------------------------------------------
+  # Q17 — ranking-by-count (all books, scoped by year) — CRASHES GraphDB
+  # ---------------------------------------------------------------------------
+  - id: ex-017
+    source: "notes/draftedQueries.txt#Q17"
+    question_english: >
+      List all books with their title and count of modules, departments, and
+      universities that use them in 2022, ordered by university count descending.
+    question_greek: "Λίστα όλων των βιβλίων με τίτλο και αριθμό Μαθημάτων, Τμημάτων και Πανεπιστημίων που τα χρησιμοποιούν το 2022, ταξινομημένη φθίνουσα ανά Πανεπιστήμια."
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT ?bt (COUNT(DISTINCT ?u) AS ?Universities) (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?m) AS ?Modules)
+      WHERE {
+        ?s a evdx:Book .
+        ?s evdx:title ?bt .
+        ?m a evdx:Module .
+        ?m evdx:hasBook ?s .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+        ?c evdx:hasModule ?m .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+        ?u a evdx:University .
+        ?u evdx:hasDepartment ?d .
+      } GROUP BY ?s ?bt
+      ORDER BY DESC(?Universities)
+    query_shape: ranking-by-count
+    granularity: n/a
+    comparison_mode: ordered
+    skip_eval: true
+    few_shot_priority: 99
+    notes: >
+      KNOWN ISSUE: COUNT(DISTINCT) over the full book graph (40k+ books) exceeds
+      the GraphDB 250 MB heap limit and crashes (confirmed 2026-05-04).
+      Gold SPARQL is the correct formulation but NOT executable on the current
+      endpoint. A subquery rewrite may help but is unverified. Excluded from
+      eval metrics until resolved.
+
+  # ---------------------------------------------------------------------------
+  # Q18 — ranking-by-count (all books, dept+module sort) — CRASHES GraphDB
+  # ---------------------------------------------------------------------------
+  - id: ex-018
+    source: "notes/draftedQueries.txt#Q18"
+    question_english: >
+      List all books with title, department count, and module count for 2022,
+      ordered by department count then module count descending.
+    question_greek: "Λίστα βιβλίων με τίτλο, αριθμό Τμημάτων και αριθμό Μαθημάτων για το 2022, ταξινομημένη φθίνουσα πρώτα ανά Τμήματα και μετά ανά Μαθήματα."
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT ?bt (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?m) AS ?Modules)
+      WHERE {
+        ?s a evdx:Book .
+        ?s evdx:title ?bt .
+        ?m a evdx:Module .
+        ?m evdx:hasBook ?s .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+        ?c evdx:hasModule ?m .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+      } GROUP BY ?s ?bt
+      ORDER BY DESC(?Departments) DESC(?Modules)
+    query_shape: ranking-by-count
+    granularity: n/a
+    comparison_mode: ordered
+    skip_eval: true
+    few_shot_priority: 99
+    notes: >
+      KNOWN ISSUE: same as ex-017 — full-graph COUNT(DISTINCT) crashes GraphDB.
+      Excluded from eval metrics.
+
+  # ---------------------------------------------------------------------------
+  # NOT_ANSWERABLE entries (ex-019 to ex-021)
+  # ---------------------------------------------------------------------------
+  - id: ex-019
+    source: "handwritten"
+    question_english: >
+      What is the average grade a student received in a module that uses
+      book 94700120?
+    question_greek: "Ποια είναι η μέση βαθμολογία φοιτητή σε μάθημα που χρησιμοποιεί το βιβλίο με κωδικό 94700120;"
+    gold_sparql: "# NOT_ANSWERABLE: EvdoGraph contains no student enrollment or grade data."
+    query_shape: not-answerable
+    granularity: n/a
+    comparison_mode: not-answerable
+    few_shot_priority: 16
+    notes: >
+      Student grades are not in the ontology. Tests that the LLM refuses
+      cleanly rather than hallucinating a query.
+
+  - id: ex-020
+    source: "handwritten"
+    question_english: >
+      How many students enrolled in the Computer Science programme at
+      Aristotle University in 2022?
+    question_greek: "Πόσοι φοιτητές εγγράφηκαν στο πρόγραμμα σπουδών Πληροφορικής του Αριστοτελείου Πανεπιστημίου Θεσσαλονίκης το 2022;"
+    gold_sparql: "# NOT_ANSWERABLE: EvdoGraph contains no student enrollment counts."
+    query_shape: not-answerable
+    granularity: n/a
+    comparison_mode: not-answerable
+    few_shot_priority: 17
+    notes: "Student enrollment counts are not a property in the ontology."
+
+  - id: ex-021
+    source: "handwritten"
+    question_english: >
+      Which books have an ISBN number starting with 978?
+    question_greek: "Ποια βιβλία έχουν αριθμό ISBN που αρχίζει από 978;"
+    gold_sparql: "# NOT_ANSWERABLE: EvdoGraph uses evdx:hasCode (Eudoxus internal code), not ISBN. There is no ISBN property."
+    query_shape: not-answerable
+    granularity: n/a
+    comparison_mode: not-answerable
+    few_shot_priority: 18
+    notes: >
+      Eudoxus codes (evdx:hasCode) are NOT ISBNs. Tests that the LLM
+      distinguishes these rather than mapping ISBN to hasCode.

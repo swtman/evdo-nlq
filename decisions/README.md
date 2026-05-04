@@ -39,3 +39,5 @@ Use `000-template.md` as a starting point. Keep it short — 200–400 words is 
 | 002 | Pluggable LLM provider abstraction | Accepted |
 | 003 | Remote GraphDB (no local triple store) | Accepted |
 | 004 | NLQ pipeline design — streaming, per-request provider, retry, ontology loading | Accepted |
+| 005 | Evaluation methodology for NL→SPARQL quality | Accepted |
+| 006 | Static few-shot prompt v2 and deferred dynamic retrieval | Accepted |
