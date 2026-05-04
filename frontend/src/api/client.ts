@@ -46,39 +46,49 @@ export async function* streamQuery(
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
 
-  // SSE messages are separated by double newlines (\n\n).
+  // SSE messages are separated by double newlines.
   // We accumulate incomplete chunks in `buffer` until a full message arrives.
+  // sse_starlette (the backend SSE library) uses \r\n line endings and \r\n\r\n
+  // event separators. We normalize CRLF → LF after every read so the rest of
+  // the parser only needs to handle \n.
   let buffer = ''
+
+  /**
+   * Parse and yield all SSE event blocks present in `text`.
+   * Expects LF-only line endings (call after CRLF normalisation).
+   * Handles multi-line data fields by concatenating them with \n.
+   */
+  function* parseBlocks(text: string): Generator<ParsedSSEEvent> {
+    for (const part of text.split('\n\n')) {
+      if (!part.trim()) continue
+      let event = ''
+      const dataLines: string[] = []
+      for (const line of part.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim()
+        else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+      }
+      const data = dataLines.join('\n').trim()
+      if (event && data) yield { event, data }
+    }
+  }
 
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) {
-        buffer += decoder.decode() // flush any remaining multi-byte sequence
-        break
-      }
 
-      buffer += decoder.decode(value, { stream: true })
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
+      // Normalise CRLF to LF so \n\n reliably marks event boundaries.
+      buffer = buffer.replace(/\r\n/g, '\n')
 
-      // Split on the SSE message delimiter.
       const parts = buffer.split('\n\n')
+      // On stream end: keep all parts so the final event (which may lack a
+      // trailing \n\n) is also processed. On a normal read: keep the last
+      // element as an incomplete fragment for the next iteration.
+      buffer = done ? '' : (parts.pop() ?? '')
 
-      // The last element is either empty or an incomplete message — keep it in the buffer.
-      buffer = parts.pop() ?? ''
+      yield* parseBlocks(parts.join('\n\n'))
 
-      for (const part of parts) {
-        if (!part.trim()) continue
-
-        // Parse the `event:` and `data:` fields from each SSE message block.
-        let event = ''
-        let data = ''
-        for (const line of part.split('\n')) {
-          if (line.startsWith('event: ')) event = line.slice(7).trim()
-          else if (line.startsWith('data: ')) data = line.slice(6).trim()
-        }
-
-        if (event && data) yield { event, data }
-      }
+      if (done) break
     }
   } finally {
     // Always release the reader lock, even if we were aborted.
