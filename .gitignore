@@ -55,3 +55,10 @@ thesis/*.pdf
 thesis/*.run.xml
 thesis/*.synctex.gz
 thesis/*.toc
+
+# ── Claude Skills ────────────────────────────────────────────────────────────
+.superpowers/
+
+
+# TODO: Add thesis/ , decisions/ , docs/ , TODO.md , notes/ and all the CLAUDE.md files
+# and remove them from the github repo by ``git rm --cached TODO.md`` etc. 

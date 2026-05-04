@@ -17,10 +17,10 @@
 
 ## Phase 1 — Ontology Exploration
 
-- [ ] Run `scripts/explore_ontology.py` to dump classes + properties into `notes/ONTOLOGY-NOTES.md`
-- [ ] Fill in the real namespace/prefix for EvdoGraph in `ONTOLOGY-NOTES.md`
-- [ ] Confirm exact class URIs and property URIs (replace educated guesses in ONTOLOGY-NOTES.md)
-- [ ] Write 3–5 hand-crafted SPARQL queries that answer real questions → these become few-shot examples
+- [x] Run `scripts/explore_ontology.py` to dump classes + properties into `notes/ONTOLOGY-NOTES.md`
+- [x] Fill in the real namespace/prefix for EvdoGraph in `ONTOLOGY-NOTES.md`
+- [x] Confirm exact class URIs and property URIs (replace educated guesses in ONTOLOGY-NOTES.md)
+- [x] Write 3–5 hand-crafted SPARQL queries that answer real questions → these become few-shot examples
 
 ---
 
@@ -28,19 +28,19 @@
 
 > All code goes under `backend/app/`. Follow the layout in `backend/CLAUDE.md`.
 
-- [ ] Create `backend/app/config.py` — Pydantic settings (reads from `.env`)
-- [ ] Create `backend/app/main.py` — FastAPI app entrypoint, CORS
-- [ ] Create `backend/app/api/query.py` — `POST /query` endpoint
-- [ ] Create `backend/app/llm/base.py` — `LLMProvider` protocol + `LLMResponse` dataclass
-- [ ] Create `backend/app/llm/fake_provider.py` — returns canned SPARQL, no network
-- [ ] Create `backend/app/llm/cache.py` — disk cache keyed on `sha256(system + user + model)`
-- [ ] Create `backend/app/llm/claude_provider.py` — Anthropic implementation (uses cache)
-- [ ] Create `backend/app/sparql/client.py` — SPARQLWrapper client with error handling + retry
-- [ ] Create `backend/app/ontology/loader.py` — loads a compact ontology summary, cached in memory
-- [ ] Create `backend/app/prompts/loader.py` — reads versioned prompt files from `prompts/`
-- [ ] Copy `.env.example` to `.env` and fill in API key + endpoint
-- [ ] Write unit tests in `backend/tests/` using `FakeProvider`
-- [ ] Confirm `uv run fastapi dev app/main.py` starts without errors
+- [x] Create `backend/app/config.py` — Pydantic settings (reads from `.env`)
+- [x] Create `backend/app/main.py` — FastAPI app entrypoint, CORS
+- [x] Create `backend/app/api/query.py` — `POST /query` endpoint
+- [x] Create `backend/app/llm/base.py` — `LLMProvider` protocol + `LLMResponse` dataclass
+- [x] Create `backend/app/llm/fake_provider.py` — returns canned SPARQL, no network
+- [x] Create `backend/app/llm/cache.py` — disk cache keyed on `sha256(system + user + model)`
+- [x] Create `backend/app/llm/claude_provider.py` — Anthropic implementation (uses cache)
+- [x] Create `backend/app/sparql/client.py` — SPARQLWrapper client with error handling + retry
+- [x] Create `backend/app/ontology/loader.py` — loads a compact ontology summary, cached in memory
+- [x] Create `backend/app/prompts/loader.py` — reads versioned prompt files from `prompts/`
+- [x] Copy `.env.example` to `.env` and fill in API key + endpoint
+- [x] Write unit tests in `backend/tests/` using `FakeProvider`
+- [x] Confirm `uv run fastapi dev app/main.py` starts without errors
 
 ---
 
@@ -57,13 +57,13 @@
 
 > Follow `frontend/CLAUDE.md`. Use `pnpm`.
 
-- [ ] Scaffold frontend with `pnpm create vite` (React + TypeScript)
-- [ ] Create a basic query input form (text box + submit button)
-- [ ] Wire form to `POST /query` on the backend
-- [ ] Display results in a table
-- [ ] Display the generated SPARQL (so the user can see what was run)
-- [ ] Basic error handling (show meaningful message if query fails)
-- [ ] Run `pnpm typecheck` with no errors
+- [x] Scaffold frontend with `pnpm create vite` (React + TypeScript)
+- [x] Create a basic query input form (text box + submit button)
+- [x] Wire form to `POST /query` on the backend
+- [x] Display results in a table
+- [x] Display the generated SPARQL (so the user can see what was run)
+- [x] Basic error handling (show meaningful message if query fails)
+- [x] Run `pnpm typecheck` with no errors
 
 ---
 
