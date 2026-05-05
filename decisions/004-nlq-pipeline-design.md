@@ -97,6 +97,7 @@ With the core abstractions in place (FastAPI — ADR-001, pluggable LLM — ADR-
 - `LLMProvider` protocol gains a `stream()` method alongside `generate()` — additive, no breaking change.
 - Retry prompt logic lives in `prompts/nl-to-sparql-retry-v1.md`, decoupled from application code.
 - `ontology/loader.py` has no network dependency; backend starts instantly.
+- `SparqlClient.execute()` only supports SELECT queries. CONSTRUCT and ASK return different response shapes and are not handled — they would silently produce an empty result. The LLM prompt enforces SELECT-only as a convention; there is no runtime check. If CONSTRUCT or ASK support is ever needed, `execute()` must be extended to detect the query type and parse accordingly.
 
 ## Follow-ups
 

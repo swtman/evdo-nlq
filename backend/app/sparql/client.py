@@ -1,7 +1,39 @@
-"""SPARQL client for EvdoGraph's GraphDB endpoint.
+"""
+SPARQL client for EvdoGraph's GraphDB endpoint.
 
-validate_sparql() uses rdflib for offline parse checking (no network).
-SparqlClient.execute() makes a live HTTP call to GraphDB.
+TWO RESPONSIBILITIES, KEPT SEPARATE ON PURPOSE
+------------------------------------------------
+This file has exactly two public surfaces:
+
+  1. validate_sparql() — checks whether a SPARQL string is syntactically
+     correct. Pure Python, no network, runs in milliseconds.
+
+  2. SparqlClient.execute() — sends a validated SPARQL query to GraphDB
+     over HTTP and returns the results. Real network call.
+
+The separation matters because validate_sparql() is called inside a retry
+loop (up to 3 times per request). Making a network call on every validation
+attempt would be slow and fragile. Instead, validation is completely free —
+only a confirmed-valid query ever touches the network.
+
+WHAT IS SPARQL?
+---------------
+SPARQL (pronounced "sparkle") is the query language for RDF knowledge graphs,
+similar to SQL for relational databases. A typical query looks like:
+
+    PREFIX evdx: <https://w3id.org/evdoxus#>
+    SELECT DISTINCT ?title WHERE {
+        ?book a evdx:Book ;
+              evdx:title ?title .
+    }
+    LIMIT 10
+
+WHAT IS GraphDB?
+----------------
+GraphDB is the database that stores the EvdoGraph knowledge graph. It runs at
+`http://lod.csd.auth.gr:7200/repositories/Evdoxus` (a university server) and
+exposes a standard SPARQL 1.1 HTTP endpoint — it accepts a query as a URL
+parameter and responds with JSON results.
 """
 
 from __future__ import annotations
@@ -10,6 +42,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+# SPARQLWrapper is a third-party library that handles the HTTP details of
+# talking to a SPARQL endpoint: URL-encoding the query, setting the correct
+# Accept header, and parsing the JSON response.
+# `JSON` is a constant that tells SPARQLWrapper to request results in
+# application/sparql-results+json format (the standard for SELECT queries).
 from SPARQLWrapper import JSON, SPARQLWrapper
 
 logger = logging.getLogger(__name__)
@@ -17,39 +54,200 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SparqlResult:
+    """The structured result of a SPARQL SELECT query.
+
+    This is what execute() returns, and what the pipeline forwards to the
+    frontend as a ResultsEvent (rendered as a table in the UI).
+
+    Fields
+    ------
+    columns : list[str]
+        The variable names from the SELECT clause, e.g. ["title", "author"].
+        These become the table column headers in the frontend.
+    rows : list[dict[str, Any]]
+        One dict per result row. Each dict maps a column name to its value.
+
+        IMPORTANT — unbound variables become None:
+        If a query uses OPTIONAL { ... } and a value is missing for a given
+        row, that column's value will be None (JSON null) rather than the
+        key being absent. The key is always present for every column.
+
+        Example for a query with columns ["title", "isbn"]:
+            [
+              {"title": "Αλγόριθμοι", "isbn": "978-..."},
+              {"title": "Γραφήματα",   "isbn": None}   ← no ISBN for this book
+            ]
+    """
+
     columns: list[str]
     rows: list[dict[str, Any]]
 
 
 def validate_sparql(query: str) -> str | None:
-    """Return a parse error string if the query is invalid, or None if valid."""
+    """Check whether a SPARQL string is syntactically correct — no network needed.
+
+    Uses rdflib's built-in SPARQL parser to check the query grammar entirely
+    in memory. This is called after every LLM generation attempt (up to 3
+    times per request) to decide whether to execute or retry.
+
+    WHAT IT CHECKS
+    --------------
+    Syntax only: correct keyword order, valid triple patterns, proper use of
+    PREFIX, FILTER, OPTIONAL, UNION, variable names, etc.
+
+    WHAT IT DOES NOT CHECK
+    ----------------------
+    - Whether the URIs / properties / classes actually exist in GraphDB.
+    - Whether the query will return any results.
+    - Whether the query will time out on a large dataset.
+
+    A query can pass this check and still return zero rows, or even trigger
+    a GraphDB-level error (e.g. referencing a property that does not exist
+    in the ontology). The retry loop is only triggered by parse failures —
+    it cannot help with semantically wrong queries.
+
+    WHY THE IMPORT IS INSIDE THE FUNCTION
+    --------------------------------------
+    `from rdflib.plugins.sparql.parser import parseQuery` is placed here, not
+    at the top of the file. This is called a *deferred import*. rdflib is a
+    large library; importing it at module load time would slow down every
+    process startup even when validation is never called (e.g. in some tests).
+    Python caches imports after the first call, so the cost is paid only once.
+
+    Parameters
+    ----------
+    query : str
+        The raw SPARQL string generated by the LLM.
+
+    Returns
+    -------
+    str | None
+        None if the query is valid (no error).
+        A human-readable error message string if parsing failed. This string
+        is injected into the retry prompt so the LLM knows what went wrong.
+    """
     from rdflib.plugins.sparql.parser import parseQuery
 
     try:
         parseQuery(query)
-        return None
+        return None  # valid — no error
     except Exception as exc:
+        # rdflib can raise several different exception types depending on
+        # what part of the grammar fails. Catching broadly and converting to
+        # a string gives the retry prompt a readable explanation without
+        # needing to handle each exception type separately.
         return str(exc)
 
 
 class SparqlClient:
-    """HTTP client for a SPARQL 1.1 endpoint (read-only)."""
+    """HTTP client for sending SELECT queries to the GraphDB SPARQL endpoint.
+
+    Constructed once per request in `_make_pipeline()` inside `app/api/query.py`:
+        SparqlClient(settings.graphdb_endpoint)
+
+    The endpoint URL comes from `settings.graphdb_endpoint` (from .env), but
+    `SparqlClient` itself does not import `settings` — the URL is passed in
+    as a plain string. This keeps the class easy to test (just pass any URL)
+    and free of hidden global-state coupling.
+
+    Only SELECT queries are supported. CONSTRUCT and ASK queries return
+    different response formats that execute() does not handle.
+    """
 
     def __init__(self, endpoint: str) -> None:
+        """Store the GraphDB endpoint URL. No connection is opened yet.
+
+        Parameters
+        ----------
+        endpoint : str
+            Full URL of the SPARQL endpoint, e.g.
+            "http://lod.csd.auth.gr:7200/repositories/Evdoxus".
+            HTTP connections are opened lazily inside execute().
+        """
         self._endpoint = endpoint
 
     def execute(self, query: str) -> SparqlResult:
-        """Execute a SELECT query and return structured results."""
+        """Send a SPARQL SELECT query to GraphDB and return structured results.
+
+        This is the only method that makes a real network call. It is called
+        once per request, in Phase 3 of the pipeline, after the query has
+        already been validated by validate_sparql().
+
+        HOW THE HTTP CALL WORKS
+        -----------------------
+        SPARQLWrapper encodes the query into a URL parameter and sends an
+        HTTP GET to `{endpoint}?query={url-encoded-sparql}`. GraphDB responds
+        with a JSON object in the W3C SPARQL 1.1 Query Results format:
+
+            {
+              "head": { "vars": ["title", "author"] },
+              "results": {
+                "bindings": [
+                  {"title": {"value": "Αλγόριθμοι"}, "author": {"value": "Knuth"}},
+                  {"title": {"value": "Γραφήματα"}}   ← "author" not bound here
+                ]
+              }
+            }
+
+        execute() unwraps this structure into a flat SparqlResult.
+
+        WHAT CAN GO WRONG
+        -----------------
+        - Network error (GraphDB unreachable, timeout): SPARQLWrapper raises
+          an exception. execute() catches it, logs it, and re-raises it as a
+          RuntimeError. The pipeline's route handler maps this to HTTP 502.
+        - GraphDB rejects the query (e.g. the query is syntactically valid
+          but uses a feature GraphDB does not support): same — RuntimeError.
+        - Query is valid but GraphDB returns no rows: NOT an error. execute()
+          returns a SparqlResult with an empty `rows` list.
+
+        Parameters
+        ----------
+        query : str
+            A syntactically valid SPARQL SELECT query string.
+
+        Returns
+        -------
+        SparqlResult
+            Columns and rows extracted from GraphDB's JSON response.
+            Unbound OPTIONAL variables appear as None in the row dicts.
+
+        Raises
+        ------
+        RuntimeError
+            If the HTTP call fails or GraphDB returns an error response.
+            The original exception is chained (`from exc`) so the full
+            traceback is preserved for debugging.
+        """
+        # A new SPARQLWrapper is created for each call — no persistent
+        # connection is reused. Fine for single-user thesis-demo workload.
         wrapper = SPARQLWrapper(self._endpoint)
         wrapper.setQuery(query)
-        wrapper.setReturnFormat(JSON)
+        wrapper.setReturnFormat(JSON)  # request application/sparql-results+json
+
         try:
+            # wrapper.query() sends the HTTP request.
+            # .convert() reads the response body and parses the JSON into a dict.
             raw = wrapper.query().convert()
         except Exception as exc:
             logger.error("SPARQL execution failed: %s", exc)
+            # Re-raise as RuntimeError so callers don't need to know about
+            # SPARQLWrapper internals. `from exc` preserves the original
+            # traceback so it still shows up in logs.
             raise RuntimeError(f"SPARQL execution failed: {exc}") from exc
 
+        # Extract column names from "head".vars — defensive .get() in case
+        # the response is missing the key (malformed but non-crashing response).
         columns: list[str] = raw.get("head", {}).get("vars", [])
+
+        # Each binding is one result row as a dict of {var: {"value": "..."}}.
         bindings: list[dict] = raw.get("results", {}).get("bindings", [])
-        rows = [{col: b[col]["value"] if col in b else None for col in columns} for b in bindings]
+
+        # Unwrap the {"value": "..."} envelope for each cell.
+        # `col in b` is False for unbound OPTIONAL variables → those become None.
+        rows = [
+            {col: b[col]["value"] if col in b else None for col in columns}
+            for b in bindings
+        ]
+
         return SparqlResult(columns=columns, rows=rows)

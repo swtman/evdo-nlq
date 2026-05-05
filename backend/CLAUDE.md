@@ -167,6 +167,8 @@ Business logic lives in `QueryPipeline.stream_events()` (streaming) and `QueryPi
 5. **Execute** — `SparqlClient.execute()` via SPARQLWrapper against GraphDB → `ResultsEvent`.
 6. **Done** — `DoneEvent` carries provider, model, token counts, retry count.
 
+**SELECT-only constraint:** `SparqlClient.execute()` assumes the SPARQL SELECT JSON response shape (`head.vars` + `results.bindings`). CONSTRUCT and ASK queries return different formats and are not handled — they would silently return an empty result. The LLM prompt instructs the model to only generate SELECT queries; this is a convention-level constraint, not enforced in code.
+
 ## Tests
 
 - Use `FakeProvider` for anything that isn't explicitly a live-API test.
