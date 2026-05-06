@@ -37,7 +37,7 @@ Active prompt: nl-to-sparql-v2 (static few-shot, 6 examples injected into {few_s
 | `decisions/` | Architecture Decision Records (ADRs 001–006) — read these to understand *why* code is shaped this way |
 | `prompts/` | Versioned LLM prompt templates: `nl-to-sparql-v2.md` (active), `nl-to-sparql-v1.md` (archived), `nl-to-sparql-retry-v1.md`, `ontology-summary.md`, `examples.yaml` (21 gold few-shot examples) |
 | `notes/` | Running notes: `PROGRESS.md` (session log), `ONTOLOGY-NOTES.md` (EvdoGraph schema notes) |
-| `notes/eval-runs/` | Eval harness Markdown reports (auto-named by date/version/provider) |
+| `notes/eval-runs/` | Eval harness Markdown reports (auto-named by date/version/provider). Each report includes a Provenance section (git SHA, prompt file hash, examples.yaml hash) so runs are reproducible and traceable. |
 | `scripts/` | Standalone helpers (SPARQL smoke test, ontology introspection) |
 | `docs/` | Design specs and implementation plans (`docs/superpowers/`) |
 

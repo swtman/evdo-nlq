@@ -76,7 +76,11 @@ uv run mypy app                      # type-check
 
 # Eval harness (needs live GraphDB; fake provider OK for structure testing)
 uv run python scripts/eval.py --prompt-version 2 --provider claude --model claude-haiku-4-5 --language both
-uv run python scripts/eval.py --prompt-version 1 --provider fake --language english    # offline smoke-test
+uv run python scripts/eval.py --prompt-version 1 --provider fake --language english      # offline smoke-test
+uv run python scripts/eval.py --prompt-version 2 --provider claude --example-id ex-005   # single example
+uv run python scripts/eval.py --prompt-version 2 --provider claude --shape negative-existence  # one shape
+uv run python scripts/eval.py --prompt-version 2 --provider claude --no-cache            # bypass disk cache
+uv run python scripts/eval.py --prompt-version 2 --provider claude --no-skip-eval        # include WIP examples
 ```
 
 ### Running live tests
@@ -161,12 +165,21 @@ Runs every non-`skip_eval` gold example from `prompts/examples.yaml` through the
 | `--model` | `claude-haiku-4-5` | Any model string accepted by the provider |
 | `--language` | `both` | `greek`, `english`, or `both` (runs each example twice) |
 | `--output` | auto | Path for the report; auto-named `YYYY-MM-DD-vN-<lang>-<provider>-<model>.md` |
+| `--no-skip-eval` | off | Include `skip_eval: true` examples (excluded by default) |
+| `--no-cache` | off | Bypass DiskCache for a fresh-LLM run (sets `LLM_CACHE_DISABLED=1`) |
+| `--example-id ID` | — | Run only this one example (e.g. `--example-id ex-005`) |
+| `--shape SHAPE` | — | Run only examples with this query_shape (e.g. `--shape negative-existence`) |
 
 **Key behaviours:**
-- `skip_eval: true` examples are always excluded (no CLI flag to override).
-- Generated SPARQL has `LIMIT`/`OFFSET` stripped before execution to allow fair comparison with gold queries that have no limit.
-- Requires live GraphDB (`lod.csd.auth.gr:7200`). The `fake` provider can be used but will always fail result-set comparison (useful for testing harness wiring).
-- Results: v1 scored 0%, v2 (English) scored 26% result-set match (2026-05-04 baseline).
+- Gold SPARQL is validated at startup via rdflib — the harness refuses to run if any gold query is broken.
+- `comparison_mode` values are validated at startup — unknown modes (e.g. typos) exit immediately.
+- Generated SPARQL has its **trailing** (outermost) `LIMIT`/`OFFSET` stripped before execution. The regex is anchored to end-of-string, so `LIMIT` inside subqueries (e.g. `{ SELECT ?x ORDER BY ?n LIMIT 1 }`) is preserved.
+- Result-set comparison is **positional**: values are extracted in each query's own SELECT column order. Different variable names are tolerated (`?title` vs `?t`); swapped column ordering is a failure.
+- Gold execution failures are excluded from metrics (`result_match=None`, `broken_gold=True`) — not counted as model failures. The report shows a broken-gold count separately.
+- `NOT_ANSWERABLE` detection imports `_is_not_answerable` directly from `app.pipeline.query_pipeline` so eval and production use the exact same detection logic. If you rename that function, update the import in `scripts/eval.py` too.
+- `_FixedSystemPipeline` (a local subclass inside `_build_pipeline`) overrides `run()` to skip GraphDB execution. The eval harness executes both gold and generated queries itself — in the correct order, with LIMIT stripped — so the pipeline must not execute the generated query a second time.
+- Each report includes a Provenance section: git SHA, sha256[:12] of the prompt file and `examples.yaml`.
+- Results: v1 scored 0%, v2 (English) scored 26% result-set match (2026-05-04 baseline — note: pre-comparison-fix numbers; re-run to get updated scores).
 
 ## Token-saving rules
 
