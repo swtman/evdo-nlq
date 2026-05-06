@@ -62,7 +62,7 @@ IEEE numeric `[1]` is standard for CSD thesis work. Keep all references in `refe
 | 03 Related Work | papers on NL→SPARQL, text-to-SQL, RAG-over-KGs |
 | 04 System Design | `../decisions/*.md` ADRs rewritten as prose + architecture diagram |
 | 05 Implementation | code walkthrough, screenshots, snippets from `backend/` |
-| 06 Evaluation | output of the eval harness in `scripts/eval.py` |
+| 06 Evaluation | output of the eval harness in `backend/scripts/eval.py`; reports in `notes/eval-runs/` |
 | 07 Conclusions | `notes/PROGRESS.md`, lessons learned, future work |
 
 **This mapping is the key insight.** If you keep ADRs and PROGRESS.md up to date while coding, the writing phase is mostly translation + polish, not invention.

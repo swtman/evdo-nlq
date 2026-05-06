@@ -25,12 +25,14 @@ backend/
 │   ├── ontology/
 │   │   └── loader.py              load_summary() — reads prompts/ontology-summary.md, module-level cache
 │   ├── prompts/
-│   │   └── loader.py              load(name, version) + fill(**kwargs) — module-level cache
+│   │   ├── loader.py              load(name, version) + fill(**kwargs) — module-level cache
+│   │   └── examples_loader.py     load_examples() + select_few_shot(k) — few-shot bank from prompts/examples.yaml
 │   └── config.py                  Pydantic Settings (env-backed via .env)
 ├── tests/
 │   ├── test_cache.py
 │   ├── test_claude_provider.py    includes @pytest.mark.live test (needs ANTHROPIC_API_KEY)
 │   ├── test_config.py
+│   ├── test_examples_loader.py    13 tests — reads real examples.yaml; must run from backend/
 │   ├── test_factory.py
 │   ├── test_fake_provider.py
 │   ├── test_gemini_provider.py    includes @pytest.mark.live test (needs GEMINI_API_KEY)
@@ -39,6 +41,8 @@ backend/
 │   ├── test_query_endpoint.py
 │   ├── test_query_pipeline.py     QueryPipeline unit tests (sync + async, no HTTP)
 │   └── test_sparql_client.py     includes @pytest.mark.live test (needs live GraphDB)
+├── scripts/
+│   └── eval.py                    Eval harness CLI — runs gold examples through pipeline, reports accuracy
 ├── pyproject.toml
 ├── .env.example
 └── CLAUDE.md  ← you are here
@@ -64,11 +68,15 @@ Both `/query` and `/query/stream` accept:
 ```powershell
 uv sync                              # install deps
 uv run fastapi dev app/main.py       # hot-reload dev server on :8000
-uv run pytest -v -m "not live"       # all non-live tests (default — no API keys needed, 40 tests)
+uv run pytest -v -m "not live"       # all non-live tests (default — no API keys needed, 64 tests)
 uv run pytest -m live                # live-API tests (3 tests, costs tokens — see below)
 uv run ruff check .                  # lint
 uv run ruff format .                 # format
 uv run mypy app                      # type-check
+
+# Eval harness (needs live GraphDB; fake provider OK for structure testing)
+uv run python scripts/eval.py --prompt-version 2 --provider claude --model claude-haiku-4-5 --language both
+uv run python scripts/eval.py --prompt-version 1 --provider fake --language english    # offline smoke-test
 ```
 
 ### Running live tests
@@ -124,6 +132,14 @@ class StreamResult:
 - Swap the default by changing `LLM_PROVIDER` / `LLM_MODEL` in `.env`.
 - Never `import anthropic` outside `claude_provider.py`, never `import google.generativeai` outside `gemini_provider.py`.
 
+## Few-shot example bank (`app/prompts/examples_loader.py`)
+
+`select_few_shot(k=6)` is called once per request inside `QueryPipeline.run()` and `QueryPipeline.stream_events()`. It reads `prompts/examples.yaml`, picks one example per `query_shape` (lowest `few_shot_priority` wins), sorts by the canonical shape order, and renders the block into `{few_shot_block}` in `nl-to-sparql-v2.md`.
+
+**Important:** The module uses a process-level cache (`_cache`). Changing `examples.yaml` on disk while the server is running has no effect — restart required.
+
+**DiskCache interaction:** The LLM DiskCache key is `sha256(system + user + model)`. Since `select_few_shot()` returns the same block for the same process, the cache key is stable within a session. But if `examples.yaml` is updated and the server is NOT restarted, stale responses may be served from cache. Restart the server AND clear `backend/.llm_cache/` after changing examples.
+
 ## Pipeline architecture
 
 All business logic lives in `app/pipeline/query_pipeline.py`. Route handlers in `app/api/query.py` are thin wrappers that call `QueryPipeline.run()` or `QueryPipeline.stream_events()`.
@@ -131,6 +147,26 @@ All business logic lives in `app/pipeline/query_pipeline.py`. Route handlers in 
 `QueryPipeline` is constructed per-request via `_make_pipeline()` in `query.py`, which injects both the `LLMProvider` (from `factory.get_provider`) and the `SparqlClient`.
 
 `stream_events()` is an `async` generator. Phase 1 (token streaming) runs each `next()` call in a thread pool (`asyncio.get_running_loop().run_in_executor`) to avoid blocking the event loop. Phases 2–4 use sync calls (acceptable at thesis-demo concurrency).
+
+## Eval harness (`scripts/eval.py`)
+
+Runs every non-`skip_eval` gold example from `prompts/examples.yaml` through the pipeline, executes both the gold SPARQL and generated SPARQL against GraphDB, and writes a Markdown report to `../notes/eval-runs/`.
+
+**CLI flags:**
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--prompt-version` | `2` | `1` or `2` — selects which prompt template to use |
+| `--provider` | `claude` | `claude`, `gemini`, or `fake` |
+| `--model` | `claude-haiku-4-5` | Any model string accepted by the provider |
+| `--language` | `both` | `greek`, `english`, or `both` (runs each example twice) |
+| `--output` | auto | Path for the report; auto-named `YYYY-MM-DD-vN-<lang>-<provider>-<model>.md` |
+
+**Key behaviours:**
+- `skip_eval: true` examples are always excluded (no CLI flag to override).
+- Generated SPARQL has `LIMIT`/`OFFSET` stripped before execution to allow fair comparison with gold queries that have no limit.
+- Requires live GraphDB (`lod.csd.auth.gr:7200`). The `fake` provider can be used but will always fail result-set comparison (useful for testing harness wiring).
+- Results: v1 scored 0%, v2 (English) scored 26% result-set match (2026-05-04 baseline).
 
 ## Token-saving rules
 
@@ -173,7 +209,8 @@ Business logic lives in `QueryPipeline.stream_events()` (streaming) and `QueryPi
 
 - Use `FakeProvider` for anything that isn't explicitly a live-API test.
 - Mark live tests with `@pytest.mark.live` and skip them by default.
-- **50 non-live tests**, **3 live tests**:
+- `test_examples_loader.py` reads the real `prompts/examples.yaml` from disk — not mocked. Must be run from `backend/` or the relative path resolution fails.
+- **64 non-live tests**, **3 live tests**:
   - `test_claude_provider.py::test_live_generate_returns_sparql` — hits Anthropic API
   - `test_gemini_provider.py::test_live_generate_returns_sparql` — hits Google API
   - `test_sparql_client.py::test_live_execute_returns_results` — hits GraphDB

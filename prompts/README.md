@@ -48,4 +48,17 @@ For the evaluation chapter of the thesis you will want to answer "did v2 actuall
 
 | Name | Latest version | Status |
 |---|---|---|
-| nl-to-sparql | v1 | Initial draft — not yet evaluated |
+| nl-to-sparql | v2 | **Active in production.** Static few-shot; evaluated 2026-05-04 (v2 English: 26% result-set match vs 0% for v1) |
+| nl-to-sparql | v1 | Archived — zero-shot baseline. Reachable via `scripts/eval.py --prompt-version 1` only. |
+| nl-to-sparql-retry | v1 | Active — used on SPARQL validation failure (retry path) |
+
+## examples.yaml
+
+Gold example bank used by two consumers:
+
+1. **`backend/app/prompts/examples_loader.py`** — `select_few_shot(k=6)` picks one example per distinct `query_shape`, sorted by `few_shot_priority`, and injects the rendered block into `{few_shot_block}` in `nl-to-sparql-v2.md`.
+2. **`backend/scripts/eval.py`** — runs every non-`skip_eval` example through the pipeline and reports result-set match accuracy.
+
+Schema fields: `id`, `question_english`, `question_greek`, `gold_sparql`, `query_shape`, `granularity`, `comparison_mode`, `few_shot_priority` (optional, lower = higher priority), `skip_eval` (optional, excludes from eval metrics), `notes`.
+
+**Never set `skip_eval: true` without also setting `few_shot_priority: 99`** — otherwise a broken example could be injected as a few-shot example into the live prompt.
