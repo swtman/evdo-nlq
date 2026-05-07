@@ -56,8 +56,15 @@ thesis/*.run.xml
 thesis/*.synctex.gz
 thesis/*.toc
 
+# ── Notes and eval runs ───────────────────────────────────────────────────────
+notes/eval-runs/
+notes/eval-analysis/
+documentationRoadmap.md
+rag-brainstorm-prompt.md
+
 # ── Claude Skills ────────────────────────────────────────────────────────────
 .superpowers/
+.claude/
 
 
 # TODO: Add thesis/ , decisions/ , docs/ , TODO.md , notes/ and all the CLAUDE.md files

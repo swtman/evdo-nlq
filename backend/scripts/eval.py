@@ -991,7 +991,7 @@ def main() -> None:
     edited version.
     """
     parser = argparse.ArgumentParser(description="Eval harness for NL->SPARQL.")
-    parser.add_argument("--prompt-version", type=int, default=2, choices=[1, 2])
+    parser.add_argument("--prompt-version", type=int, default=3, choices=[1, 2, 3, 4])
     parser.add_argument("--provider", default="claude", choices=["claude", "gemini", "fake"])
     parser.add_argument("--model", default="claude-haiku-4-5")
     parser.add_argument(

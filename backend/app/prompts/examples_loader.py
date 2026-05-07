@@ -67,7 +67,7 @@ def load_examples() -> list[dict[str, Any]]:
     return _cache
 
 
-def select_few_shot(k: int = 6, *, include_not_answerable: bool = True) -> str:
+def select_few_shot(k: int = 8, *, include_not_answerable: bool = True) -> str:
     """Return a rendered few-shot text block with up to k examples.
 
     Selects one example per distinct query_shape, ordered by few_shot_priority

@@ -19,6 +19,11 @@ Key properties:
 - evdx:hasCode         LearningEntity → string (Eudoxus book code)
 - evdx:hasURL          LearningEntity → URL
 
-IMPORTANT: evdx:Module is what people call a "course".
-evdx:Course is a study programme (e.g. "Computer Science BSc") — NOT a single course.
-Always prefer the evdx: namespace over aliases (teach:, schema:, aiiso:, etc.).
+NOT in the ontology: 
+-ISBN, author name, publisher, price, student enrollment, grades.
+-evdx:hasCode is the Eudoxus-internal code — it is NOT an ISBN.
+
+IMPORTANT: 
+-There are departments that share the same name but belong to different universities. So in order to prevent identically-named items from being merged (if it be derived from the question) group by the parent entity (e.g. University when querying for Departments).
+-evdx:Course is a study programme (e.g. "Computer Science BSc") — NOT a single course.
+-Always prefer the evdx: namespace over aliases (teach:, schema:, aiiso:, etc.).

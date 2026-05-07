@@ -26,7 +26,7 @@ examples:
     question_greek: "Σε ποια μαθήματα χρησιμοποιείται το βιβλίο με κωδικό 94700120 το ακαδημαϊκό έτος 2022; Εμφάνισε και το Τμήμα και το Πανεπιστήμιο."
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
-      SELECT (?un AS ?University) (?dn AS ?Department) (?mt AS ?Module)
+      SELECT DISTINCT  (?un AS ?University) (?dn AS ?Department) (?mt AS ?Module)
       WHERE {
         ?s a evdx:Book .
         VALUES ?code {"94700120"}
@@ -321,7 +321,7 @@ examples:
     query_shape: set-difference-by-year
     granularity: module
     comparison_mode: set
-    few_shot_priority: 9
+    few_shot_priority: 3
     notes: >
       Module-level variant. Unlike ex-005/006, this constrains on ?mtitle
       inside FILTER NOT EXISTS — a module with the same title must not have
@@ -653,7 +653,7 @@ examples:
     query_shape: set-intersection-by-book
     granularity: university
     comparison_mode: set
-    few_shot_priority: 14
+    few_shot_priority: 5
     notes: >
       University-level intersection. Output groups by ?un (not ?un ?dn) and
       aggregates departments inside the outer SELECT.
@@ -701,7 +701,7 @@ examples:
     question_greek: "Ποια Πανεπιστήμια δεν είχαν κανένα ενεργό μάθημα το 2022 — δηλαδή κανένα Τμήμα τους δεν πρόσφερε μαθήματα εκείνη τη χρονιά;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
-      SELECT ?u ?un
+      SELECT ?un
       WHERE {
         ?u a evdx:University .
         ?u evdx:name ?un .
@@ -718,7 +718,9 @@ examples:
     few_shot_priority: 15
     notes: >
       FILTER NOT EXISTS spans the full traversal from ?u through ?d, ?c, ?m.
-      University-level variant of ex-015.
+      University-level variant of ex-015. Gold projects only ?un (the name) —
+      the IRI ?u was removed to avoid a positional column-count mismatch
+      against sensible generated queries that naturally project only the name.
 
   # ---------------------------------------------------------------------------
   # Q17 — ranking-by-count (all books, scoped by year) — CRASHES GraphDB
