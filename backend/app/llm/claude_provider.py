@@ -106,10 +106,18 @@ class ClaudeProvider:
         # `messages.create` sends the prompt and blocks until Claude finishes.
         # The `messages` list follows the chat format: alternating user/
         # assistant turns. Here we always send exactly one user message.
+        #
+        # `system` is passed as a list of content blocks so we can attach
+        # `cache_control` to the stable prefix (template + ontology + few-shot).
+        # Anthropic reuses the compiled prefix on subsequent requests, saving
+        # ~90% of input-token cost after the first write.  Caching only
+        # activates when the prefix exceeds the per-model minimum (4 096 tokens
+        # for Haiku 4.5, 2 048 for Sonnet 4.6); if the prefix is too short the
+        # API silently skips it — `cache_creation_input_tokens` will be 0.
         message = self._client.messages.create(
             model=self._model,
             max_tokens=max_tokens,
-            system=system,
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user}],
         )
 
@@ -126,19 +134,22 @@ class ClaudeProvider:
         # Step 3 — save to cache
         self._cache.set(system, user, self._model, text)
 
-        # Step 4 — log usage (input/output token counts)
+        # Step 4 — log usage (input/output token counts + prompt-cache hits)
+        usage = message.usage
         logger.info(
-            "Claude [%s] input=%d output=%d",
+            "Claude [%s] input=%d output=%d cache_write=%d cache_read=%d",
             self._model,
-            message.usage.input_tokens,
-            message.usage.output_tokens,
+            usage.input_tokens,
+            usage.output_tokens,
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
         )
 
         # Step 5 — return
         return LLMResponse(
             text=text,
-            input_tokens=message.usage.input_tokens,
-            output_tokens=message.usage.output_tokens,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
         )
 
     # ------------------------------------------------------------------
@@ -220,7 +231,7 @@ class ClaudeProvider:
             with self._client.messages.stream(
                 model=self._model,
                 max_tokens=max_tokens,
-                system=system,
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": user}],
             ) as s:
                 for token in s.text_stream:   # each token is a small string chunk
@@ -232,18 +243,20 @@ class ClaudeProvider:
 
             # `get_final_message()` is an Anthropic SDK method that returns the
             # completed message object (including usage) after streaming ends.
-            usage = s.get_final_message().usage
+            stream_usage = s.get_final_message().usage
 
             # Mutate the StreamResult that the caller is already holding.
             # This is the deferred-population step described above.
-            result.input_tokens = usage.input_tokens
-            result.output_tokens = usage.output_tokens
+            result.input_tokens = stream_usage.input_tokens
+            result.output_tokens = stream_usage.output_tokens
 
             logger.info(
-                "Claude stream [%s] input=%d output=%d",
+                "Claude stream [%s] input=%d output=%d cache_write=%d cache_read=%d",
                 self._model,
                 result.input_tokens,
                 result.output_tokens,
+                getattr(stream_usage, "cache_creation_input_tokens", 0) or 0,
+                getattr(stream_usage, "cache_read_input_tokens", 0) or 0,
             )
 
         # Step 3 — replace the placeholder with the real generator.
