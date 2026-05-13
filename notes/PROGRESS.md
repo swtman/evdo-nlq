@@ -23,6 +23,86 @@ Template:
 
 ---
 
+## 2026-05-14 — Docs catch-up: ADR-007, TODO and PROGRESS refresh
+
+### Done
+- Wrote ADR-007 (`decisions/007-anthropic-prompt-caching.md`): documents the `cache_control: ephemeral` decision, model floor constraints (Sonnet active, Haiku no-op), and DiskCache interaction.
+- Added ADR-007 row to `decisions/README.md` index.
+- Updated `TODO.md`: Phase 3 marked ✅ with v2/v3 entries, Phase 5 items correctly checked, new Phase 5b section for cost/latency work.
+- Appended missing PROGRESS entries (2026-05-04 through 2026-05-08).
+
+### Next
+1. Decide v2 vs v3 as default production prompt; update root CLAUDE.md.
+2. Run a side-by-side Haiku vs Sonnet eval run and document findings (Phase 5 compare item).
+3. Begin thesis writing — Ch 02 (Background) and Ch 04 (System Design from ADRs).
+
+### Blockers / notes
+- Internship starts 2026-05-18 — 4 days out. MVP is stable and eval is at 84%.
+- ADR for thesis format (LaTeX vs Markdown+Pandoc) still missing — pick one before writing starts.
+
+---
+
+## 2026-05-08 — Prompt v3 + eval at 84% result-set match (Sonnet/English)
+
+### Done
+- Added `prompts/nl-to-sparql-v3.md`: three rule changes driven by v2 failure analysis.
+  - Rule 10 split: scalar COUNT stays flat with `COUNT(DISTINCT)` directly; GROUP_CONCAT subquery pattern is separate.
+  - Rule 11 scoped: inner-SELECT-DISTINCT dedup applies to GROUP_CONCAT only, not scalar counts.
+  - Rule 13 added: FILTER EXISTS/NOT EXISTS scope must escalate with question granularity (module → department → university).
+- Fixed gold entries for ex-001 and ex-016 in `prompts/examples.yaml`.
+- Eval run: v3 / Sonnet 4.6 / English → **84% result-set match (16/19)**. Report: `notes/eval-runs/2026-05-08-v3-english-claude-claude-sonnet-4-6.md`.
+- Per-shape 100%: not-answerable, traversal-lookup, set-difference-by-year, set-intersection-by-book, negative-existence, multi-level-aggregate-with-concat.
+- Remaining gaps: multi-book-comparison (0%), multi-level-count (50%), set-difference-by-book (67%).
+
+### Next
+1. Investigate remaining 3 failure shapes for thesis Chapter 6.
+2. Write ADR for prompt caching and thesis format.
+3. Decide production default: v2 vs v3.
+
+### Blockers / notes
+- Previous (pre-comparison-fix) eval baselines: v2/Haiku = 26%, v2/Sonnet = 42%. Post-fix v3/Sonnet = 84%.
+- `cache_creation_input_tokens` and `cache_read_input_tokens` visible in INFO logs from this session onward.
+
+---
+
+## 2026-05-07 — Anthropic prompt caching on system prefix
+
+### Done
+- Added `cache_control: {"type": "ephemeral"}` to the `system` block in both `ClaudeProvider.generate()` and `ClaudeProvider.stream()` (commit `6af93dc`).
+- Stable prefix (rules + ontology + 6 few-shot examples) is ~3 744 tokens — above the 2 048-token Sonnet 4.6 floor, below the 4 096-token Haiku 4.5 floor.
+- Extended INFO log lines with `cache_write=` and `cache_read=` fields.
+- No changes to `LLMProvider` protocol, DiskCache, or any other provider.
+
+### Next
+1. Run eval harness and confirm `cache_read` count equals N−1 for an N-example run within 5 minutes.
+2. Write ADR-007 documenting this decision.
+
+### Blockers / notes
+- DiskCache (sha256-keyed) still wraps every call. Anthropic cache only matters on DiskCache misses.
+- Haiku runs silently skip caching; no penalty.
+
+---
+
+## 2026-05-04 — Eval methodology (ADR-005) + static few-shot v2 (ADR-006)
+
+### Done
+- Created `prompts/examples.yaml` with 21 gold examples across 9 query shapes (traversal-lookup, negative-existence, multi-level-aggregate-with-concat, set-difference-by-year, set-difference-by-book, set-intersection-by-book, multi-level-count, multi-book-comparison, not-answerable).
+- Built `backend/scripts/eval.py`: runs gold examples through the pipeline, compares result-sets (primary) and AST (secondary), writes a provenance-stamped Markdown report to `notes/eval-runs/`.
+- Eval flags: `--prompt-version`, `--provider`, `--model`, `--language`, `--no-cache`, `--example-id`, `--shape`, `--no-skip-eval`.
+- Baseline runs: v1/Haiku ≈ 0%, v2/Haiku/English = 26%.
+- Wrote ADR-005 (eval methodology: result-set match primary) and ADR-006 (static few-shot v2, deferred dynamic retrieval).
+- Corrected comparison logic (positional result matching); discovered gold entries ex-001 and ex-016 had broken gold — excluded from metrics (`broken_gold=True`).
+
+### Next
+1. Run v2 vs v3 comparison on Sonnet to quantify rule improvements.
+2. Write ADR for prompt caching (feature already on the branch).
+
+### Blockers / notes
+- Gold execution failures are excluded from accuracy denominator (`broken_gold=True` → not a model failure).
+- `comparison_mode` values validated at startup — typos exit immediately.
+
+---
+
 ## 2026-05-03 — Backend architectural refactor (5 anti-patterns fixed)
 
 ### Done

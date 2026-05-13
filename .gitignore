@@ -65,7 +65,19 @@ rag-brainstorm-prompt.md
 # ── Claude Skills ────────────────────────────────────────────────────────────
 .superpowers/
 .claude/
+cheatsheet.md
+
+# ── Miscellaneous ─────────────────────────────────────────────────────────────
+decisions/
+docs/
+docs/superpowers/
+TODO.md
+todo/
+thesis/
+
+# Backend logs
+backend/.claude/
 
 
-# TODO: Add thesis/ , decisions/ , docs/ , TODO.md , notes/ and all the CLAUDE.md files
+# TODO:all the CLAUDE.md files
 # and remove them from the github repo by ``git rm --cached TODO.md`` etc. 
