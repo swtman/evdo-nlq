@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import { t } from '../i18n/el'
 import type { Provider } from '../types'
+import { CustomSelect } from './CustomSelect'
 
 type Props = {
   providers: Provider[]
@@ -57,39 +58,30 @@ export function QueryForm({ providers, disabled, onSubmit, prefillQuestion, show
           onChange={e => setQuestion(e.target.value)}
           placeholder={t.searchPlaceholder}
           disabled={disabled}
-          autoFocus
         />
       </div>
 
       <div className="query-controls">
         <div className="query-select-group">
           <span className="query-select-label">{t.providerLabel}</span>
-          <select
-            className="query-select"
+          <CustomSelect
             value={selectedProvider || providers[0]?.id || ''}
-            onChange={e => handleProviderChange(e.target.value)}
+            onChange={handleProviderChange}
+            options={providers.map(p => ({ value: p.id, label: p.id }))}
             disabled={disabled || providers.length === 0}
             aria-label={t.providerLabel}
-          >
-            {providers.map(p => (
-              <option key={p.id} value={p.id}>{p.id}</option>
-            ))}
-          </select>
+          />
         </div>
 
         <div className="query-select-group">
           <span className="query-select-label">{t.modelLabel}</span>
-          <select
-            className="query-select"
+          <CustomSelect
             value={selectedModel || models[0] || ''}
-            onChange={e => setSelectedModel(e.target.value)}
+            onChange={setSelectedModel}
+            options={models.map(m => ({ value: m, label: m }))}
             disabled={disabled || models.length === 0}
             aria-label={t.modelLabel}
-          >
-            {models.map(m => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
+          />
         </div>
 
         {showClear && (

@@ -32,6 +32,7 @@
 /* ─── Design tokens ───────────────────────────────────────────────────────── */
 
 :root {
+  color-scheme: light;
   /* Palette — light (parchment) */
   --bg:          #fbf9f4;
   --panel:       #fbf9f4;
@@ -51,6 +52,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg:          #1a1410;
   --panel:       #1a1410;
   --panel-alt:   #221913;
@@ -94,13 +96,10 @@ body {
 /* ─── Layout ──────────────────────────────────────────────────────────────── */
 
 .app-frame {
-  display: grid;
-  grid-template-columns: 220px 1fr;
+  display: block;
   min-height: 100vh;
   position: relative;
-  overflow: visible;
-  /* Paint the sidebar column for the full page height so it never looks short */
-  background: linear-gradient(to right, var(--panel-alt) 220px, var(--bg) 220px);
+  background: var(--bg);
 }
 
 /*
@@ -201,6 +200,7 @@ body {
 
 .header-meta .version { color: var(--ink); font-weight: 700; }
 
+.history-toggle,
 .theme-toggle {
   background: transparent;
   border: 1px solid var(--ink);
@@ -211,6 +211,7 @@ body {
   padding: 3px 8px;
   transition: background 0.15s, color 0.15s;
 }
+.history-toggle:hover,
 .theme-toggle:hover { background: var(--ink); color: var(--bg); }
 
 /* ─── Sidebar ─────────────────────────────────────────────────────────────── */
@@ -373,6 +374,7 @@ body {
   outline: none;
   padding: 11px 0;
 }
+.query-input:focus { outline: none; }
 .query-input::placeholder { color: var(--ink-faint); }
 .query-input:disabled { cursor: not-allowed; opacity: 0.5; }
 
@@ -397,18 +399,53 @@ body {
   flex-shrink: 0;
 }
 
-.query-select {
-  background: var(--code-bg);
-  border: 1.5px solid var(--ink);
+.custom-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-soft);
+  border: 1.5px solid var(--accent);
   color: var(--ink);
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 5px 10px;
-  transition: border-color 0.15s;
+  user-select: none;
+  min-width: 110px;
+  transition: background 0.15s;
 }
-.query-select:focus { border-color: var(--accent); outline: none; }
-.query-select:disabled { cursor: not-allowed; opacity: 0.5; }
+.custom-select:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.custom-select.disabled { cursor: not-allowed; opacity: 0.5; pointer-events: none; }
+
+.custom-select-value { flex: 1; }
+.custom-select-arrow { color: var(--accent); font-size: 10px; }
+
+.custom-select-list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: -1.5px;
+  right: -1.5px;
+  z-index: 200;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  border: 1.5px solid var(--accent);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.custom-select-option {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  transition: background 0.1s;
+}
+.custom-select-option:hover { background: var(--accent-soft); }
+.custom-select-option.selected { background: var(--accent); color: var(--bg); }
 
 .query-button {
   background: var(--accent);
@@ -425,6 +462,19 @@ body {
 }
 .query-button:not(:disabled):hover { opacity: 0.85; }
 .query-button:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.query-clear {
+  background: transparent;
+  border: 1.5px solid var(--ink);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 14px;
+  transition: background 0.15s, color 0.15s;
+}
+.query-clear:hover { background: var(--ink); color: var(--bg); }
+.query-clear:disabled { cursor: not-allowed; opacity: 0.5; }
 
 /* ─── SPARQL panel ────────────────────────────────────────────────────────── */
 
@@ -888,11 +938,6 @@ table.results-table tbody tr:nth-child(n+11) {
 /* ─── Mobile breakpoint ───────────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
-  .app-frame {
-    grid-template-columns: 1fr;
-    background: var(--bg); /* reset sidebar column gradient on mobile */
-  }
-
   .app-sidebar { display: none; }
 
   .app-main { padding: 16px 12px 48px; }
@@ -903,8 +948,9 @@ table.results-table tbody tr:nth-child(n+11) {
 
   .query-controls { flex-direction: column; align-items: stretch; }
   .query-select-group { width: 100%; }
-  .query-select { flex: 1; }
+  .custom-select { width: 100%; min-width: unset; }
   .query-button { margin-left: 0; }
+  .query-clear { width: 100%; }
 
   .results-head { flex-wrap: wrap; gap: 8px; }
 
