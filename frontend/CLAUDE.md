@@ -1,52 +1,64 @@
 # frontend/ — React + Vite UI
 
-Single-page app: natural-language input form → live SPARQL streaming panel → results table, with error handling. MVP complete as of 2026-05-01.
+Single-page app: natural-language input form → live SPARQL streaming panel → results table with sort/pagination/export, with error handling and query history. Revamped to parchment-brutalist design (ADR-008).
 
 ## Stack
 
-- React 18 + TypeScript
-- Vite (dev server on :5173, hot reload enabled, build with `pnpm build`)
-- Plain CSS (no Tailwind — dark theme with CSS variables)
+- React 19 + TypeScript
+- Vite (dev server on :5173, hot reload, build with `pnpm build`)
+- Plain CSS (parchment-brutalist design system with CSS variables — no Tailwind)
 - `fetch` + `ReadableStream` for SSE (not `EventSource` — backend uses POST)
 - Custom `useQueryStream` hook with `useReducer` state machine
+- `useHistory` hook with localStorage persistence (20-item FIFO)
 
 ## Folder structure
 
 ```
 src/
-├── main.tsx                        entrypoint, mounts App in StrictMode
-├── App.tsx                         layout shell, wires hook + components
-├── types.ts                        QueryState (discriminated union), Provider, ParsedSSEEvent
-├── styles.css                      dark theme, 230+ lines, CSS variables for colors
-├── vite-env.d.ts                   Vite env type augmentation (VITE_USE_MOCK_API)
+├── main.tsx                        React 19 entrypoint, mounts App in StrictMode
+├── App.tsx                         Layout shell: overlay + main column; dual display path (live vs. cached)
+├── types.ts                        QueryState discriminated union, HistoryEntry, SortState, ColumnVisibility
+├── styles.css                      Parchment-brutalist design tokens (light/dark), animations, all component styles
+├── vite-env.d.ts                   Vite env type augmentation (VITE_USE_MOCK_API, VITE_GIT_SHA)
 ├── components/
-│   ├── QueryForm.tsx               input + provider/model dropdowns + submit button
-│   ├── SparqlPanel.tsx             collapsible SPARQL display, blinking cursor, emerald accent
-│   ├── ResultsTable.tsx            table from { columns, rows }, token footer, blue accent
-│   └── ErrorBanner.tsx             dismissible alert, role="alert", accessible dismiss
+│   ├── QueryForm.tsx               Input + provider/model dropdowns + submit + clear buttons
+│   ├── SparqlPanel.tsx             Collapsible SPARQL display, streaming cursor, copy button, GraphDB bar
+│   ├── ResultsTable/
+│   │   ├── ResultsTable.tsx        Orchestrator: owns sort, page, column visibility, dropdown open state
+│   │   ├── Pagination.tsx          Page-size selector + numbered page buttons
+│   │   ├── ColumnsMenu.tsx         Dropdown checklist for showing/hiding columns
+│   │   ├── ExportMenu.tsx          Dropdown for CSV/JSON/XML/TSV download (all rows, not just current page)
+│   │   └── EmptyState.tsx          Zero-result block with 3 clickable example queries
+│   ├── HistorySidebar.tsx          Overlay panel content: search input, entry list, clear button
+│   ├── SortIcon.tsx                Inline SVG for idle/asc/desc sort states (mirrors public/*.png icons)
+│   └── ErrorBanner.tsx             Dismissable error with `// σφάλμα:` prefix
 ├── hooks/
-│   └── useQueryStream.ts           SSE state machine, AbortController lifecycle, providers fetch
+│   ├── useQueryStream.ts           SSE state machine (useReducer + AbortController lifecycle + /providers fetch)
+│   ├── useHistory.ts               localStorage-backed query history, 20-item FIFO cap
+│   └── useSortedPaged.ts           Memoised sort + pagination logic (numeric-aware, Greek locale)
 ├── api/
-│   ├── client.ts                   SSE parser via fetch + ReadableStream, delegates to mock
-│   └── mock.ts                     canned SPARQL stream for UI development (char-by-char at 18ms)
+│   ├── client.ts                   SSE parser via fetch + ReadableStream; delegates to mock when VITE_USE_MOCK_API=1
+│   └── mock.ts                     Canned SPARQL stream (18ms/char typewriter) + 46-row result set; no network calls
+├── utils/
+│   └── exporters.ts                toCSV / toJSON / toXML / toTSV + downloadBlob helper
 └── i18n/
-    └── el.ts                       all UI strings in Greek
+    └── el.ts                       All UI strings in Greek (single source of truth)
 ```
 
 ## Commands
 
 ```powershell
-pnpm dev                  # dev server (hot reload) on http://localhost:5173
+pnpm dev                  # dev server on http://localhost:5173
 pnpm build                # production build (dist/)
-pnpm preview              # serve production build locally
-pnpm typecheck            # tsc --noEmit (type safety gate — run before every commit)
+pnpm preview              # serve production build
+pnpm typecheck            # tsc --noEmit — run before every commit
 ```
 
 ## Running modes
 
 ### Mode 1 — Full pipeline (real LLM + real GraphDB)
 
-Needs a running backend with `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`) in `backend/.env`.
+Requires a running backend with API key in `backend/.env`.
 
 ```powershell
 # Terminal 1
@@ -56,117 +68,97 @@ cd backend; uv run fastapi dev app/main.py
 cd frontend; pnpm dev
 ```
 
-Open `http://localhost:5173`. Provider/model dropdown is auto-populated from `GET /providers`. Submit any Greek or English question about university textbooks.
-
-### Mode 2 — Frontend with fake LLM backend (no API key)
-
-Use when you want a real HTTP round-trip (SSE parsing, proxy, error paths) but don't want to spend LLM tokens.
-
-```powershell
-# Terminal 1 — backend with fake provider
-cd backend
-# set LLM_PROVIDER=fake in backend/.env  OR
-$env:LLM_PROVIDER='fake'; uv run fastapi dev app/main.py
-
-# Terminal 2
-cd frontend; pnpm dev
-```
-
-The backend returns a canned SPARQL response and queries GraphDB for real. Provider dropdown will show `fake / fake-v1`.
-
-### Mode 3 — Mock API (no backend at all)
-
-Use for CSS/layout/component iteration. No backend required, no network calls.
+### Mode 2 — Mock API (no backend, no API keys)
 
 ```powershell
 cd frontend; $env:VITE_USE_MOCK_API='1'; pnpm dev
 ```
 
-`VITE_USE_MOCK_API=1` makes `client.ts` delegate to `mock.ts`, which streams canned SPARQL character-by-character (typewriter effect) then emits a hard-coded results table. The env var is Vite-specific and only affects the dev build.
+`VITE_USE_MOCK_API=1` makes `client.ts` delegate to `mock.ts` (dynamic import — never bundled in production). Streams canned SPARQL character-by-character then emits a 46-row result set. Covers: streaming cursor, GraphDB bar, pagination, sort, export, history.
+
+Does **not** cover: retry UI, NOT_ANSWERABLE paths — test those with the real backend.
+
+### Mode 3 — Fake LLM backend (no API key, real GraphDB)
+
+```powershell
+cd backend
+$env:LLM_PROVIDER='fake'; uv run fastapi dev app/main.py
+cd frontend; pnpm dev
+```
 
 ## API contract
 
-**Endpoint:** `POST /query/stream` (proxied by Vite to `http://localhost:8000`)
+**Providers:** `GET /providers` → `{ providers: [{ id, models[] }] }`
 
-**Request body:**
-```json
-{ "question": "string", "provider": "string", "model": "string" }
-```
+**Query stream:** `POST /query/stream` (proxied by Vite to `http://localhost:8000`)
 
-**Response:** Server-Sent Events with `event:` and `data:` fields.
+Request body: `{ question: string, provider: string, model: string }`
 
-| Event | Data | Purpose |
-|-------|------|---------|
-| `sparql_token` | token text (may include code fences) | Append to `state.sparql` while streaming |
-| `sparql_complete` | final cleaned SPARQL string | Replace `state.sparql` with authoritative value |
-| `sparql_retry` | `{ attempt, error }` | Informational — not yet surfaced in UI |
-| `results` | `{ columns: string[], rows: Record<string, string \| undefined>[] }` | Populate results table |
+| SSE event | Data | Purpose |
+|---|---|---|
+| `sparql_token` | token text | Append to streaming SPARQL |
+| `sparql_complete` | final SPARQL string | Replace streaming SPARQL; start GraphDB bar |
+| `sparql_retry` | `{ attempt, error }` | Not yet surfaced in UI |
+| `results` | `{ columns: string[], rows: Record<string,string\|undefined>[] }` | Populate results table |
 | `done` | `{ provider, model, input_tokens, output_tokens, retries }` | Show token counts, transition to done |
 | `error` | `{ message: string }` | Display ErrorBanner, transition to error state |
 
-### SSE parser note (`api/client.ts`)
+### SSE parser note
 
-`sse_starlette` (the backend SSE library) uses `\r\n` line endings and `\r\n\r\n` event separators — not the `\n\n` that the SSE spec also allows. The parser normalizes `\r\n → \n` immediately after every `reader.read()` call so that `\n\n` reliably marks event boundaries. It also:
-- Concatenates multi-line `data:` fields (SPARQL queries may span multiple lines).
-- Flushes the remaining buffer when the stream closes, so the final `done` event is never lost.
+`sse_starlette` uses `\r\n` line endings and `\r\n\r\n` event separators. `client.ts` normalises `\r\n → \n` after every `reader.read()` call. Also: multi-line `data:` fields are concatenated; the buffer's final fragment is flushed when the stream closes so the `done` event is never lost. A `finally` block always calls `reader.releaseLock()`.
 
-## State machine (useQueryStream)
+## State machine (`useQueryStream`)
 
 ```
-idle → (submit) → streaming → (done event) → done
-                       ↓
-                  (error event) → error → (dismiss) → idle
+idle → (submit) → streaming → (COMPLETE) → streaming (executing=true)
+                            → (RESULTS)  → streaming (executing=false)
+                            → (DONE)     → done
+                            → (ERROR)    → error
+done / error → (clear / dismissError) → idle
 ```
 
-The `streaming` state accumulates `columns` and `rows` from the `results` event before `done` arrives. The `DONE` reducer action reads them from the streaming state to build the final `done` state.
+The `streaming` state accumulates `columns` and `rows` so the `DONE` action can read them when it fires. `executing` is the flag that shows/hides the GraphDB progress bar.
 
-The `streaming` state also carries an `executing?: boolean` flag that is set to `true` on `sparql_complete` and cleared on `results`. This drives the GraphDB execution indicator shown between those two events.
+## Dual display path (App.tsx)
 
-The `error` state carries `sparql?: string` — the SPARQL that was being generated when the error occurred — so the SPARQL panel stays visible after a GraphDB failure.
+When the user clicks a history entry, `cachedResult` is set in App. All derived display values (`sparqlToShow`, `displayColumns`, `displayRows`) use `??` so `cachedResult` takes precedence over live `state`. The `(αποθηκευμένο)` badge in the results panel signals a cached view. Submitting a new query clears `cachedResult`.
 
-**Hook signature:**
-```typescript
-const { state, providers, submit, dismissError } = useQueryStream()
-```
+## Query history
 
-- `state` — discriminated union `QueryState`: `idle | streaming | done | error`
-- `providers` — `Provider[]` from `GET /providers`, loaded on mount
-- `submit(question, provider, model)` — fires SSE fetch, aborts any in-flight request first
-- `dismissError()` — transitions from `error` back to `idle`
+- `useHistory` reads/writes `localStorage` key `evdograph.history`.
+- 20-item FIFO cap; oldest entry dropped when full.
+- Each `HistoryEntry` gets a `crypto.randomUUID()` ID and `Date.now()` timestamp.
+- Clicking a history item restores the cached SPARQL + rows — no backend call.
+- The history overlay is opened via the `≡ ιστορικό (n)` button in the header.
 
 ## Accessibility
 
-- All interactive elements have `aria-label` or `aria-expanded`
-- Error banner has `role="alert"` for screen reader announcement
-- Dismiss button has semantic `type="button"` and accessible label
+- All interactive elements have `aria-label` or `aria-expanded`.
+- Error banner has `role="alert"`.
+- Sort headers have `aria-sort`.
+- History items have `role="button"` and `tabIndex={0}` with keyboard handlers.
+- All animations respect `prefers-reduced-motion: reduce`.
 
-## i18n
+## Design tokens (styles.css)
 
-- All visible strings in `src/i18n/el.ts` (Greek primary)
-- To add English: create `src/i18n/en.ts` and swap the import in components, or select at runtime
-- No hardcoded English anywhere in components
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `--bg` | `#fbf9f4` (parchment) | `#1a1410` | Page background |
+| `--ink` | `#1a1410` | `#fbf9f4` | Text, all borders |
+| `--accent` | `#7c2d12` (burnt orange) | `#ea580c` | Active states, `//` status labels |
+| `--success` | `#14532d` (forest green) | `#22c55e` | Live dot, result count-up |
+| `--font-mono` | `JetBrains Mono, Fira Code` | same | Headings, labels, code, buttons |
+| `--font-body` | `Inter, system-ui` | same | Greek body text, table cells |
 
-## Theme (light/dark + accent colors)
-
-The app supports light and dark themes. A sun/moon toggle button in the header switches between them; the preference is persisted in `localStorage` and applied via `document.documentElement.dataset.theme`.
-
-CSS variables in `styles.css` (dark defaults, overridden by `[data-theme="light"]`):
-- `--bg` — main background (`#111827` dark / `#f1f5f9` light)
-- `--panel` — panel backgrounds (`#1f2937` / `#ffffff`)
-- `--border` — borders (`#374151` / `#e2e8f0`)
-- `--text` — primary text (`#f9fafb` / `#0f172a`)
-- `--muted` — secondary text (`#6b7280` / `#64748b`)
-- `--code` — SPARQL code color (`#d1fae5` / `#14532d`)
-- `--emerald: #10b981` — SPARQL panel accent (same both themes)
-- `--blue: #3b82f6` — results panel accent (same both themes)
-
-Logo uses `linear-gradient(90deg, #10b981, #3b82f6)` (emerald → blue).
+All corners are sharp (`border-radius: 0`). Hover pattern: background→`--ink`, color→`--bg`.
 
 ## What NOT to do
 
-- Don't call LLM APIs from the frontend (backend only)
-- Don't parse or transform SPARQL (display-only — show what the backend returns)
-- Don't hardcode the GraphDB endpoint (backend handles execution)
-- Don't use `EventSource` for SSE (backend uses POST; use `fetch + ReadableStream`)
-- Don't split SSE events on `\n\n` without first normalizing `\r\n` — sse_starlette uses CRLF
+- Don't use `EventSource` for SSE — backend uses POST; use `fetch + ReadableStream`
+- Don't parse or transform SPARQL — display-only; show what the backend returns
+- Don't hardcode Greek strings in components — add to `i18n/el.ts` and use `t.key`
+- Don't call GraphDB from the frontend — backend handles it; frontend never touches the endpoint
+- Don't inline SPARQL strings — display what the backend returns
 - Don't skip `pnpm typecheck` before committing
+- Don't sort column values independently — always sort the `rows` array as whole objects (row-coherent)
+- Don't call the backend directly from components — use `submit()` from `useQueryStream`

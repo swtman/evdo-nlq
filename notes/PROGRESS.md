@@ -23,6 +23,75 @@ Template:
 
 ---
 
+## 2026-05-16 — Frontend: Playwright bug-hunt, features, sidebar refactor, code docs
+
+### Done
+- **Playwright live testing** — discovered and fixed 5 bugs in the live pipeline:
+  1. `"inputTokens"` literal text rendered in results metadata (JSX typo).
+  2. Fake LLM seconds (`tokens/1000`) removed — no real timing data in SSE events.
+  3. Example query click didn't update the input field — added `prefillQuestion` prop to `QueryForm`.
+  4. Example suggestions contained NOT_ANSWERABLE topics — replaced with working queries.
+  5. Clicking a history item left the input showing the previous query — `handleHistorySelect` now sets `prefillQuestion`.
+- **3 CSS bugs fixed:**
+  - Active sidebar item text cropped (negative-margin clipped by implicit `overflow-x: auto`) → removed `-14px` margin, 3px border with adjusted padding instead.
+  - Sidebar background not filling when page content taller than viewport → CSS `linear-gradient` on `.app-frame`.
+  - NOT_ANSWERABLE long comment causing horizontal scroll in SPARQL panel → `white-space: pre-wrap`.
+- **Clear button** (`✕ εκκαθάριση`) added next to ΑΝΑΖΗΤΗΣΗ; wired through `useQueryStream.clear()`.
+- **Sidebar refactor** (ADR-009): permanent 220px left column replaced with header-toggle overlay. Layout changed from `grid 220px 1fr` to single-column `display: block`. Eliminates height-fill, clip, and scroll bugs permanently.
+- **Code documentation**: beginner-friendly JSDoc + inline comments added to all 22 frontend source files (`*.ts`, `*.tsx`, `styles.css`). File-level headers, field-level comments on all types, non-obvious logic explained.
+- **`frontend/FRONTEND-GUIDE.md`** written (high-level architecture guide for new contributors).
+- **ADR-008** (parchment-brutalist aesthetic) added to `decisions/README.md` index.
+- **ADR-009** (`decisions/009-sidebar-as-overlay.md`) written.
+- **`frontend/CLAUDE.md`** updated to match current codebase (new folder structure, new components, state machine, design tokens, dual-display path, history, what-not-to-do).
+
+### Next
+1. Add vitest + `@testing-library/react` and write unit tests for `useHistory`, `useSortedPaged`, `exporters.ts`.
+2. Wire `VITE_GIT_SHA` in `vite.config.ts` so the build version chip shows a real SHA.
+3. Begin thesis writing — Ch 02 (Background) and Ch 04 (System Design from ADRs).
+4. Decide v2 vs v3 as default production prompt.
+
+### Blockers / notes
+- Frontend is not yet tested with a unit test harness (no vitest configured). `pnpm typecheck` is the only automated gate.
+- The `llmSecs` display (token-based estimate) was removed; the `done` SSE event has no wall-clock timing. If timing is needed later, the backend should add it to the `done` payload.
+- The sidebar toggle uses `≡ ιστορικό (n)` in the header; the history is still in `localStorage` so it persists across reloads.
+
+---
+
+## 2026-05-15 — Frontend revamp: parchment-brutalist design system
+
+### Done
+- Full CSS rewrite (`styles.css`) with parchment-brutalist design tokens (light + dark themes), animations, paper-grain texture.
+- New `types.ts` additions: `HistoryEntry`, `SortState`, `ColumnVisibility`.
+- `App.tsx` restructured to sidebar + main grid layout with history integration.
+- `i18n/el.ts` extended with all new translation keys.
+- `useHistory` hook — localStorage-backed, 20-item FIFO cap, persists across reloads.
+- `HistorySidebar` component — session history with search, active highlight, clear.
+- `QueryForm` restyled — `›` prefix, label-prefixed selects, burnt-orange submit.
+- `SparqlPanel` — copy button with "✓ αντιγράφηκε" feedback, `// generating…`/`// ready` status.
+- `ErrorBanner` — `// σφάλμα:` prefix, parchment styling, dismissable.
+- `ResultsTable` refactored into `ResultsTable/` subcomponents:
+  - `useSortedPaged` hook (numeric-aware, Greek locale, row-coherent sort)
+  - `SortIcon`, `Pagination`, `ColumnsMenu`, `ExportMenu`, `EmptyState`
+  - Pagination 10/25/50/100 rows, numbered page buttons
+  - 4-format export (CSV/JSON/XML/TSV) of all rows via `utils/exporters.ts`
+  - Staggered row fade-in animation
+  - Column visibility (resets per query)
+- Mobile breakpoint (<640px): sidebar collapses to overlay, form stacks, table scrolls horizontally.
+- `docs/superpowers/specs/2026-05-15-frontend-revamp-design.md` written.
+- `decisions/008-frontend-aesthetic-parchment-brutalist.md` written.
+- `pnpm typecheck` passes clean.
+
+### Next
+1. Open `http://localhost:5173` (mock mode) and verify UI manually.
+2. Add vitest and write unit tests.
+3. Test with real backend.
+
+### Blockers / notes
+- No vitest configured yet.
+- `GIT_SHA` in App.tsx reads from `VITE_GIT_SHA` — needs `vite.config.ts` define block.
+
+---
+
 ## 2026-05-14 — Docs catch-up: ADR-007, TODO and PROGRESS refresh
 
 ### Done
@@ -233,6 +302,43 @@ Template:
 ### Blockers / notes
 - the endpoint itself is confirmed working.
 - Remember: internship starts 2026-05-18; MVP needs to be stable before then.
+
+---
+
+## 2026-05-15 — Frontend revamp: parchment-brutalist design system
+
+### Done
+- Full CSS rewrite (`styles.css`) with parchment-brutalist design tokens (light + dark themes), animations, paper-grain texture.
+- New `types.ts` additions: `HistoryEntry`, `SortState`, `ColumnVisibility`.
+- `App.tsx` restructured to sidebar + main grid layout with history integration.
+- `i18n/el.ts` extended with all new translation keys.
+- `useHistory` hook — localStorage-backed, 20-item FIFO cap, persists across reloads.
+- `HistorySidebar` component — session history with search, active highlight, clear.
+- `QueryForm` restyled — `›` prefix, label-prefixed selects, burnt-orange submit.
+- `SparqlPanel` — copy button with "✓ αντιγράφηκε" feedback, `// generating…`/`// ready` status.
+- `ErrorBanner` — `// σφάλμα:` prefix, parchment styling, dismissable.
+- `ResultsTable` refactored into `ResultsTable/` subcomponents:
+  - `useSortedPaged` hook (numeric-aware, Greek locale, row-coherent sort)
+  - `SortIcon`, `Pagination`, `ColumnsMenu`, `ExportMenu`, `EmptyState`
+  - Pagination 10/25/50/100 rows, numbered page buttons
+  - 4-format export (CSV/JSON/XML/TSV) of all rows via `utils/exporters.ts`
+  - Staggered row fade-in animation
+  - Column visibility (resets per query)
+- Mobile breakpoint (<640px): sidebar collapses to overlay, form stacks, table scrolls horizontally.
+- `docs/superpowers/specs/2026-05-15-frontend-revamp-design.md` written.
+- `decisions/008-frontend-aesthetic-parchment-brutalist.md` written.
+- `pnpm typecheck` passes clean.
+
+### Next
+1. Open `http://localhost:5174` (mock mode) and verify UI manually — pagination, sort, export, history.
+2. Add vitest + testing-library and write unit tests for `useHistory`, `useSortedPaged`, `exporters.ts`.
+3. Test with real backend: `uv run fastapi dev app/main.py` + submit a real Greek query.
+4. Commit the revamp on a feature branch and open a PR.
+
+### Blockers / notes
+- No vitest configured yet — package.json has no test script. Will need `vitest`, `@testing-library/react`, `jsdom` added.
+- `GIT_SHA` in App.tsx reads from `VITE_GIT_SHA` env var. Add `define: { 'import.meta.env.VITE_GIT_SHA': JSON.stringify(execSync('git rev-parse HEAD').toString().trim()) }` to `vite.config.ts` to populate it at build time.
+- The mock `llmSecs` calculation in ResultsTable.tsx uses token counts as a rough proxy — replace with actual wall-clock time from the `done` SSE event when available from the backend.
 
 ---
 

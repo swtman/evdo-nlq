@@ -2,53 +2,83 @@ import { useState } from 'react'
 import { t } from '../i18n/el'
 
 type Props = {
-  /** The SPARQL string accumulated so far (may be partial while streaming). */
   sparql: string
-  /** True while the backend SSE stream is still open. */
   streaming: boolean
+  executing: boolean
 }
 
 /**
- * SparqlPanel — collapsible panel that displays the generated SPARQL query.
+ * SparqlPanel — collapsible panel for the generated SPARQL query.
  *
- * Renders nothing until there is content or the stream has started, so it
- * stays invisible in the initial idle state.  A blinking cursor (`▌`) is
- * appended to the code block while streaming to give live feedback.
- *
- * The collapse toggle is purely local state — it persists across re-renders
- * within the same query session but resets on the next submit because the
- * parent re-mounts the component (or the user can re-expand manually).
+ * Shows `// generating…` with a pulsing square while streaming, and `// ready`
+ * when complete. Copy button toggles to `✓ copied` for 1.5s on click.
+ * A thin animated progress bar appears while GraphDB is executing.
  */
-export function SparqlPanel({ sparql, streaming }: Props) {
+export function SparqlPanel({ sparql, streaming, executing }: Props) {
   const [collapsed, setCollapsed] = useState(false)
+  const [copied, setCopied] = useState(false)
 
-  // Nothing to show yet — stay invisible until streaming begins or SPARQL arrives.
   if (!sparql && !streaming) return null
 
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(sparql)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard API unavailable (non-HTTPS or permissions denied).
+    }
+  }
+
   return (
-    <div className="panel panel--emerald">
-      <div className="panel-header">
-        <div className="sparql-header-left">
-          <span className="panel-label panel-label--emerald">{t.sparqlLabel}</span>
-          {streaming
-            ? <span className="status-pill status-pill--generating">{t.sparqlGenerating}</span>
-            : <span className="status-pill status-pill--complete">{t.sparqlComplete}</span>
-          }
+    <div className="panel">
+      <div className="panel-head">
+        <div className="sparql-label-group">
+          <span className="panel-label">{t.sparqlLabel}</span>
+          <span className="sparql-status">
+            {streaming
+              ? <><span className="live-square" aria-hidden="true" />{t.sparqlGenerating}</>
+              : t.sparqlComplete
+            }
+          </span>
         </div>
-        <button
-          className="collapse-btn"
-          onClick={() => setCollapsed(c => !c)}
-          aria-expanded={!collapsed}
-          type="button"
-        >
-          {collapsed ? t.sparqlExpand : t.sparqlCollapse}
-        </button>
+        <div className="panel-actions">
+          {!streaming && sparql && (
+            <button
+              className={`panel-btn${copied ? ' copied' : ''}`}
+              onClick={handleCopy}
+              type="button"
+              aria-label={t.sparqlCopy}
+            >
+              {copied ? t.sparqlCopied : t.sparqlCopy}
+            </button>
+          )}
+          <button
+            className="panel-btn"
+            onClick={() => setCollapsed(c => !c)}
+            aria-expanded={!collapsed}
+            type="button"
+          >
+            {collapsed ? t.sparqlShow : t.sparqlHide}
+          </button>
+        </div>
       </div>
+
       {!collapsed && (
         <pre className="sparql-code">
           {sparql}
-          {streaming && <span className="cursor">▌</span>}
+          {streaming && <span className="cursor" aria-hidden="true">▌</span>}
         </pre>
+      )}
+
+      {executing && (
+        <div className="graphdb-bar" role="status" aria-live="polite">
+          <span className="bar-prefix" aria-hidden="true">›</span>
+          <span>{t.graphdbExecuting}</span>
+          <div className="graphdb-progress" aria-hidden="true">
+            <div className="graphdb-sweep" />
+          </div>
+        </div>
       )}
     </div>
   )

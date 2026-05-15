@@ -19,6 +19,7 @@ type Action =
   | { type: 'DONE'; payload: { inputTokens: number; outputTokens: number; retries: number } }
   | { type: 'ERROR'; payload: string }
   | { type: 'DISMISS_ERROR' }
+  | { type: 'CLEAR' }
 
 /**
  * Pure reducer — all state transitions live here so they are easy to test in
@@ -68,6 +69,7 @@ function reducer(state: QueryState, action: Action): QueryState {
       }
 
     case 'DISMISS_ERROR':
+    case 'CLEAR':
       return { status: 'idle' }
 
     default:
@@ -189,5 +191,11 @@ export function useQueryStream() {
   /** Transition from the `error` state back to `idle` so the user can retry. */
   const dismissError = useCallback(() => dispatch({ type: 'DISMISS_ERROR' }), [])
 
-  return { state, providers, submit, dismissError }
+  /** Abort any in-flight request and reset to idle, clearing SPARQL + results. */
+  const clear = useCallback(() => {
+    abortRef.current?.abort()
+    dispatch({ type: 'CLEAR' })
+  }, [])
+
+  return { state, providers, submit, dismissError, clear }
 }
