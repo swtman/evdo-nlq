@@ -51,7 +51,7 @@ def get_provider(name: str, model: str) -> LLMProvider:
     Parameters
     ----------
     name : str
-        Provider identifier. One of: "claude", "gemini", "fake".
+        Provider identifier. One of: "claude", "gemini", "ollama", "fake".
     model : str
         Model name within that provider, e.g. "claude-haiku-4-5" or
         "gemini-2.0-flash". Passed through to the provider constructor.
@@ -106,10 +106,27 @@ def get_provider(name: str, model: str) -> LLMProvider:
             )
             return GeminiProvider(model=model, api_key=settings.gemini_api_key, cache=cache)
 
+        case "ollama":
+            # Lazy import so httpx and OllamaProvider are never touched
+            # in tests that run with LLM_PROVIDER=fake.
+            from app.config import settings
+            from app.llm.cache import DiskCache
+            from app.llm.ollama_provider import OllamaProvider
+
+            cache = DiskCache(
+                cache_dir=settings.llm_cache_dir,
+                disabled=settings.llm_cache_disabled,
+            )
+            return OllamaProvider(
+                model=model,
+                base_url=settings.ollama_base_url,
+                cache=cache,
+            )
+
         case _:
             # `_` catches any value not matched above — the wildcard case.
             # `{name!r}` formats `name` with quotes around it in the message,
             # e.g.  Unknown LLM provider: 'gpt4'. Valid: 'claude', 'gemini', 'fake'
             raise ValueError(
-                f"Unknown LLM provider: {name!r}. Valid: 'claude', 'gemini', 'fake'"
+                f"Unknown LLM provider: {name!r}. Valid: 'claude', 'gemini', 'ollama', 'fake'"
             )

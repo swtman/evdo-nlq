@@ -1,0 +1,73 @@
+# evdograph-nlq — Docker Compose stack
+#
+# Default profile: frontend + backend (requires a cloud LLM key in .env)
+#   docker compose up
+#
+# Ollama profile: adds local LLM service (no cloud key required)
+#   docker compose --profile ollama up
+#
+# Setup: cp .env.example .env  and fill in your key(s)
+
+services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    # Override OLLAMA_BASE_URL so the backend reaches the ollama service
+    # by its Docker network hostname instead of localhost.
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - FRONTEND_ORIGIN=http://localhost:5173
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/providers')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # One-shot service: pulls the default small model on first launch, then exits.
+  # Runs only in the ollama profile. Safe to re-run (ollama pull is idempotent).
+  ollama-init:
+    image: ollama/ollama
+    profiles: ["ollama"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:3b-instruct"]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    restart: "no"
+
+volumes:
+  ollama-data:
+    driver: local

@@ -74,9 +74,23 @@ Active prompt: nl-to-sparql-v2 (static few-shot, 6 examples injected into {few_s
 
 ## How to run
 
-### 1 — Full pipeline (real LLM + real GraphDB)
+### 1 — Docker Compose (handoff / reproducibility)
 
-Needs `backend/.env` with `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`) filled in.
+Requires a `.env` at repo root (copy from `.env.example` and fill in keys).
+
+```powershell
+# Default profile — cloud LLM
+docker compose up
+
+# Ollama profile — no cloud key, local LLM (~2 GB model downloaded once)
+docker compose --profile ollama up
+```
+
+Open `http://localhost:5173`.
+
+### 2 — Native: full pipeline (real LLM + real GraphDB)
+
+Requires `backend/.env` (copy from root `.env.example`).
 
 ```powershell
 # Terminal 1 — backend
@@ -86,17 +100,13 @@ cd backend; uv run fastapi dev app/main.py
 cd frontend; pnpm dev
 ```
 
-Open `http://localhost:5173`. Select provider/model from the dropdown, submit a question.
-
-### 2 — Frontend UI iteration (mock API, no backend needed)
+### 3 — Native: frontend UI iteration (mock API, no backend)
 
 ```powershell
 cd frontend; $env:VITE_USE_MOCK_API='1'; pnpm dev
 ```
 
-Streams canned SPARQL character-by-character, then shows a hard-coded results table. No network calls, no API key required. Use this for CSS/layout work.
-
-### 3 — Backend only with fake LLM (no API key, no frontend)
+### 4 — Native: backend with fake LLM (no API key, no frontend)
 
 ```powershell
 cd backend
@@ -104,25 +114,12 @@ cd backend
 uv run fastapi dev app/main.py
 ```
 
-Test the API directly:
-```powershell
-Invoke-RestMethod -Method POST -Uri http://localhost:8000/query `
-  -ContentType 'application/json' `
-  -Body '{"question":"test","provider":"fake","model":"fake-v1"}'
-```
-
-### 4 — Run tests
+### 5 — Run tests
 
 ```powershell
 cd backend
-uv run pytest -v -m "not live"    # fast, no API keys needed (64 tests)
-uv run pytest -m live             # hits real GraphDB + LLM APIs (3 tests, costs tokens)
-```
-
-Live tests need the relevant API key exported into the shell **before** running pytest (pytest does not auto-load `.env`):
-```powershell
-$env:ANTHROPIC_API_KEY = (Get-Content .env | Select-String '^ANTHROPIC_API_KEY=' | ForEach-Object { ($_ -split '=',2)[1] })
-uv run pytest -m live -v
+uv run pytest -v -m "not live"    # fast, no API keys needed
+uv run pytest -m live             # hits real GraphDB + LLM APIs
 ```
 
 ## Where to find more

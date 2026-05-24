@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     gemini_api_key : str
         Secret API key for Google Gemini. Required when `llm_provider` is
         "gemini". Also never committed.
+    ollama_base_url : str
+        Base URL for the local Ollama service. Default is localhost:11434.
+        In Docker Compose, compose overrides this to http://ollama:11434 so
+        the backend container can reach the ollama service by its service name.
+        Only used when LLM_PROVIDER=ollama.
     graphdb_endpoint : str
         Full URL of the GraphDB SPARQL endpoint. The pipeline sends validated
         SPARQL queries here to get results.
@@ -80,6 +85,7 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="claude-haiku-4-5", alias="LLM_MODEL")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     graphdb_endpoint: str = Field(
         default="http://lod.csd.auth.gr:7200/repositories/Evdoxus",
         alias="GRAPHDB_ENDPOINT",

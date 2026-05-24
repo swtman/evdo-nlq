@@ -23,6 +23,33 @@ Template:
 
 ---
 
+## 2026-05-23 — Reproducible Setup: Ollama provider, Docker Compose, final verification
+
+### Done
+- Added `OllamaProvider` implementing `LLMProvider` protocol (httpx, streaming ndjson)
+- Registered `"ollama"` in `factory.py`; factory error message updated
+- `/providers` endpoint now detects Ollama dynamically (1s timeout ping + /api/tags)
+- `Settings.ollama_base_url` added to config
+- Root `.env.example` created; `backend/.env.example` deleted
+- Frontend `package.json`: pinned Node >=20 and pnpm version; created `.nvmrc`
+- `backend/Dockerfile` (python:3.12-slim, uv, production uvicorn)
+- `frontend/Dockerfile` (multi-stage node:20-alpine → nginx:alpine) + `nginx.conf` (SSE-safe)
+- `docker-compose.yml` with frontend/backend/ollama services + compose profiles
+- `docker-compose.gpu.yml` NVIDIA GPU overlay
+- ADR-010 (Docker Compose), ADR-011 (Ollama provider)
+- README and CLAUDE.md updated with Docker-first setup
+- **Verification complete:** 78/78 backend tests pass (non-live), `pnpm typecheck` clean, no regressions.
+
+### Next
+- Run eval harness against qwen2.5:3b-instruct; add results to thesis
+- Consider tagging a reproducible release for supervisor handoff
+- Thesis chapter: document the containerization + local-LLM architecture
+
+### Blockers / notes
+- None. Reproducible setup is complete and fully tested.
+
+---
+
 ## 2026-05-16 — Frontend: Playwright bug-hunt, features, sidebar refactor, code docs
 
 ### Done

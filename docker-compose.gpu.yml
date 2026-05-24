@@ -1,0 +1,24 @@
+# GPU override for the ollama service.
+#
+# Prerequisites (Windows + WSL2):
+#   1. NVIDIA GPU + up-to-date drivers
+#   2. Docker Desktop with WSL2 backend enabled
+#   3. NVIDIA Container Toolkit installed inside WSL2:
+#      https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ollama up
+#
+# Verify GPU is used after start:
+#   docker compose exec ollama ollama ps
+#   (should show the model with GPU memory allocation)
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
