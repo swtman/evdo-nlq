@@ -1,21 +1,25 @@
 FROM python:3.12-slim
 
 # Install uv (the package manager this project uses)
-RUN pip install uv --no-cache-dir
+RUN pip install uv --no-cache-dir --default-timeout=120 --retries 5
+
 
 WORKDIR /app
 
 # Copy dependency manifests first so Docker layer-caches them.
 # uv.lock + pyproject.toml define the exact dependency set.
-COPY pyproject.toml uv.lock ./
+COPY backend/pyproject.toml backend/uv.lock ./
 
 # Install production deps only (no test/dev extras).
 # --frozen: fail if uv.lock is not up to date.
 # --no-dev: skip dependency groups marked [tool.uv.dev].
 RUN uv sync --frozen --no-dev
 
-# Copy application source.
-COPY app/ ./app/
+# Copy application source and repo-root prompts.
+# prompts/ lands at /prompts — the loaders walk four .parent steps from
+# /app/app/prompts/loader.py and /app/app/ontology/loader.py to reach it.
+COPY backend/app/ ./app/
+COPY prompts/ /prompts/
 
 # Expose the port uvicorn will listen on.
 EXPOSE 8000
