@@ -234,6 +234,10 @@ class SparqlClient:
             # Re-raise as RuntimeError so callers don't need to know about
             # SPARQLWrapper internals. `from exc` preserves the original
             # traceback so it still shows up in logs.
+            # NOTE: the embedded {exc} detail is intentionally preserved here
+            # for operator logs. The caller (query.py) must NOT forward this
+            # message verbatim to the client — it may contain internal hostnames
+            # or GraphDB error strings. See H-2 in docs/security-review-2026-05-31.md.
             raise RuntimeError(f"SPARQL execution failed: {exc}") from exc
 
         # Extract column names from "head".vars — defensive .get() in case

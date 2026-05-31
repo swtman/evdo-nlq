@@ -40,6 +40,16 @@ from __future__ import annotations
 
 from app.llm.base import LLMProvider
 
+# Allowlist of permitted (provider, model) pairs.
+# Ollama is absent intentionally — its models are discovered dynamically
+# at runtime via the Ollama /api/tags endpoint and are only reachable on
+# the local network, so static validation would be both fragile and unnecessary.
+VALID_MODELS: dict[str, frozenset[str]] = {
+    "fake": frozenset({"fake-v1"}),
+    "claude": frozenset({"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"}),
+    "gemini": frozenset({"gemini-2.0-flash", "gemini-1.5-flash"}),
+}
+
 
 def get_provider(name: str, model: str) -> LLMProvider:
     """Build and return a fully configured LLMProvider.
@@ -66,9 +76,16 @@ def get_provider(name: str, model: str) -> LLMProvider:
     Raises
     ------
     ValueError
-        If `name` is not one of the three known providers. The error message
-        lists the valid options so it is easy to diagnose a typo.
+        If `name` is not one of the known providers, or if `model` is not in
+        the allowlist for `name`. The error message lists valid options.
     """
+    # Reject models not in the static allowlist. Ollama is excluded from the
+    # allowlist (its models are dynamic), so it passes through unchecked.
+    if name in VALID_MODELS and model not in VALID_MODELS[name]:
+        raise ValueError(
+            f"Model {model!r} is not permitted for provider {name!r}. "
+            f"Allowed: {sorted(VALID_MODELS[name])}"
+        )
     match name:
         case "fake":
             # Imported here (not at top of file) so that running with

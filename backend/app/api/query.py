@@ -173,11 +173,20 @@ def query(request: QueryRequest) -> QueryResponse:
     An invalid provider name (ValueError from get_provider) will produce
     HTTP 500, not HTTP 400 — this is a known limitation.
     """
-    pipeline = _make_pipeline(request)
     try:
+        pipeline = _make_pipeline(request)
         result = pipeline.run(request.question)
+    except ValueError as exc:
+        # Invalid provider/model combination — bad request from the caller.
+        # Surface the validation message (it contains only allowlist info, no internals).
+        raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        # GraphDB or pipeline failure — log full detail, return generic message.
+        logger.error("Pipeline error: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="The SPARQL endpoint could not execute the query.",
+        )
     return QueryResponse(**result.__dict__)
 
 
@@ -246,8 +255,10 @@ async def query_stream(request: QueryRequest) -> EventSourceResponse:
             async for event in pipeline.stream_events(request.question):
                 yield _event_to_sse(event)
         except Exception as exc:
-            logger.error("Stream error: %s", exc)
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+            # Log the full exception for operator diagnostics; return a generic
+            # message to the client so no internal detail is disclosed.
+            logger.error("Stream error: %s", exc, exc_info=True)
+            yield {"event": "error", "data": json.dumps({"message": "An error occurred while processing your query."})}
 
     # EventSourceResponse (from sse_starlette) wraps the async generator and
     # handles the SSE wire format. It pulls events from event_generator() on

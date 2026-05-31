@@ -40,13 +40,22 @@ export function toJSON(columns: string[], rows: Row[]): string {
   return JSON.stringify(data, null, 2)
 }
 
+/** Escape a string for safe embedding in an XML attribute value (double-quoted). */
+function escapeXMLAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 /**
  * W3C SPARQL Query Results XML Format.
  * Uses the standard namespace so the file can be consumed by SPARQL tooling.
- * Special XML characters (&, <, >) in cell values are escaped.
+ * Special XML characters in cell values and column names are escaped.
  */
 export function toXML(columns: string[], rows: Row[]): string {
-  const vars = columns.map(c => `  <variable name="${c}"/>`).join('\n')
+  const vars = columns.map(c => `  <variable name="${escapeXMLAttr(c)}"/>`).join('\n')
   const results = rows.map(row => {
     const bindings = columns
       .map(col => {
@@ -54,7 +63,7 @@ export function toXML(columns: string[], rows: Row[]): string {
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;')
-        return `      <binding name="${col}"><literal>${val}</literal></binding>`
+        return `      <binding name="${escapeXMLAttr(col)}"><literal>${val}</literal></binding>`
       })
       .join('\n')
     return `    <result>\n${bindings}\n    </result>`

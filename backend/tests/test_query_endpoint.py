@@ -140,6 +140,62 @@ def test_post_query_stream_yields_sse_events(client, mock_sparql_result):
     assert "event: done" in raw
 
 
+# --- H-1: model allowlist tests ---
+
+def test_post_query_returns_400_for_invalid_model(client):
+    """Requesting an unlisted model must return HTTP 400, not 500."""
+    response = client.post(
+        "/query",
+        json={"question": "test", "provider": "claude", "model": "claude-opus-99"},
+    )
+    assert response.status_code == 400
+    assert "not permitted" in response.json()["detail"]
+
+
+# --- H-2: error message sanitization tests ---
+
+def test_post_query_502_does_not_leak_internal_detail(client):
+    """The 502 response body must not contain the internal error string."""
+    with (
+        patch("app.api.query.get_provider", return_value=FakeProvider()),
+        patch("app.api.query.SparqlClient") as MockClient,
+    ):
+        MockClient.return_value.execute.side_effect = RuntimeError(
+            "Connection refused: secret.internal.host:7200"
+        )
+        response = client.post(
+            "/query",
+            json={"question": "test", "provider": "fake", "model": "fake-v1"},
+        )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "secret.internal.host" not in detail
+    assert "7200" not in detail
+    assert "SPARQL endpoint" in detail
+
+
+def test_post_query_stream_error_does_not_leak_internal_detail(client, mock_sparql_result):
+    """The SSE error event must not contain internal exception details."""
+    with (
+        patch("app.api.query.get_provider", return_value=FakeProvider()),
+        patch("app.api.query.SparqlClient") as MockClient,
+    ):
+        MockClient.return_value.execute.side_effect = RuntimeError(
+            "hostname=db.private.lan port=7200 auth=admin"
+        )
+        with client.stream(
+            "POST",
+            "/query/stream",
+            json={"question": "test", "provider": "fake", "model": "fake-v1"},
+        ) as response:
+            raw = response.read().decode()
+
+    assert "event: error" in raw
+    assert "db.private.lan" not in raw
+    assert "auth=admin" not in raw
+
+
 def test_post_query_stream_not_answerable_skips_execution(client):
     """NOT_ANSWERABLE sentinel must short-circuit — no GraphDB call, no error event."""
     not_answerable_response = "# NOT_ANSWERABLE: question is out of scope"

@@ -23,6 +23,28 @@ Template:
 
 ---
 
+## 2026-05-31 — Security review + fixes for 3 HIGH-severity findings
+
+### Done
+- Full codebase security review completed; findings written to `docs/security-review-2026-05-31.md` (15 findings: 1 Critical, 3 High, 4 Medium, 3 Low, 4 Informational).
+- **H-1 fixed:** Added `VALID_MODELS` allowlist to `backend/app/llm/factory.py`; unknown model strings now raise `ValueError`, converted to HTTP 400 in the sync endpoint.
+- **H-2 fixed:** Raw `str(exc)` replaced with generic safe messages in both the sync (HTTP 502) and streaming (SSE error event) paths in `query.py`. Full exception detail still logged server-side with `exc_info=True`.
+- **H-3 fixed:** Added `escapeXMLAttr()` helper to `frontend/src/utils/exporters.ts`; applied to column names in both `<variable name="...">` and `<binding name="...">` in `toXML()`.
+- **Vitest setup added:** installed vitest, added `test` / `test:run` scripts, created `vitest.config.ts` and `src/utils/exporters.test.ts` (12 tests covering XML escaping + CSV/JSON/TSV sanity).
+- **All tests pass:** 86/86 backend non-live tests + 12/12 frontend vitest tests. `pnpm typecheck` clean.
+
+### Next
+- Rotate API keys (C-1 — manual action, not in code).
+- Fix medium findings: M-1 (question max_length), M-2/L-1 (SELECT-only enforcement via rdflib), M-3 (Ollama port binding).
+- Wire `VITE_GIT_SHA` in `vite.config.ts`.
+- Begin thesis writing — Ch 02 and Ch 04.
+
+### Blockers / notes
+- C-1 (live API keys in `.env`) requires manual key rotation at console.anthropic.com and console.cloud.google.com. Keys have never been committed (verified via `git log`).
+- `_STATIC_PROVIDERS` in `providers.py` and `VALID_MODELS` in `factory.py` now list the same models but are maintained separately — they must be kept in sync when adding new models.
+
+---
+
 ## 2026-05-23 — Reproducible Setup: Ollama provider, Docker Compose, final verification
 
 ### Done
