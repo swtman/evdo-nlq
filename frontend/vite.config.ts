@@ -7,6 +7,7 @@ export default defineConfig({
     proxy: {
       '/query': 'http://localhost:8000',
       '/providers': 'http://localhost:8000',
+      '/sparql': 'http://localhost:8000',
     },
   },
 })

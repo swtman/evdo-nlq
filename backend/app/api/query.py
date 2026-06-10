@@ -35,7 +35,7 @@ from app.pipeline.query_pipeline import (
     RetryEvent,
     TokenEvent,
 )
-from app.sparql.client import SparqlClient
+from app.sparql.client import SparqlClient, validate_sparql
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -112,6 +112,31 @@ class QueryResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     retries: int
+
+
+class RawSparqlRequest(BaseModel):
+    """Request body for POST /sparql/execute.
+
+    Fields
+    ------
+    sparql : str
+        A SPARQL SELECT query to validate and execute directly against GraphDB.
+        The LLM generation pipeline is bypassed entirely — use this when the user
+        has manually edited the generated SPARQL and wants to re-run it.
+    """
+
+    sparql: str
+
+
+class RawSparqlResponse(BaseModel):
+    """Response body for POST /sparql/execute.
+
+    Returns only the result columns and rows — no LLM metadata (tokens, retries)
+    because those are not applicable for a direct user-supplied query.
+    """
+
+    columns: list[str]
+    rows: list[dict]
 
 
 def _make_pipeline(request: QueryRequest) -> QueryPipeline:
@@ -264,6 +289,51 @@ async def query_stream(request: QueryRequest) -> EventSourceResponse:
     # handles the SSE wire format. It pulls events from event_generator() on
     # demand and flushes each one to the client immediately.
     return EventSourceResponse(event_generator())
+
+
+@router.post("/sparql/execute", response_model=RawSparqlResponse)
+def execute_raw_sparql(request: RawSparqlRequest) -> RawSparqlResponse:
+    """Execute a user-supplied SPARQL query directly against GraphDB, bypassing the LLM.
+
+    This endpoint is called when the user manually edits the generated SPARQL query
+    in the UI and clicks "Rerun". No LLM call is made — the provided SPARQL string
+    is validated and executed as-is.
+
+    REQUEST LIFECYCLE
+    -----------------
+    1. FastAPI deserializes the JSON body into RawSparqlRequest.
+    2. validate_sparql() checks syntax via rdflib (no network). The parse error
+       message from rdflib contains only grammar information — no internal URIs
+       or host details — so it is safe to surface directly to the client.
+    3. SparqlClient.execute() runs the query against GraphDB.
+    4. On success: columns/rows are returned as JSON.
+    5. On validation failure: HTTP 400 with the rdflib parse error.
+    6. On execution failure: HTTP 502 with a generic message — the raw exception
+       is logged but never forwarded to the client (see H-2 security note in client.py).
+
+    SECURITY NOTES
+    --------------
+    - The GraphDB endpoint is read from settings — callers cannot redirect the
+      backend to an arbitrary SPARQL endpoint (same policy as the pipeline).
+    - The raw RuntimeError from SparqlClient is never included in the response
+      body; it may contain internal hostnames or port numbers.
+    """
+    # Step 1: syntax validation (offline, no network)
+    error_msg = validate_sparql(request.sparql)
+    if error_msg is not None:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    # Step 2: execute against GraphDB
+    try:
+        client = SparqlClient(settings.graphdb_endpoint)
+        result = client.execute(request.sparql)
+    except RuntimeError as exc:
+        logger.error("Raw SPARQL execution error: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="The SPARQL endpoint could not execute the query.",
+        )
+    return RawSparqlResponse(columns=result.columns, rows=result.rows)
 
 
 def _event_to_sse(event: PipelineEvent) -> dict:

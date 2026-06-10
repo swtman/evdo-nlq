@@ -18,6 +18,53 @@ import type { ParsedSSEEvent } from '../types'
  * @param model     Model id within the provider (e.g. "claude-haiku-4-5").
  * @param signal    AbortSignal — pass `controller.signal` so the caller can cancel.
  */
+/**
+ * Execute a user-supplied SPARQL query directly against GraphDB (bypassing the LLM).
+ *
+ * Called when the user edits the generated SPARQL in the panel and clicks "Rerun".
+ * Returns the result columns and rows, or throws on validation/execution errors.
+ *
+ * Error handling:
+ *   - 400 → the backend returned a validation error (bad SPARQL syntax); the
+ *     `detail` field from the JSON body is forwarded so the ErrorBanner is helpful.
+ *   - 502 → GraphDB execution failed; the backend returns a generic message (no internals).
+ *   - Network errors propagate as-is.
+ *
+ * @param sparql  A SPARQL SELECT query string (may be edited by the user).
+ * @param signal  AbortSignal — pass `controller.signal` to allow cancellation.
+ */
+export async function executeSparql(
+  sparql: string,
+  signal: AbortSignal,
+): Promise<{ columns: string[]; rows: Record<string, string | undefined>[] }> {
+  // In mock mode, delegate to the local fake implementation.
+  if (import.meta.env.VITE_USE_MOCK_API === '1') {
+    const { mockExecuteSparql } = await import('./mock')
+    return mockExecuteSparql(sparql, signal)
+  }
+
+  const response = await fetch('/sparql/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sparql }),
+    signal,
+  })
+
+  if (!response.ok) {
+    // Try to extract the human-readable detail from the FastAPI error body.
+    let detail: string | undefined
+    try {
+      const body = await response.json() as { detail?: string }
+      detail = body.detail
+    } catch {
+      // Ignore JSON parse failure — fall back to the generic message below.
+    }
+    throw new Error(detail ?? `HTTP ${response.status}: ${response.statusText}`)
+  }
+
+  return response.json() as Promise<{ columns: string[]; rows: Record<string, string | undefined>[] }>
+}
+
 export async function* streamQuery(
   question: string,
   provider: string,

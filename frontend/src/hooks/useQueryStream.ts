@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { streamQuery } from '../api/client'
+import { executeSparql, streamQuery } from '../api/client'
 import type { Provider, QueryState } from '../types'
 
 /**
@@ -20,6 +20,9 @@ type Action =
   | { type: 'ERROR'; payload: string }
   | { type: 'DISMISS_ERROR' }
   | { type: 'CLEAR' }
+  /** Fired when the user manually edits the SPARQL and clicks "Rerun". The LLM
+   *  pipeline is skipped entirely — only the GraphDB execution step runs. */
+  | { type: 'RERUN_START'; payload: string }
 
 /**
  * Pure reducer — all state transitions live here so they are easy to test in
@@ -31,6 +34,12 @@ function reducer(state: QueryState, action: Action): QueryState {
     case 'SUBMIT':
       // Reset to a clean streaming state; discard any previous results.
       return { status: 'streaming', sparql: '' }
+
+    case 'RERUN_START':
+      // Skip token streaming entirely — jump straight to the "executing" phase with
+      // the user-supplied SPARQL. The rerun flag suppresses the "generating…" label
+      // and streaming cursor in the UI.
+      return { status: 'streaming', sparql: action.payload, executing: true, rerun: true }
 
     case 'TOKEN':
       // Append a single SPARQL token streamed from the backend.
@@ -188,6 +197,33 @@ export function useQueryStream() {
     })()
   }, [])
 
+  /**
+   * Execute a user-edited SPARQL query directly against GraphDB, bypassing the LLM.
+   *
+   * Mirrors `submit`'s AbortController lifecycle: any in-flight request (NL query
+   * or a previous rerun) is aborted before starting.  Reuses the existing RESULTS,
+   * DONE, and ERROR reducer actions so the results table and history are populated
+   * through the same path as a normal query.
+   */
+  const rerunSparql = useCallback((sparql: string) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    dispatch({ type: 'RERUN_START', payload: sparql })
+
+    void (async () => {
+      try {
+        const { columns, rows } = await executeSparql(sparql, controller.signal)
+        dispatch({ type: 'RESULTS', payload: { columns, rows } })
+        dispatch({ type: 'DONE', payload: { inputTokens: 0, outputTokens: 0, retries: 0 } })
+      } catch (err) {
+        if (err instanceof Error && err.name !== 'AbortError') {
+          dispatch({ type: 'ERROR', payload: err.message })
+        }
+      }
+    })()
+  }, [])
+
   /** Transition from the `error` state back to `idle` so the user can retry. */
   const dismissError = useCallback(() => dispatch({ type: 'DISMISS_ERROR' }), [])
 
@@ -197,5 +233,5 @@ export function useQueryStream() {
     dispatch({ type: 'CLEAR' })
   }, [])
 
-  return { state, providers, submit, dismissError, clear }
+  return { state, providers, submit, rerunSparql, dismissError, clear }
 }

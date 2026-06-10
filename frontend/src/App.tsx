@@ -33,7 +33,7 @@ function getInitialTheme(): Theme {
 const GIT_SHA = (import.meta.env.VITE_GIT_SHA as string | undefined)?.slice(0, 7) ?? 'dev'
 
 export default function App() {
-  const { state, providers, submit, dismissError, clear } = useQueryStream()
+  const { state, providers, submit, rerunSparql, dismissError, clear } = useQueryStream()
   const { entries, addEntry, clearHistory } = useHistory()
 
   const [submissionCount, setSubmissionCount] = useState(0)
@@ -51,6 +51,10 @@ export default function App() {
   // Tracks the provider/model used in the last submission so that example-query
   // clicks in EmptyState reuse the same model (without the user having to reselect).
   const [lastMeta, setLastMeta] = useState<{ provider: string; model: string } | null>(null)
+
+  // The NL question tied to the SPARQL currently on screen. Used to build the
+  // "(edited) <question>" label when the user reruns a manually-edited query.
+  const [currentQuestion, setCurrentQuestion] = useState('')
 
   // Drives QueryForm's `prefillQuestion` prop — set when an example or history item
   // is clicked so the input reflects what's currently being displayed.
@@ -106,6 +110,7 @@ export default function App() {
     setCachedResult(null)
     setPrefillQuestion('')
     setPendingMeta(null)
+    setCurrentQuestion('')
     // Incrementing submissionCount remounts <SparqlPanel>, resetting its collapsed state.
     setSubmissionCount(c => c + 1)
   }
@@ -117,15 +122,40 @@ export default function App() {
     setCachedResult(null)
     setPendingMeta({ question, provider, model })
     setLastMeta({ provider, model })
+    setCurrentQuestion(question)
     submit(question, provider, model)
+  }
+
+  /** Re-execute a user-edited SPARQL query directly against GraphDB (no LLM call).
+   *
+   * Matches SparqlPanel's `onRerun(editedSparql)` single-argument contract.
+   * Builds the history label as "✎ (edited) <original question>", stripping any
+   * existing tag first so reruns of reruns don't stack the prefix. */
+  const handleRerun = (editedSparql: string) => {
+    setSubmissionCount(c => c + 1)  // remount SparqlPanel → resets its internal edit state
+    setActiveHistoryId(null)
+    setCachedResult(null)
+    // Strip an existing "(edited)" prefix so reruns of reruns stay clean.
+    const baseQuestion = currentQuestion.startsWith(t.historyManualEdit)
+      ? currentQuestion.slice(t.historyManualEdit.length).trimStart()
+      : currentQuestion
+    setPendingMeta({
+      question: `${t.historyManualEdit} ${baseQuestion}`.trim(),
+      provider: lastMeta?.provider ?? '—',
+      model:    lastMeta?.model    ?? '—',
+    })
+    // Update currentQuestion so a subsequent rerun of this rerun also uses the correct base.
+    setCurrentQuestion(`${t.historyManualEdit} ${baseQuestion}`.trim())
+    rerunSparql(editedSparql)
   }
 
   /** Load a cached result from history without hitting the backend. */
   const handleHistorySelect = (entry: HistoryEntry) => {
     setActiveHistoryId(entry.id)
     setCachedResult(entry)
-    // Sync the input so it reflects the cached query (not the previous live query).
+    // Sync the input and currentQuestion so editing this cached result uses the right label.
     setPrefillQuestion(entry.question)
+    setCurrentQuestion(entry.question)
     setHistoryOpen(false)
   }
 
@@ -224,8 +254,12 @@ export default function App() {
           <SparqlPanel
             key={submissionCount}
             sparql={sparqlToShow ?? ''}
-            streaming={state.status === 'streaming'}
+            // Suppress the token cursor and "generating…" label during a rerun —
+            // the LLM is not running, only GraphDB is. The `executing` prop still
+            // fires the GraphDB progress bar via the RERUN_START → executing:true flag.
+            streaming={state.status === 'streaming' && !state.rerun}
             executing={state.status === 'streaming' && !!state.executing}
+            onRerun={handleRerun}
           />
         )}
 

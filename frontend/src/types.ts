@@ -30,6 +30,7 @@ export type QueryState =
       executing?: boolean      // true between sparql_complete and results — GraphDB is running
       columns?: string[]       // arrive with the results event, before DONE is dispatched
       rows?: Record<string, string | undefined>[]
+      rerun?: boolean          // true when streaming state was entered via RERUN_START (not LLM stream)
     }
   | {
       status: 'done'

@@ -33,6 +33,9 @@ export const t = {
   sparqlComplete:   '// ready',
   sparqlCopy:       '⧉ αντιγραφή',
   sparqlCopied:     '✓ αντιγράφηκε',
+  sparqlEdit:       '✎ επεξεργασία',
+  sparqlCancel:     '✕ ακύρωση',
+  sparqlRerun:      '⟳ επανεκτέλεση',
   sparqlHide:       '▼ απόκρυψη',
   sparqlShow:       '▶ εμφάνιση',
   sparqlCollapse:   '▼',
@@ -61,6 +64,7 @@ export const t = {
     `graphdb ${graphdbMs}ms · llm ${llmS.toFixed(1)}s${retries > 0 ? ` · ${retries} retries` : ''}`,
 
   cachedBadge: '(αποθηκευμένο)',
+  historyManualEdit: '✎ (edited)',
 
   /* ── Pagination ──────────────────────────────────────────────────────── */
   pageRowsLabel: 'γραμμές:',

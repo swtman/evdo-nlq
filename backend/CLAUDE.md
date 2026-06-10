@@ -55,11 +55,15 @@ backend/
 | `POST` | `/query` | Sync JSON — full pipeline response after completion |
 | `POST` | `/query/stream` | SSE — streams SPARQL tokens then results |
 | `GET` | `/providers` | Static list of available providers + models |
+| `POST` | `/sparql/execute` | Execute a user-supplied SPARQL string directly (no LLM) — see ADR-013 |
 
 Both `/query` and `/query/stream` accept:
 ```json
 {"question": "...", "provider": "claude", "model": "claude-haiku-4-5"}
 ```
+
+`/sparql/execute` accepts `{"sparql": "SELECT ..."}` and returns `{"columns": [...], "rows": [...]}`.
+Returns HTTP 400 if the SPARQL is syntactically invalid, 502 if GraphDB execution fails.
 
 **SSE transport note:** `/query/stream` must be called with `fetch + ReadableStream` (not `EventSource`) because `EventSource` only supports GET. `sse_starlette` emits `\r\n` line endings and `\r\n\r\n` event separators — the frontend SSE parser normalizes these to `\n` before splitting.
 

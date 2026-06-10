@@ -261,3 +261,22 @@ export async function* mockStreamQuery(
     data: JSON.stringify({ provider, model, input_tokens: 120, output_tokens: 45, retries: 0 }),
   }
 }
+
+/**
+ * Mock implementation of executeSparql for UI development (VITE_USE_MOCK_API=1).
+ *
+ * Simulates a brief GraphDB round-trip delay then returns the same canned result
+ * set used by the SSE mock. The `sparql` argument is accepted but ignored — the
+ * result is always the 46-row university set.
+ */
+export async function mockExecuteSparql(
+  _sparql: string,
+  signal: AbortSignal,
+): Promise<{ columns: string[]; rows: Record<string, string | undefined>[] }> {
+  // Simulate a ~300 ms GraphDB round-trip so the GraphDB progress bar is visible.
+  await delay(300, signal)
+  return {
+    columns: [...MOCK_RESULTS.columns],
+    rows: MOCK_RESULTS.rows.map(r => ({ ...r }) as Record<string, string | undefined>),
+  }
+}

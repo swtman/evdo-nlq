@@ -75,6 +75,8 @@ docs/superpowers/
 TODO.md
 todo/
 thesis/
+bibliography/
+notes/grounding-nlq-exploration.md
 
 # Backend logs
 backend/.claude/
