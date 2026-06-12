@@ -56,7 +56,7 @@ class GeminiProvider:
         Parameters
         ----------
         model : str
-            The Gemini model identifier, e.g. "gemini-2.0-flash". Passed to
+            The Gemini model identifier, e.g. "gemini-2.5-flash-lite". Passed to
             every API call.
         api_key : str
             The Google secret key from `.env`. Never committed to git.

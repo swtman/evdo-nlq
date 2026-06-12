@@ -108,7 +108,7 @@ def test_live_generate_returns_sparql(tmp_path):
     if not key:
         pytest.skip("GEMINI_API_KEY not set")
     cache = DiskCache(str(tmp_path / "cache"))
-    provider = GeminiProvider(model="gemini-2.0-flash", api_key=key, cache=cache)
+    provider = GeminiProvider(model="gemini-2.5-flash-lite", api_key=key, cache=cache)
     result = provider.generate("Respond with only: SELECT * WHERE {}", "test")
     assert "SELECT" in result.text
     assert result.input_tokens > 0

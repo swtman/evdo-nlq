@@ -47,7 +47,7 @@ from app.llm.base import LLMProvider
 VALID_MODELS: dict[str, frozenset[str]] = {
     "fake": frozenset({"fake-v1"}),
     "claude": frozenset({"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"}),
-    "gemini": frozenset({"gemini-2.0-flash", "gemini-1.5-flash"}),
+    "gemini": frozenset({"gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash-lite"}),
 }
 
 

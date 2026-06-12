@@ -116,7 +116,7 @@ export function useQueryStream() {
       // Hard-coded providers for UI development — no network call needed.
       setProviders([
         { id: 'claude', models: ['claude-haiku-4-5', 'claude-sonnet-4-6'] },
-        { id: 'gemini', models: ['gemini-2.0-flash', 'gemini-1.5-flash'] },
+        { id: 'gemini', models: ['gemini-2.5-flash-lite'] },
         { id: 'fake', models: ['fake-v1'] },
       ])
     } else {
