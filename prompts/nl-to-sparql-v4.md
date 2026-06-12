@@ -22,6 +22,12 @@ notes: >
   publisherName) are now answerable; do not emit NOT_ANSWERABLE for them.
   ontology-summary.md and examples.yaml updated in lockstep — see
   decisions/014-ontology-v2-migration.md.
+
+  AMENDMENT (2026-06-12): live verification against the recovered EvdoGraph
+  endpoint found evdx:hasCode is xsd:integer, not xsd:string — 16 of 22 gold
+  examples were silently returning zero rows because of quoted book-code
+  literals. Rule 15 added; ontology-summary.md and examples.yaml fixed in
+  lockstep. See notes/ONTOLOGY-NOTES.md and decisions/014-ontology-v2-migration.md.
 ---
 
 # System
@@ -74,6 +80,7 @@ Your task: given a user question in Greek or English, produce a single valid SPA
       FILTER NOT EXISTS { ?c1 evdx:hasBook ?b1 . ?b1 evdx:hasCode "X" . ?d1 evdx:hasCourse ?c1 . ?u evdx:hasDepartment ?d1 . }
       ```
 14. The 2026-06-11 schema added book/publisher/professor metadata that was previously absent. Questions about a book's **author(s)** (`evdx:authors`), **ISBN** (`evdx:isbn`), **publisher** (`evdx:hasPublisher`/`evdx:publisherName`), **edition** (`evdx:edition`), **publication year** (`evdx:publicationYear`), or **topic/subject** (`evdx:keyword`) ARE answerable — do not emit `NOT_ANSWERABLE` for these. Likewise, `evdx:professors` on a course gives the teaching professor(s) — "who teaches X" IS answerable. Student enrollment and grades remain genuinely absent (still `NOT_ANSWERABLE`).
+15. `evdx:hasCode` (the Eudoxus book code) is **`xsd:integer`**, not a string. Write book codes as bare numbers, never quoted: `VALUES ?code {94700120}`, not `VALUES ?code {"94700120"}`. A quoted string is a different RDF term and will silently match zero triples. The same applies to `evdx:year` and `evdx:publicationYear` (also `xsd:integer`) — use `?c evdx:year 2022` / `FILTER (?year >= 2019)`, never quoted.
 
 ## Examples
 
@@ -94,4 +101,16 @@ Your task: given a user question in Greek or English, produce a single valid SPA
 - `{few_shot_block}` uses k=6 by default. Raise to k=8 in `examples_loader.py` to also inject `set-intersection-by-book` (priority 6) and `multi-book-comparison` (priority 10) — the latter teaches the `VALUES (?group ?code)` tuple trick that is otherwise undiscoverable.
 - The granularity-scoping nuances in Rule 13 (course-level vs department-level set-difference) still benefit from dedicated few-shot examples — no rule fully substitutes for seeing a worked example.
 - Greek NL questions in the example bank may have TODO placeholders — verify before Greek eval.
-- New-capability examples (authors/ISBN/publisher/keyword) are new in this version and have not yet been cross-checked against live GraphDB data (endpoint was unreachable during the migration) — re-validate once the endpoint recovers.
+
+## What changed 2026-06-12 (post-recovery verification)
+
+- All 22 gold examples re-checked against the recovered live endpoint (see
+  `notes/ONTOLOGY-NOTES.md`). 16/22 (ex-001–ex-014, ex-021, ex-022) were
+  returning zero rows due to the `evdx:hasCode` string/integer mismatch — now
+  fixed (Rule 15, `examples.yaml` BUGFIX NOTE).
+- ex-021/ex-022 (authors/ISBN/publisher/keyword lookups, added in v4) are now
+  confirmed against live data — book 94700120 has full metadata; no code swap
+  needed.
+- A `scripts/eval.py --prompt-version 4` accuracy run is still pending (see
+  ADR-014 Follow-ups) — this pass only fixed gold-query correctness, not LLM
+  output accuracy.

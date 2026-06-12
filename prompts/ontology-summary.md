@@ -19,13 +19,13 @@ Key properties (literals):
 - evdx:semester        Course → string (e.g. "1", "2")
 - evdx:year            Course → integer (e.g. 2021)
 - evdx:professors      Course → string (professor name(s) teaching this offering)
-- evdx:hasCode         LearningEntity → string (Eudoxus internal code — NOT an ISBN)
+- evdx:hasCode         LearningEntity → integer (Eudoxus internal code — NOT an ISBN; write as an unquoted number, e.g. VALUES ?code {94700120})
 - evdx:hasURL          LearningEntity → URL
 - evdx:authors         Book → string
 - evdx:isbn            Book → string
 - evdx:publicationYear Book → integer
 - evdx:edition         Book → string
-- evdx:keyword         Book → string (topic/subject tag — useful for topic searches)
+- evdx:keyword         Book → string (topic/subject tag; MULTI-VALUED — a book may have several evdx:keyword triples)
 - evdx:publisherName   Publisher (or Book) → string
 
 Other Book metadata (exists but rarely queried): evdx:bookType, evdx:coverType,
@@ -41,6 +41,9 @@ IMPORTANT:
 - Departments share names across universities — group by University when
   querying Departments to avoid merging identically-named items.
 - evdx:hasCode is the Eudoxus-internal code, distinct from evdx:isbn (the ISBN).
+  It is an xsd:integer — use unquoted numbers (94700120, not "94700120").
 - evdx:hasSchool is a string literal on Department/University (a school NAME),
   NOT a link to a separate School class.
+- A Department can have multiple evdx:belongsToUniversity parents (joint
+  programmes) — use SELECT DISTINCT when traversing Department → University.
 - Always prefer the evdx: namespace over aliases (teach:, schema:, aiiso:, etc.).

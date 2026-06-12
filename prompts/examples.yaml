@@ -26,6 +26,18 @@
 #     evdx:publisherName properties (topic + publisher lookup).
 # See decisions/014-ontology-v2-migration.md for the full schema diff.
 #
+# BUGFIX NOTE (2026-06-12): live verification against the recovered EvdoGraph
+# endpoint found that evdx:hasCode is xsd:integer, not xsd:string. Every
+# `VALUES ?code {"94700120"}`-style binding (ex-001 through ex-014, ex-021,
+# ex-022 — 16 of 22 examples) used a quoted string literal, which is a
+# different RDF term from the integer value actually stored on evdx:hasCode,
+# so the triple pattern `?b evdx:hasCode ?code` matched zero solutions. For
+# ungrouped scalar COUNT queries (ex-003) this was a "disguised" failure: an
+# empty WHERE clause still yields one result row with all counts = 0. All
+# book-code literals are now unquoted integers (e.g. `VALUES ?code {94700120}`).
+# See notes/ONTOLOGY-NOTES.md (Open questions, #1 and #6) and
+# decisions/014-ontology-v2-migration.md Follow-ups for the full story.
+#
 # Schema reference: decisions/005-eval-methodology.md
 # query_shape values: traversal-lookup | multi-level-count | multi-level-aggregate-with-concat |
 #   set-difference-by-year | set-difference-by-book | set-intersection-by-book |
@@ -50,7 +62,7 @@ examples:
       SELECT DISTINCT  (?un AS ?University) (?dn AS ?Department) (?ct AS ?Course)
       WHERE {
         ?b a evdx:Book .
-        VALUES ?code {"94700120"}
+        VALUES ?code {94700120}
         ?b evdx:hasCode ?code .
         ?c a evdx:Course .
         ?c evdx:title ?ct .
@@ -91,7 +103,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code { "102070469" "13909" }
+            VALUES ?code { 102070469 13909 }
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -127,7 +139,7 @@ examples:
       SELECT (COUNT(DISTINCT ?u) AS ?Universities) (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?c) AS ?NoOfCourses)
       WHERE {
         ?b a evdx:Book .
-        VALUES ?code { "102070469" "13909" }
+        VALUES ?code { 102070469 13909 }
         ?b evdx:hasCode ?code .
         ?c a evdx:Course .
         ?c evdx:hasBook ?b .
@@ -143,8 +155,11 @@ examples:
     few_shot_priority: 3
     notes: >
       COUNT(DISTINCT) is allowed here because the result is scoped by VALUES ?code.
-      Pre-migration version confirmed working against live GraphDB (2026-05-04);
-      re-verify against EvdoGraph once the endpoint recovers.
+      VERIFIED against live EvdoGraph (2026-06-12) after fixing the hasCode
+      integer-literal bug (see BUGFIX NOTE at the top of this file) — this
+      query previously returned a disguised "0,0,0" row (one row, all counts
+      zero) rather than an error, because an ungrouped COUNT over zero
+      solutions still produces one result row.
 
   # ---------------------------------------------------------------------------
   # Q4 — multi-level-count (ordered, by year range)
@@ -160,7 +175,7 @@ examples:
       SELECT ?year (COUNT(DISTINCT ?u) AS ?Universities) (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?c) AS ?NoOfCourses)
       WHERE {
         ?b a evdx:Book .
-        VALUES ?code { "94700120" "12867416" }
+        VALUES ?code { 94700120 12867416 }
         ?b evdx:hasCode ?code .
         ?c a evdx:Course .
         ?c evdx:hasBook ?b .
@@ -199,7 +214,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code {"102070469" "13909"}
+            VALUES ?code {102070469 13909}
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -212,7 +227,7 @@ examples:
             ?u evdx:name ?un .
             FILTER NOT EXISTS {
               ?c1 a evdx:Course .
-              VALUES ?code1 { "102070469" "13909" }
+              VALUES ?code1 { 102070469 13909 }
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
               ?c1 evdx:year 2021 .
@@ -249,7 +264,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code { "102070469" "13909" }
+            VALUES ?code { 102070469 13909 }
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -262,7 +277,7 @@ examples:
             ?u evdx:name ?un .
             FILTER NOT EXISTS {
               ?c1 a evdx:Course .
-              VALUES ?code1 { "102070469" "13909" }
+              VALUES ?code1 { 102070469 13909 }
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
               ?c1 evdx:year 2021 .
@@ -300,7 +315,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code { "102070469" "13909" }
+            VALUES ?code { 102070469 13909 }
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -316,7 +331,7 @@ examples:
               ?c1 a evdx:Course .
               ?c1 evdx:year 2021 .
               ?c1 evdx:title ?ctitle .
-              VALUES ?code1 { "102070469" "13909" }
+              VALUES ?code1 { 102070469 13909 }
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
               ?d evdx:hasCourse ?c1 .
@@ -350,7 +365,7 @@ examples:
       SELECT (GROUP_CONCAT(DISTINCT ?code;SEPARATOR=", ") AS ?Book) (COUNT(DISTINCT ?u) AS ?Universities) (COUNT(DISTINCT ?d) AS ?Departments) (COUNT(DISTINCT ?c) AS ?NoOfCourses)
       WHERE {
         ?b a evdx:Book .
-        VALUES (?book ?code) { (1 "94700120") (1 "12867416") (2 "102070469") (2 "13909")}
+        VALUES (?book ?code) { (1 94700120) (1 12867416) (2 102070469) (2 13909)}
         ?b evdx:hasCode ?code .
         ?c a evdx:Course .
         ?c evdx:hasBook ?b .
@@ -386,7 +401,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code {"102070469" "13909"}
+            VALUES ?code {102070469 13909}
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -398,7 +413,7 @@ examples:
             ?u evdx:hasDepartment ?d .
             ?u evdx:name ?un .
             FILTER NOT EXISTS {
-              VALUES ?code1 {"94700120"}
+              VALUES ?code1 {94700120}
               ?b1 evdx:hasCode ?code1 .
               ?c evdx:hasBook ?b1 .
             }
@@ -431,7 +446,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code {"94700120"}
+            VALUES ?code {94700120}
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -444,7 +459,7 @@ examples:
             ?u evdx:name ?un .
             FILTER NOT EXISTS {
               ?c1 a evdx:Course .
-              VALUES ?code1 {"102070469" "13909"}
+              VALUES ?code1 {102070469 13909}
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
               ?d evdx:hasCourse ?c1 .
@@ -478,7 +493,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code {"94700120"}
+            VALUES ?code {94700120}
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -491,7 +506,7 @@ examples:
             ?u evdx:name ?un .
             FILTER NOT EXISTS {
               ?c1 a evdx:Course .
-              VALUES ?code1 {"102070469" "13909"}
+              VALUES ?code1 {102070469 13909}
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
               ?c1 evdx:year 2022 .
@@ -528,7 +543,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code {"102070469" "13909"}
+            VALUES ?code {102070469 13909}
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -540,7 +555,7 @@ examples:
             ?u evdx:hasDepartment ?d .
             ?u evdx:name ?un .
             FILTER EXISTS {
-              VALUES ?code1 {"94700120"}
+              VALUES ?code1 {94700120}
               ?b1 evdx:hasCode ?code1 .
               ?c evdx:hasBook ?b1 .
             }
@@ -573,7 +588,7 @@ examples:
           SELECT DISTINCT ?un ?dn ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code {"102070469" "13909"}
+            VALUES ?code {102070469 13909}
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -586,7 +601,7 @@ examples:
             ?u evdx:name ?un .
             FILTER EXISTS {
               ?c1 a evdx:Course .
-              VALUES ?code1 {"94700120"}
+              VALUES ?code1 {94700120}
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
               ?d evdx:hasCourse ?c1 .
@@ -619,7 +634,7 @@ examples:
           SELECT DISTINCT ?un ?d ?c
           WHERE {
             ?b a evdx:Book .
-            VALUES ?code {"102070469" "13909"}
+            VALUES ?code {102070469 13909}
             ?b evdx:hasCode ?code .
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
@@ -631,7 +646,7 @@ examples:
             ?u evdx:name ?un .
             FILTER EXISTS {
               ?c1 a evdx:Course .
-              VALUES ?code1 {"94700120"}
+              VALUES ?code1 {94700120}
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
               ?c1 evdx:year 2022 .
@@ -834,7 +849,7 @@ examples:
       SELECT DISTINCT ?bt ?isbn ?authors
       WHERE {
         ?b a evdx:Book .
-        VALUES ?code { "94700120" }
+        VALUES ?code { 94700120 }
         ?b evdx:hasCode ?code .
         ?b evdx:title ?bt .
         ?b evdx:isbn ?isbn .
@@ -849,9 +864,10 @@ examples:
       property, do NOT_ANSWERABLE" — that is now FALSE, evdx:isbn (and
       evdx:authors) exist as of the 2026-06-11 schema migration (see Rule 14 in
       nl-to-sparql-v4.md). This example replaces that gold with an answerable
-      ISBN/author lookup. Unverified against live data — endpoint was
-      unreachable during the migration; re-run once it recovers and, if
-      "94700120" lacks isbn/authors values, swap in a code that has them.
+      ISBN/author lookup. VERIFIED against live EvdoGraph (2026-06-12) after
+      fixing the hasCode integer-literal bug (see BUGFIX NOTE at the top of
+      this file) — book 94700120 has full title/isbn/authors data; no code
+      swap needed.
 
   # ---------------------------------------------------------------------------
   # Q22 — traversal-lookup (book metadata: publisher + keywords) — NEW 2026-06-11
@@ -867,7 +883,7 @@ examples:
       SELECT DISTINCT ?bt ?publisherName ?keyword
       WHERE {
         ?b a evdx:Book .
-        VALUES ?code { "94700120" }
+        VALUES ?code { 94700120 }
         ?b evdx:hasCode ?code .
         ?b evdx:title ?bt .
         # Assumption: evdx:publisherName is a property of the Publisher node
@@ -885,5 +901,8 @@ examples:
       (evdx:Publisher, 1,698 instances) and evdx:keyword (111,700 uses,
       topic/subject tags on books) — both new in the schema migration.
       OPTIONAL is used since not every book has a recorded publisher or
-      keyword. Unverified against live data — endpoint was unreachable during
-      the migration; re-run once it recovers.
+      keyword. VERIFIED against live EvdoGraph (2026-06-12) after fixing the
+      hasCode integer-literal bug (see BUGFIX NOTE at the top of this file) —
+      book 94700120 has a publisher and 5+ distinct evdx:keyword values
+      (evdx:keyword is multi-valued: multiple triples per book, not a
+      delimited string).

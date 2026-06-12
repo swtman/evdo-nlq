@@ -59,6 +59,8 @@ thesis/*.toc
 # ── Notes and eval runs ───────────────────────────────────────────────────────
 notes/eval-runs/
 notes/eval-analysis/
+notes/security-review-2026-05-31.md
+notes/
 documentationRoadmap.md
 rag-brainstorm-prompt.md
 
@@ -77,6 +79,7 @@ todo/
 thesis/
 bibliography/
 notes/grounding-nlq-exploration.md
+scripts/
 
 # Backend logs
 backend/.claude/
