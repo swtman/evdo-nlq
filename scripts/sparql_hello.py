@@ -31,7 +31,7 @@ except ImportError:
     sys.exit(2)
 
 
-DEFAULT_ENDPOINT = "http://lod.csd.auth.gr:7200/repositories/Evdoxus"
+DEFAULT_ENDPOINT = "http://lod.csd.auth.gr:7200/repositories/EvdoGraph"
 # Prefixes every query will share. Declared once, prepended automatically.
 PREFIXES = """
 PREFIX evdx: <https://w3id.org/evdoxus#>

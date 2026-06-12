@@ -1,29 +1,46 @@
 PREFIX evdx: <https://w3id.org/evdoxus#>
 
 Main classes:
-- evdx:University   — a Greek university (46 instances)
-- evdx:Department   — a department within a university (732); linked via evdx:hasDepartment
-- evdx:Course       — a study programme / curriculum (9,516); linked to dept via evdx:hasCourse
-- evdx:Module       — a single course offering in a year/semester (535,143); linked to programme via evdx:hasModule
-- evdx:Book         — a textbook (40,529); linked to module via evdx:hasBook
+- evdx:University   — a Greek university (125 instances)
+- evdx:Department   — a department within a university (743); linked via evdx:hasDepartment
+- evdx:Course       — a single course offering in a given year/semester (680,231); linked to dept via evdx:hasCourse
+- evdx:Book         — a textbook (48,679); linked to course via evdx:hasBook
+- evdx:Publisher    — a book publisher (1,698); linked to book via evdx:hasPublisher
 
-Key properties:
-- evdx:hasDepartment   University → Department
-- evdx:hasCourse       Department → Course (study programme)
-- evdx:hasModule       Course → Module (course offering)
-- evdx:hasBook         Module → Book
-- evdx:title           LearningEntity (Book or Module) → string
+Key properties (traversal):
+- evdx:hasDepartment       University → Department  (inverse: evdx:belongsToUniversity)
+- evdx:hasCourse           Department → Course      (inverse: evdx:isGivenByDepartment)
+- evdx:hasBook             Course → Book             (inverse: evdx:proposedForCourse)
+- evdx:hasPublisher        Book → Publisher          (inverse: evdx:publishes)
+
+Key properties (literals):
+- evdx:title           LearningEntity (Course or Book) → string
 - evdx:name            AcademicEntity (Dept or University) → string
-- evdx:semester        Module → string (e.g. "1", "2")
+- evdx:semester        Course → string (e.g. "1", "2")
 - evdx:year            Course → integer (e.g. 2021)
-- evdx:hasCode         LearningEntity → string (Eudoxus book code)
+- evdx:professors      Course → string (professor name(s) teaching this offering)
+- evdx:hasCode         LearningEntity → string (Eudoxus internal code — NOT an ISBN)
 - evdx:hasURL          LearningEntity → URL
+- evdx:authors         Book → string
+- evdx:isbn            Book → string
+- evdx:publicationYear Book → integer
+- evdx:edition         Book → string
+- evdx:keyword         Book → string (topic/subject tag — useful for topic searches)
+- evdx:publisherName   Publisher (or Book) → string
 
-NOT in the ontology: 
--ISBN, author name, publisher, price, student enrollment, grades.
--evdx:hasCode is the Eudoxus-internal code — it is NOT an ISBN.
+Other Book metadata (exists but rarely queried): evdx:bookType, evdx:coverType,
+evdx:pages, evdx:bookSize, evdx:contents, evdx:excerpt, evdx:frontCover,
+evdx:backCover, evdx:distributor, evdx:publisherWebPage.
 
-IMPORTANT: 
--There are departments that share the same name but belong to different universities. So in order to prevent identically-named items from being merged (if it be derived from the question) group by the parent entity (e.g. University when querying for Departments).
--evdx:Course is a study programme (e.g. "Computer Science BSc") — NOT a single course.
--Always prefer the evdx: namespace over aliases (teach:, schema:, aiiso:, etc.).
+NOT in the ontology:
+- Student enrollment, grades, price.
+
+IMPORTANT:
+- evdx:Course is a single course offering ("μάθημα") in a specific year/semester
+  — there is NO separate "study programme" class. Do not invent one.
+- Departments share names across universities — group by University when
+  querying Departments to avoid merging identically-named items.
+- evdx:hasCode is the Eudoxus-internal code, distinct from evdx:isbn (the ISBN).
+- evdx:hasSchool is a string literal on Department/University (a school NAME),
+  NOT a link to a separate School class.
+- Always prefer the evdx: namespace over aliases (teach:, schema:, aiiso:, etc.).

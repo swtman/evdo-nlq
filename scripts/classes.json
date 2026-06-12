@@ -1,0 +1,118 @@
+[
+  {
+    "class": "evdx:EvdoxusEntity",
+    "count": 731476
+  },
+  {
+    "class": "evdx:LearningEntity",
+    "count": 728910
+  },
+  {
+    "class": "evdx:Course",
+    "count": 680231
+  },
+  {
+    "class": "teach:Course",
+    "count": 680231
+  },
+  {
+    "class": "aiiso:Course",
+    "count": 680231
+  },
+  {
+    "class": "vivo:Course",
+    "count": 680231
+  },
+  {
+    "class": "wikidata:Q600134",
+    "count": 680231
+  },
+  {
+    "class": "bow:Module",
+    "count": 680231
+  },
+  {
+    "class": "schema:Course",
+    "count": 680231
+  },
+  {
+    "class": "evdx:Book",
+    "count": 48679
+  },
+  {
+    "class": "teach:Material",
+    "count": 48679
+  },
+  {
+    "class": "dbo:Book",
+    "count": 48679
+  },
+  {
+    "class": "bibo:Book",
+    "count": 48679
+  },
+  {
+    "class": "wikidata:Q571",
+    "count": 48679
+  },
+  {
+    "class": "schema:Book",
+    "count": 48679
+  },
+  {
+    "class": "evdx:Publisher",
+    "count": 1698
+  },
+  {
+    "class": "evdx:AcademicEntity",
+    "count": 868
+  },
+  {
+    "class": "evdx:Department",
+    "count": 743
+  },
+  {
+    "class": "schema:School",
+    "count": 743
+  },
+  {
+    "class": "aiiso:Department",
+    "count": 743
+  },
+  {
+    "class": "vivo:AcademicDepartment",
+    "count": 743
+  },
+  {
+    "class": "wikidata:Q2467461",
+    "count": 743
+  },
+  {
+    "class": "bow:Department",
+    "count": 743
+  },
+  {
+    "class": "evdx:University",
+    "count": 125
+  },
+  {
+    "class": "aiiso:Institution",
+    "count": 125
+  },
+  {
+    "class": "schema:CollegeOrUniversity",
+    "count": 125
+  },
+  {
+    "class": "dbo:University",
+    "count": 125
+  },
+  {
+    "class": "vivo:University",
+    "count": 125
+  },
+  {
+    "class": "wikidata:Q3918",
+    "count": 125
+  }
+]

@@ -279,9 +279,10 @@ class QueryPipeline:
         -------------------
         1. load_summary() — reads prompts/ontology-summary.md (cached after
            first call; subsequent calls are instant memory reads).
-        2. load("nl-to-sparql", 2) — extracts the # System section from
-           prompts/nl-to-sparql-v2.md (also cached). This is the ACTIVE
-           prompt template. v1 is retired; v2 adds few-shot examples.
+        2. load("nl-to-sparql", 4) — extracts the # System section from
+           prompts/nl-to-sparql-v4.md (also cached). This is the ACTIVE
+           prompt template. v1-v3 are archived; v4 targets the post-2026-06-11
+           EvdoGraph schema (evdx:Course = course offering, no programme layer).
         3. select_few_shot(k=6) — selects up to 6 representative
            (question, SPARQL) example pairs from prompts/examples.yaml,
            one per distinct query shape, formatted as a text block.
@@ -313,7 +314,7 @@ class QueryPipeline:
         """
         ontology = load_summary()
         system = fill(
-            load("nl-to-sparql", 2),
+            load("nl-to-sparql", 4),
             ontology_summary=ontology,
             few_shot_block=select_few_shot(k=6),
         )
@@ -443,7 +444,7 @@ class QueryPipeline:
         # Build the system prompt (same as run())
         ontology = load_summary()
         system = fill(
-            load("nl-to-sparql", 2),
+            load("nl-to-sparql", 4),
             ontology_summary=ontology,
             few_shot_block=select_few_shot(k=6),
         )

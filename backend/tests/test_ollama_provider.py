@@ -9,9 +9,8 @@ The mock shapes follow Ollama's actual API response format:
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
 
-from app.llm.base import LLMResponse, StreamResult
+from app.llm.base import LLMResponse
 from app.llm.cache import DiskCache
 
 

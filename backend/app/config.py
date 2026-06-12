@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     graphdb_endpoint: str = Field(
-        default="http://lod.csd.auth.gr:7200/repositories/Evdoxus",
+        default="http://lod.csd.auth.gr:7200/repositories/EvdoGraph",
         alias="GRAPHDB_ENDPOINT",
     )
     llm_cache_dir: str = Field(default=".llm_cache", alias="LLM_CACHE_DIR")

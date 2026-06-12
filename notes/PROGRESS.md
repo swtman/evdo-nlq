@@ -23,6 +23,106 @@ Template:
 
 ---
 
+## 2026-06-11 — Ontology/prompt refresh for the EvdoGraph schema overhaul (ADR-014)
+
+### Done
+- **`notes/ONTOLOGY-NOTES.md`** fully rewritten from `scripts/classes.json` +
+  `scripts/properties.json`: new flat topology `University ⇄ Department ⇄ Course ⇄ Book ⇄
+  Publisher`, confirmed counts (Uni 125, Dept 743, Course 680,231, Book 48,679, Publisher
+  1,698, EvdoxusEntity 731,476), full class/property tables, open questions for a future
+  live probe.
+- **`prompts/ontology-summary.md`** fully rewritten for the `{ontology_summary}` slot:
+  5 main classes, traversal properties with inverses, literal properties (incl. the ~25
+  new ones — authors, isbn, publicationYear, edition, keyword, professors, publisherName),
+  "NOT in ontology" trimmed (ISBN/author/publisher are now answerable).
+- **`prompts/nl-to-sparql-v4.md`** cut (v3 archived, not deleted). Rule 12 rewritten
+  (`evdx:Course` is now the single course-offering class, no programme layer); Rule 13's
+  `FILTER EXISTS`/`NOT EXISTS` granularity examples rewritten for the 3-hop
+  `Book → Course → Department → University` path; new Rule 14 declares the new
+  book/publisher/professor properties answerable.
+- **`backend/app/pipeline/query_pipeline.py`**: both prompt-loader call sites (and the
+  stale docstring) bumped from `load("nl-to-sparql", 3)` → `..., 4)`.
+- **Endpoint rename `Evdoxus` → `EvdoGraph`** completed: `.env`, `backend/.env`
+  (`GRAPHDB_ENDPOINT`), `backend/app/sparql/client.py` docstring. `notes/ontology-summary.md`
+  marked stale/superseded by `ONTOLOGY-NOTES.md` + `prompts/ontology-summary.md`. Verified
+  no remaining `repositories/Evdoxus` references outside historical log entries.
+- **`prompts/examples.yaml`** fully rewritten (`version: 2`, 21 → **22** examples):
+  mechanical rename across ex-001–ex-014/ex-016–ex-018 (`?m`/Module → `?c`/Course offering,
+  `?s` → `?b` for Book, dead programme-level Course variable removed, 4-hop → 3-hop
+  traversal, column aliases Module→Course, English question text "modules"→"courses").
+  **ex-015 replaced** (old "programme with no modules" → new "department offered no course
+  in 2022", a department-level negative-existence question). **ex-021 replaced** (old
+  "ISBN is NOT_ANSWERABLE" is now false — `evdx:isbn` exists — replaced with an answerable
+  ISBN/authors lookup). **ex-022 added** (new: publisher + keyword lookup, exercises
+  `evdx:hasPublisher`/`evdx:publisherName`/`evdx:keyword`).
+- **ADR-014** written (`decisions/014-ontology-v2-migration.md`); `decisions/README.md`
+  index updated.
+- **Verification**: `uv run pytest -v -m "not live"` → 89/89 pass; all 20 non-`not-answerable`
+  gold queries rdflib-validate (`validate_sparql`); `select_few_shot(k=6)` still selects the
+  same 6 query shapes as before the migration (traversal-lookup, negative-existence,
+  multi-level-aggregate-with-concat, set-difference-by-year, set-difference-by-book,
+  set-intersection-by-book).
+
+### Next
+- Run `uv run python scripts/eval.py --prompt-version 4 --provider claude --language both`
+  once the GraphDB reindex finishes; compare result-set match against the v3 baseline
+  (target ≥ baseline, 0 broken-gold).
+- Spot-check the live UI: one traversal question + one new-capability question (ISBN/
+  author/keyword/publisher lookup).
+- If book code `94700120` lacks isbn/authors/keyword/publisher data, swap in a different
+  code for ex-021/ex-022 and re-validate.
+- Resolve the 4 open questions in `notes/ONTOLOGY-NOTES.md` via a live probe (year/
+  publicationYear datatype, hasDepartment/belongsToUniversity count mismatch, the new
+  University identities, sample keyword/professors/authors values).
+- **Then** resume the deferred grounding comparative study (ADR-012), rebased on this
+  schema (the new keyword/authors/Publisher fields expand the grounding surface).
+
+### Blockers / notes
+- The GraphDB `EvdoGraph` endpoint was timing out for most of this session (supervisor
+  reindex in progress, no ETA). The rewrite is based on the confirmed
+  `owl:Object/DatatypeProperty` typing in `scripts/classes.json`/`properties.json`, not
+  live query results — see "Open questions" in `ONTOLOGY-NOTES.md` and the unverified
+  notes on ex-021/ex-022.
+- `prompts/nl-to-sparql-v3.md` remains runnable via `--prompt-version 3` for an old/new
+  comparison, but it will now be scored against the *new* `examples.yaml` (whose gold no
+  longer matches v3's Course/Module assumptions) — a meaningful v3-vs-v4 A/B would need a
+  preserved copy of the old `examples.yaml`, which we deliberately did not keep (the old
+  gold is semantically wrong against EvdoGraph regardless of prompt version).
+- `backend/.llm_cache/` should be cleared and the dev server restarted before any real LLM
+  run against v4 — `examples_loader` and `prompts.loader` both cache module-level.
+
+---
+
+## 2026-06-10 — Feature: manually edit & rerun SPARQL query
+
+### Done
+- **New backend endpoint `POST /sparql/execute`** — validates the user-supplied SPARQL with `validate_sparql()` (rdflib, offline → HTTP 400 with the parse error) then executes with `SparqlClient.execute()` (HTTP 502 on failure, generic message, no internal detail). Registered on the existing `router` in `app/api/query.py`; no `main.py` change needed.
+- **3 new endpoint tests** in `test_query_endpoint.py`: success (200), invalid syntax (400, execute never called), execution failure (502, generic message, no leak). All 89 non-live tests pass.
+- **Frontend `executeSparql()` API client function** in `api/client.ts` — mock-aware, surfaces `detail` from FastAPI error bodies.
+- **`mockExecuteSparql()`** in `api/mock.ts` — returns canned result set after 300 ms delay; `VITE_USE_MOCK_API=1` continues to work.
+- **`RERUN_START` reducer action** in `useQueryStream.ts` — jumps straight to `streaming { sparql, executing: true, rerun: true }` without token streaming; reuses existing `RESULTS`/`DONE`/`ERROR` actions.
+- **`rerunSparql()` hook function** exported from `useQueryStream`; mirrors `submit` AbortController lifecycle.
+- **`SparqlPanel` edit/rerun UI** — explicit "Edit" toggle (read-only by default); in edit mode shows `<textarea class="sparql-editor">` + Cancel / Rerun buttons. Rerun is disabled when draft is blank. `onRerun` prop is optional so the panel remains self-contained.
+- **`App.handleRerun`** — resets display state, sets `pendingMeta` to `t.historyManualEdit`; history write reuses the existing `useEffect` on `state.status`. `streaming` prop adjusted to suppress "generating…" cursor during reruns.
+- **i18n strings**: `sparqlEdit`, `sparqlCancel` (new), `historyManualEdit` (new); `sparqlRerun` was already pre-staged.
+- **`.sparql-editor` CSS rule** added to `styles.css` — same mono font / sharp corners as `.sparql-code`, resizable vertically, focus ring uses `--accent`.
+- **ADR-013** written: `decisions/013-raw-sparql-execute-endpoint.md`.
+- **`decisions/README.md`** and **`backend/CLAUDE.md`** endpoint table updated.
+- Pre-existing ruff unused-import warnings in 3 test files fixed.
+- `pnpm typecheck` and `uv run pytest -v -m "not live"` both clean.
+
+### Next
+- Rotate API keys (C-1 — manual, see prior session).
+- Fix medium findings from the security review: M-1 (question max_length), M-2/L-1 (SELECT-only enforcement), M-3 (Ollama port binding).
+- Wire `VITE_GIT_SHA` in `vite.config.ts`.
+- Begin thesis writing — Ch 02 and Ch 04.
+
+### Blockers / notes
+- The new `/sparql/execute` endpoint has no authentication (same as the rest of the backend). Must be gated if auth is ever added — noted in ADR-013.
+- SELECT-only convention is unchanged; CONSTRUCT/ASK queries sent to `/sparql/execute` would silently return wrong shapes.
+
+---
+
 ## 2026-05-31 — Security review + fixes for 3 HIGH-severity findings
 
 ### Done

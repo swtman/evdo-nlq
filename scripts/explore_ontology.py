@@ -27,7 +27,7 @@ except ImportError:
     sys.exit(2)
 
 
-DEFAULT_ENDPOINT = "http://lod.csd.auth.gr:7200/repositories/Evdoxus"
+DEFAULT_ENDPOINT = "http://lod.csd.auth.gr:7200/repositories/EvdoGraph"
 PREFIXES = """
 PREFIX evdx: <https://w3id.org/evdoxus#>
 """

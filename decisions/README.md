@@ -46,3 +46,6 @@ Use `000-template.md` as a starting point. Keep it short — 200–400 words is 
 | 009 | History sidebar as header-toggle overlay, not permanent column | Accepted |
 | 010 | Docker Compose as reproducibility packaging layer | Accepted |
 | 011 | Ollama as the local LLM provider | Accepted |
+| 012 | Grounding / entity-linking strategy and staged FIRESPARQL adoption | Proposed |
+| 013 | Raw SPARQL execute endpoint for user-edited queries | Accepted |
+| 014 | EvdoGraph schema overhaul — Course/Module rename and prompt v4 migration | Accepted |

@@ -14,6 +14,6 @@ def test_settings_has_required_fields():
 def test_settings_defaults():
     assert settings.llm_provider == "claude"
     assert settings.llm_model == "claude-haiku-4-5"
-    assert "Evdoxus" in settings.graphdb_endpoint
+    assert "EvdoGraph" in settings.graphdb_endpoint
     assert settings.llm_cache_dir == ".llm_cache"
     assert settings.llm_cache_disabled is False

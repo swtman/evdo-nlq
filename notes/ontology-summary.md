@@ -1,5 +1,11 @@
 # EvdoGraph ontology summary
 
+> **STALE (2026-04-25 snapshot)** — this is the raw `explore_ontology.py` dump
+> from before the supervisor's 2026-06-11 schema overhaul (old repo name
+> `Evdoxus`, old Module/Course split, old counts). Kept for historical
+> reference only. For the current schema, see `notes/ONTOLOGY-NOTES.md`; for
+> the prompt-injected summary, see `prompts/ontology-summary.md`.
+
 Endpoint: `http://lod.csd.auth.gr:7200/repositories/Evdoxus`
 
 ## Namespaces observed

@@ -11,19 +11,19 @@ User (NL, Greek/English)
   → LLMProvider (Claude / Gemini / Fake)  ←  ontology summary (prompts/ontology-summary.md)
                                           ←  few-shot examples (prompts/examples.yaml, k=6)
   → SPARQL string  →  rdflib validation  →  retry up to 2× if invalid
-  → GraphDB endpoint (http://lod.csd.auth.gr:7200/repositories/Evdoxus)
+  → GraphDB endpoint (http://lod.csd.auth.gr:7200/repositories/EvdoGraph)
   → results (JSON)
   → React UI (collapsible SPARQL panel + results table)
 
 Provider and model are selected per-request from the UI dropdown (GET /providers).
-Active prompt: nl-to-sparql-v2 (static few-shot, 6 examples injected into {few_shot_block}).
+Active prompt: nl-to-sparql-v4 (static few-shot, 6 examples injected into {few_shot_block}).
 ```
 
 ## Stack at a glance
 
 - **Backend:** Python 3.12, FastAPI, `rdflib`, `SPARQLWrapper`, `anthropic` SDK, `google-genai` SDK, `sse-starlette`, `pytest`, `ruff`. **Status: complete.**
 - **Frontend:** React 18 + Vite + TypeScript, plain CSS. **Status: MVP complete (2026-05-01).**
-- **Triple store:** remote GraphDB at `http://lod.csd.auth.gr:7200/repositories/Evdoxus` — EvdoGraph repository. We do not self-host.
+- **Triple store:** remote GraphDB at `http://lod.csd.auth.gr:7200/repositories/EvdoGraph` — EvdoGraph repository. We do not self-host.
 - **LLM:** pluggable (`LLMProvider` protocol). Implemented: `claude` (Anthropic), `gemini` (Google), `fake` (no-network, for tests). Default query model: `claude-haiku-4-5`.
 - **Package managers:** `uv` for Python, `pnpm` for Node.
 
@@ -35,7 +35,7 @@ Active prompt: nl-to-sparql-v2 (static few-shot, 6 examples injected into {few_s
 | `frontend/` | React + Vite SPA — MVP complete; light/dark theme, GraphDB indicator, error UX |
 | `thesis/` | Thesis document (Greek), chapter drafts, figures, cited PDFs |
 | `decisions/` | Architecture Decision Records (ADRs 001–006) — read these to understand *why* code is shaped this way |
-| `prompts/` | Versioned LLM prompt templates: `nl-to-sparql-v2.md` (active), `nl-to-sparql-v1.md` (archived), `nl-to-sparql-retry-v1.md`, `ontology-summary.md`, `examples.yaml` (21 gold few-shot examples) |
+| `prompts/` | Versioned LLM prompt templates: `nl-to-sparql-v4.md` (active), `nl-to-sparql-v3.md`/`v2`/`v1.md` (archived), `nl-to-sparql-retry-v1.md`, `ontology-summary.md`, `examples.yaml` (22 gold few-shot examples) |
 | `notes/` | Running notes: `PROGRESS.md` (session log), `ONTOLOGY-NOTES.md` (EvdoGraph schema notes) |
 | `notes/eval-runs/` | Eval harness Markdown reports (auto-named by date/version/provider). Each report includes a Provenance section (git SHA, prompt file hash, examples.yaml hash) so runs are reproducible and traceable. |
 | `scripts/` | Standalone helpers (SPARQL smoke test, ontology introspection) |

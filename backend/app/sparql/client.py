@@ -31,7 +31,7 @@ similar to SQL for relational databases. A typical query looks like:
 WHAT IS GraphDB?
 ----------------
 GraphDB is the database that stores the EvdoGraph knowledge graph. It runs at
-`http://lod.csd.auth.gr:7200/repositories/Evdoxus` (a university server) and
+`http://lod.csd.auth.gr:7200/repositories/EvdoGraph` (a university server) and
 exposes a standard SPARQL 1.1 HTTP endpoint — it accepts a query as a URL
 parameter and responds with JSON results.
 """
@@ -161,7 +161,7 @@ class SparqlClient:
         ----------
         endpoint : str
             Full URL of the SPARQL endpoint, e.g.
-            "http://lod.csd.auth.gr:7200/repositories/Evdoxus".
+            "http://lod.csd.auth.gr:7200/repositories/EvdoGraph".
             HTTP connections are opened lazily inside execute().
         """
         self._endpoint = endpoint

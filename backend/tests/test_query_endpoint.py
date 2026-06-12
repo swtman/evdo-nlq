@@ -196,6 +196,61 @@ def test_post_query_stream_error_does_not_leak_internal_detail(client, mock_spar
     assert "auth=admin" not in raw
 
 
+# --- /sparql/execute endpoint tests ---
+
+def test_execute_raw_sparql_returns_200_with_columns_and_rows(client):
+    """A valid SPARQL query is validated, executed, and returns columns/rows."""
+    valid_sparql = (
+        "PREFIX evdx: <https://w3id.org/evdoxus#>\n"
+        "SELECT ?title WHERE { ?b a evdx:Book ; evdx:title ?title } LIMIT 5"
+    )
+    with patch("app.api.query.SparqlClient") as MockClient:
+        MockClient.return_value.execute.return_value = SparqlResult(
+            columns=["title"],
+            rows=[{"title": "Αλγόριθμοι"}, {"title": "Γραφήματα"}],
+        )
+        response = client.post("/sparql/execute", json={"sparql": valid_sparql})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["columns"] == ["title"]
+    assert len(body["rows"]) == 2
+    assert body["rows"][0]["title"] == "Αλγόριθμοι"
+    # The LLM is bypassed entirely — SparqlClient was called with the raw query
+    MockClient.return_value.execute.assert_called_once_with(valid_sparql)
+
+
+def test_execute_raw_sparql_returns_400_for_invalid_syntax(client):
+    """Syntactically invalid SPARQL must return 400; GraphDB must never be called."""
+    with patch("app.api.query.SparqlClient") as MockClient:
+        response = client.post("/sparql/execute", json={"sparql": "SELECT WHERE"})
+
+    assert response.status_code == 400
+    # The validation error message must be present but the internal GraphDB client
+    # must never have been called — no point executing if the syntax is broken.
+    assert response.json()["detail"]  # some parse-error text from rdflib
+    MockClient.return_value.execute.assert_not_called()
+
+
+def test_execute_raw_sparql_returns_502_on_execution_failure(client):
+    """A GraphDB error must produce HTTP 502 with a generic message (no internal detail)."""
+    valid_sparql = (
+        "PREFIX evdx: <https://w3id.org/evdoxus#>\n"
+        "SELECT ?title WHERE { ?b a evdx:Book ; evdx:title ?title } LIMIT 1"
+    )
+    with patch("app.api.query.SparqlClient") as MockClient:
+        MockClient.return_value.execute.side_effect = RuntimeError(
+            "Connection refused: secret.internal.host:7200"
+        )
+        response = client.post("/sparql/execute", json={"sparql": valid_sparql})
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    # Generic message must be returned — the raw exception must never be forwarded.
+    assert "secret.internal.host" not in detail
+    assert "SPARQL endpoint" in detail
+
+
 def test_post_query_stream_not_answerable_skips_execution(client):
     """NOT_ANSWERABLE sentinel must short-circuit — no GraphDB call, no error event."""
     not_answerable_response = "# NOT_ANSWERABLE: question is out of scope"
