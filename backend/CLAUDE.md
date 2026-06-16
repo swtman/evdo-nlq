@@ -79,12 +79,12 @@ uv run ruff format .                 # format
 uv run mypy app                      # type-check
 
 # Eval harness (needs live GraphDB; fake provider OK for structure testing)
-uv run python scripts/eval.py --prompt-version 2 --provider claude --model claude-haiku-4-5 --language both
+uv run python scripts/eval.py --prompt-version 4 --provider claude --model claude-haiku-4-5 --language both
 uv run python scripts/eval.py --prompt-version 1 --provider fake --language english      # offline smoke-test
-uv run python scripts/eval.py --prompt-version 2 --provider claude --example-id ex-005   # single example
-uv run python scripts/eval.py --prompt-version 2 --provider claude --shape negative-existence  # one shape
-uv run python scripts/eval.py --prompt-version 2 --provider claude --no-cache            # bypass disk cache
-uv run python scripts/eval.py --prompt-version 2 --provider claude --no-skip-eval        # include WIP examples
+uv run python scripts/eval.py --prompt-version 4 --provider claude --example-id ex-005   # single example
+uv run python scripts/eval.py --prompt-version 4 --provider claude --shape negative-existence  # one shape
+uv run python scripts/eval.py --prompt-version 4 --provider claude --no-cache            # bypass disk cache
+uv run python scripts/eval.py --prompt-version 4 --provider claude --no-skip-eval        # include WIP examples
 ```
 
 ### Running live tests
@@ -142,7 +142,7 @@ class StreamResult:
 
 ## Few-shot example bank (`app/prompts/examples_loader.py`)
 
-`select_few_shot(k=6)` is called once per request inside `QueryPipeline.run()` and `QueryPipeline.stream_events()`. It reads `prompts/examples.yaml`, picks one example per `query_shape` (lowest `few_shot_priority` wins), sorts by the canonical shape order, and renders the block into `{few_shot_block}` in `nl-to-sparql-v2.md`.
+`select_few_shot(k=6)` is called once per request inside `QueryPipeline.run()` and `QueryPipeline.stream_events()`. It reads `prompts/examples.yaml`, picks one example per `query_shape` (lowest `few_shot_priority` wins), sorts by the canonical shape order, and renders the block into `{few_shot_block}` in `nl-to-sparql-v4.md`.
 
 **Important:** The module uses a process-level cache (`_cache`). Changing `examples.yaml` on disk while the server is running has no effect — restart required.
 
@@ -164,7 +164,7 @@ Runs every non-`skip_eval` gold example from `prompts/examples.yaml` through the
 
 | Flag | Default | Notes |
 |------|---------|-------|
-| `--prompt-version` | `2` | `1` or `2` — selects which prompt template to use |
+| `--prompt-version` | `4` | `1`–`4` — selects which prompt template to use (`4` is the active production prompt) |
 | `--provider` | `claude` | `claude`, `gemini`, or `fake` |
 | `--model` | `claude-haiku-4-5` | Any model string accepted by the provider |
 | `--language` | `both` | `greek`, `english`, or `both` (runs each example twice) |
@@ -200,7 +200,8 @@ Never commit `.env`. Copy `.env.example` to `.env` and fill in:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...          # optional — only needed for gemini provider
-LLM_PROVIDER=claude             # claude | gemini | fake
+OLLAMA_BASE_URL=http://localhost:11434  # optional — only needed for ollama provider
+LLM_PROVIDER=claude             # claude | gemini | ollama | fake
 LLM_MODEL=claude-haiku-4-5
 GRAPHDB_ENDPOINT=http://lod.csd.auth.gr:7200/repositories/EvdoGraph
 LLM_CACHE_DIR=.llm_cache

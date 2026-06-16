@@ -109,7 +109,13 @@ def get_provider(name: str, model: str) -> LLMProvider:
                 cache_dir=settings.llm_cache_dir,
                 disabled=settings.llm_cache_disabled,
             )
-            return ClaudeProvider(model=model, api_key=settings.anthropic_api_key, cache=cache)
+            # .get_secret_value() un-masks the SecretStr only here, at the
+            # moment we hand the raw key to the SDK client.
+            return ClaudeProvider(
+                model=model,
+                api_key=settings.anthropic_api_key.get_secret_value(),
+                cache=cache,
+            )
 
         case "gemini":
             # Same pattern as "claude" — lazy imports, fresh cache, inject key.
@@ -121,7 +127,12 @@ def get_provider(name: str, model: str) -> LLMProvider:
                 cache_dir=settings.llm_cache_dir,
                 disabled=settings.llm_cache_disabled,
             )
-            return GeminiProvider(model=model, api_key=settings.gemini_api_key, cache=cache)
+            # SecretStr → plain str only at the point of SDK construction.
+            return GeminiProvider(
+                model=model,
+                api_key=settings.gemini_api_key.get_secret_value(),
+                cache=cache,
+            )
 
         case "ollama":
             # Lazy import so httpx and OllamaProvider are never touched

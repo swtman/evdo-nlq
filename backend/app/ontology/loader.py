@@ -5,7 +5,7 @@ WHAT IS THE ONTOLOGY SUMMARY?
 ------------------------------
 The ontology summary is a hand-written Markdown file that
 describes the structure of the EvdoGraph knowledge graph: what classes exist
-(e.g. Book, Author, Course), what properties connect them, and example values.
+(e.g. University, Departmentyes, Course), what properties connect them, and example values.
 
 This summary is injected into the system prompt of every LLM call. It gives
 Claude or Gemini the vocabulary and structure it needs to write correct SPARQL

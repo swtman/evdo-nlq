@@ -1,7 +1,8 @@
 """Loads and caches the gold few-shot example bank from prompts/examples.yaml.
 
 Exposes select_few_shot() which renders N examples into a text block suitable
-for injection into the {few_shot_block} placeholder in nl-to-sparql-v2.md.
+for injection into the {few_shot_block} placeholder in nl-to-sparql-v4.md
+(the active prompt; see prompts/loader.py).
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ HOW CONFIGURATION WORKS IN THIS PROJECT
 ----------------------------------------
 All settings are read from environment variables (or from the `.env` file in
 the `backend/` folder). You never hard-code secrets like API keys directly in
-Python — instead you put them in `.env`, and this file reads them
+Python, instead you put them in `.env`, and this file reads them
 automatically at startup.
 
 Example `.env` (see `.env.example` for the full template):
@@ -32,11 +32,21 @@ HOW TO USE SETTINGS ELSEWHERE IN THE CODE
 ------------------------------------------
     from app.config import settings   # import the single shared instance
 
-    print(settings.llm_provider)      # "claude" (or whatever is in .env)
-    print(settings.anthropic_api_key) # the key from .env, kept out of code
+    print(settings.llm_provider)                         # "claude" (or whatever is in .env)
+    print(settings.anthropic_api_key)                    # SecretStr → prints as '**********'
+    print(settings.anthropic_api_key.get_secret_value()) # the real key, when truly needed
+
+WHY API KEYS ARE `SecretStr`
+-----------------------------
+`anthropic_api_key` and `gemini_api_key` are typed as `SecretStr`, not plain
+`str`. A `SecretStr` masks its value in logs, tracebacks, and `repr()` — so if
+the whole `settings` object is ever printed or logged, the keys show as
+`**********` instead of leaking in cleartext. Code that genuinely needs the raw
+string (only the provider factory, when constructing an SDK client) calls
+`.get_secret_value()` at that single point.
 """
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -46,17 +56,19 @@ class Settings(BaseSettings):
     Fields
     ------
     llm_provider : str
-        Which LLM service to use. Accepted values: "claude", "gemini", "fake".
-        "fake" runs without any network calls — useful for tests and UI work.
+        Which LLM service to use. Accepted values: "claude", "gemini",
+        "ollama", "fake". "fake" runs without any network calls — useful for
+        tests and UI work.
     llm_model : str
         The specific model name within the chosen provider, e.g. "claude-haiku-4-5".
         Passed verbatim to the provider SDK.
-    anthropic_api_key : str
+    anthropic_api_key : SecretStr
         Secret API key for the Anthropic (Claude) service. Required when
-        `llm_provider` is "claude". Never commit this value to git.
-    gemini_api_key : str
+        `llm_provider` is "claude". Stored as SecretStr so it never leaks into
+        logs; read the raw value with `.get_secret_value()`. Never commit it.
+    gemini_api_key : SecretStr
         Secret API key for Google Gemini. Required when `llm_provider` is
-        "gemini". Also never committed.
+        "gemini". Also a SecretStr; also never committed.
     ollama_base_url : str
         Base URL for the local Ollama service. Default is localhost:11434.
         In Docker Compose, compose overrides this to http://ollama:11434 so
@@ -83,8 +95,8 @@ class Settings(BaseSettings):
 
     llm_provider: str = Field(default="claude", alias="LLM_PROVIDER")
     llm_model: str = Field(default="claude-haiku-4-5", alias="LLM_MODEL")
-    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
-    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    anthropic_api_key: SecretStr = Field(default=SecretStr(""), alias="ANTHROPIC_API_KEY")
+    gemini_api_key: SecretStr = Field(default=SecretStr(""), alias="GEMINI_API_KEY")
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     graphdb_endpoint: str = Field(
         default="http://lod.csd.auth.gr:7200/repositories/EvdoGraph",

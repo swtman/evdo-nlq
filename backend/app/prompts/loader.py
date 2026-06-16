@@ -152,8 +152,8 @@ def fill(template: str, **kwargs: str) -> str:
     ------------------------------------
     This depends on which template was loaded. The two templates in use:
 
-    `nl-to-sparql-v1.md` (main prompt, first attempt):
-        System section contains only: {ontology_summary}
+    `nl-to-sparql-v4.md` (active main prompt, first attempt):
+        System section contains: {ontology_summary} and {few_shot_block}.
         The user's question is NOT a placeholder here — it is passed
         directly as the `user` argument to the LLM (provider.stream /
         provider.generate). The `# User (template)` section in the .md
@@ -161,19 +161,20 @@ def fill(template: str, **kwargs: str) -> str:
         extracts it, so {question} never appears in the filled string.
 
         Typical call:
-            fill(template, ontology_summary=load_summary())
+            fill(template,
+                 ontology_summary=load_summary(),
+                 few_shot_block=select_few_shot(k=6))
 
     `nl-to-sparql-retry-v1.md` (retry prompt, after SPARQL validation fails):
         System section contains: {ontology_summary}, {failed_sparql},
-        {error}, and {question}.
-        Here the question IS substituted into the system prompt because
-        the retry prompt bundles everything — original question, failed
-        query, and error message — into a single system message.
+        and {error} — NOT {question}. The question stays in the file's
+        `# User (template)` section, which load() does not extract, so it
+        travels as the `user` argument exactly like the main prompt. The
+        pipeline therefore calls fill() WITHOUT a question= kwarg.
 
         Typical call:
             fill(template,
                  ontology_summary=load_summary(),
-                 question="Ποια βιβλία υπάρχουν;",
                  failed_sparql="SELECT ...",
                  error="Unknown property evdx:foo")
 

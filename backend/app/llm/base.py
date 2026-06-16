@@ -140,7 +140,7 @@ class StreamResult:
 class LLMProvider(Protocol):
     """The interface every LLM provider class must satisfy.
 
-    ClaudeProvider, GeminiProvider, and FakeProvider all implement this
+    ClaudeProvider, GeminiProvider, OllamaProvider and FakeProvider all implement this
     interface without inheriting from it — they just define the same two
     methods with matching signatures, and Python's type checker accepts them.
 
