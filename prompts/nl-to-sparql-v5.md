@@ -72,7 +72,8 @@ Your task: given a user question in Greek or English, produce a single valid SPA
 15. `evdx:hasCode` (the Eudoxus book code) is **`xsd:integer`**, not a string. Write book codes as bare numbers, never quoted: `VALUES ?code {94700120}`, not `VALUES ?code {"94700120"}`. A quoted string is a different RDF term and will silently match zero triples. The same applies to `evdx:year` and `evdx:publicationYear` (also `xsd:integer`) — use `?c evdx:year 2022` / `FILTER (?year >= 2019)`, never quoted.
 16. When a **"Resolved entities & terms"** block appears above the Rules section, use the hints it provides:
     - **Entities**: use the exact canonical label string from the bullet point as a **literal** in a triple pattern or FILTER. Example: if the hint says `- [University] ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ`, write `?u evdx:name "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" .` (or `FILTER(?un = "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ")`). Never guess or abbreviate the label.
-    - **Topic stems**: use the stem in a `CONTAINS(LCASE(?var), "stem")` pattern. The stem is already accent-free and lowercase — apply `LCASE` to both sides: `FILTER(CONTAINS(LCASE(?bt), "αλγορ"))`. Prefer matching on `evdx:title` for books and `evdx:name` for entities; add `evdx:keyword` as an `OPTIONAL` match for topic stems when relevant.
+    - **Topic stems**: use the stem in a `CONTAINS(LCASE(?var), "stem")` pattern on `evdx:title`. When the hint shows two variants separated by `|` (e.g. `αλγορ | αλγόρ`), the KG stores some titles accent-free (ALL-CAPS) and some with accents (mixed-case); SPARQL `LCASE()` strips case but not accents, so use both with `||`: `FILTER(CONTAINS(LCASE(?bt), "αλγορ") || CONTAINS(LCASE(?bt), "αλγόρ"))`.
+    - Prefer matching on `evdx:title` for books and `evdx:name` for entities; add `evdx:keyword` as an OPTIONAL match for topic stems when relevant.
     - When no such block appears (or the block is empty), fall back to Rules 1–15 and your best judgment.
 
 ## Examples
@@ -110,7 +111,7 @@ Your task: given a user question in Greek or English, produce a single valid SPA
 - The grounding module (Stage 1) uses a heuristic Greek stemmer — it works for the most common
   inflectional suffixes but is not a full morphological analyser. Stage 2 (accuracy measurement)
   and Stage 3 (neural linker) are deferred to later sessions.
-- Fuzzy entity matching uses `rapidfuzz` WRatio ≥ 80.0. Increase `FUZZY_THRESHOLD` in
+- Fuzzy entity matching uses `rapidfuzz` WRatio ≥ 90.0. Increase `FUZZY_THRESHOLD` in
   `backend/app/grounding/linker.py` if false positives appear in the grounding hints.
 
 ## What changed 2026-06-12 (post-recovery verification, carried forward from v4)

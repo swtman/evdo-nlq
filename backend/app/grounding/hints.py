@@ -73,6 +73,22 @@ _GREEK_STOPWORDS: frozenset[str] = frozenset({
 # Lower number = higher semantic confidence.
 _STAGE_PRIORITY: dict[str, int] = {"acronym": 0, "exact": 1, "fuzzy": 2}
 
+# The KG stores titles in both ALL-CAPS accent-free ("ΑΛΓΟΡΙΘΜΟΙ") and
+# mixed-case accented ("Αλγόριθμοι"). SPARQL's LCASE() strips case but NOT
+# Unicode accents, so CONTAINS(LCASE("Αλγόριθμοι"), "αλγορ") is false because
+# ό (U+03CC) ≠ ο (U+03BF). We emit both the plain stem and the version with
+# the last vowel accented to cover both storage styles in one FILTER.
+_GREEK_VOWELS_STR: str = "αεηιουω"
+_VOWEL_TO_ACCENTED: dict[int, str] = str.maketrans("αεηιουω", "άέήίόύώ")
+
+
+def _accent_last_vowel(stem: str) -> str | None:
+    """Return stem with its last vowel accented, or None if no vowel found."""
+    for i in reversed(range(len(stem))):
+        if stem[i] in _GREEK_VOWELS_STR:
+            return stem[:i] + stem[i].translate(_VOWEL_TO_ACCENTED) + stem[i + 1:]
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -310,8 +326,15 @@ def build_grounding_hints(question: str) -> str:
         lines.append("")  # blank line between sections
 
     if stems:
-        lines.append('**Topic stems** (use in CONTAINS(LCASE(?label), "stem")):')
+        lines.append(
+            '**Topic stems** (use in CONTAINS(LCASE(?label), "stem");'
+            " if two variants are shown separated by |, use both with ||):"
+        )
         for stem in stems:
-            lines.append(f"- {stem}")
+            accented = _accent_last_vowel(stem)
+            if accented and accented != stem:
+                lines.append(f"- {stem} | {accented}")
+            else:
+                lines.append(f"- {stem}")
 
     return "\n".join(lines)

@@ -62,7 +62,7 @@ from app.grounding.normalize import normalize_greek
 # Public constant
 # ---------------------------------------------------------------------------
 
-FUZZY_THRESHOLD: float = 80.0
+FUZZY_THRESHOLD: float = 90.0
 """Minimum rapidfuzz WRatio score (0–100) required to accept a fuzzy match.
 
 80 is chosen as a practical threshold:

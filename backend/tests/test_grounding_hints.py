@@ -129,3 +129,16 @@ def test_university_entity_format() -> None:
     """University entities use the '[University] CANONICAL_LABEL' format."""
     result = build_grounding_hints("ΑΠΘ")
     assert "- [University] ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" in result
+
+
+def test_stem_bullet_has_accented_variant() -> None:
+    """Stem bullets must show 'plain | accented' to cover mixed-case KG titles.
+
+    The KG stores some titles in ALL-CAPS accent-free ("ΑΛΓΟΡΙΘΜΟΙ") and others
+    in mixed-case accented ("Αλγόριθμοι"). SPARQL LCASE() strips case but not
+    Unicode accents, so CONTAINS(LCASE("Αλγόριθμοι"), "αλγορ") is false.
+    The hint emits both variants so the LLM generates an OR filter.
+    """
+    result = build_grounding_hints("αλγοριθμων")
+    # "αλγορ" has last vowel ο → accented variant "αλγόρ"
+    assert "αλγορ | αλγόρ" in result
