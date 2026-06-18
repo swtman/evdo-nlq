@@ -37,6 +37,7 @@ the contract of ``linker._deduplicate``.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from app.grounding.linker import ResolvedEntity, resolve_mention
 from app.grounding.normalize import normalize_greek
@@ -69,6 +70,31 @@ _GREEK_STOPWORDS: frozenset[str] = frozenset({
     "ενα", "δυο", "τρια", "τεσσερα",
 })
 
+# Institution-type words that are stopwords for topic stemming but must be
+# KEPT for entity disambiguation.  E.g. "πανεπιστημιο" in the phrase
+# "πανεπιστημιο πειραια" distinguishes ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ from ΤΕΙ ΠΕΙΡΑΙΑ;
+# stripping it first causes the bare "πειραια" unigram to match ΤΕΙ (score 90)
+# instead of the University (score 92.7 for the full bigram).
+_INSTITUTION_WORDS: frozenset[str] = frozenset({
+    "πανεπιστημιο", "τμημα", "σχολη", "σχολεσ", "σχολων",
+    "τεχνολογικο", "ιδρυμα",
+})
+
+# Stopword set for entity tokenization — identical to _GREEK_STOPWORDS but
+# retaining institution words so multi-word university fragments survive as
+# sliding windows for the entity linker.
+_ENTITY_STOPWORDS: frozenset[str] = _GREEK_STOPWORDS - _INSTITUTION_WORDS
+
+# Glue-only words: tokens that carry NO discriminating entity information on
+# their own.  A bare "πανεπιστημιο" unigram partial-matches every
+# "ΠΑΝΕΠΙΣΤΗΜΙΟ X" at ~100 via rapidfuzz partial_ratio, injecting a random
+# university.  Windows whose tokens are ALL glue words are skipped.
+# Multi-word windows that merely *contain* a glue word ("πανεπιστημιο πειραια")
+# are kept — they have a discriminating non-glue token ("πειραια").
+_INSTITUTION_GLUE: frozenset[str] = _INSTITUTION_WORDS | frozenset({
+    "πολυτεχνειο", "τει", "ανωτατο", "ανωτατη",
+})
+
 # Priority for deduplicating entity matches across window sizes.
 # Lower number = higher semantic confidence.
 _STAGE_PRIORITY: dict[str, int] = {"acronym": 0, "exact": 1, "fuzzy": 2}
@@ -95,16 +121,24 @@ def _accent_last_vowel(stem: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _tokenize(question: str) -> list[str]:
+def _tokenize(
+    question: str,
+    stopwords: frozenset[str] = _GREEK_STOPWORDS,
+) -> list[str]:
     """Extract word-only tokens from a Greek/English question string.
 
     Uses a Unicode-aware regex to pull out sequences of non-whitespace,
     non-punctuation, non-digit characters.  Then filters:
       - Tokens shorter than 3 characters (too short for meaningful matching).
-      - Tokens whose normalized form is in ``_GREEK_STOPWORDS``.
+      - Tokens whose normalized form is in ``stopwords``.
 
     Args:
         question: Raw user question, any Unicode text.
+        stopwords: Set of normalized word forms to exclude.  Defaults to
+                   ``_GREEK_STOPWORDS`` (full topic stopword set).  Pass
+                   ``_ENTITY_STOPWORDS`` to retain institution words (e.g.
+                   "πανεπιστημιο") for entity disambiguation while still
+                   filtering generic stopwords.
 
     Returns:
         List of raw token strings that survive the filter (original casing
@@ -117,7 +151,7 @@ def _tokenize(question: str) -> list[str]:
     for tok in raw_tokens:
         if len(tok) < 3:  # too short to be meaningful
             continue
-        if normalize_greek(tok) in _GREEK_STOPWORDS:
+        if normalize_greek(tok) in stopwords:
             continue
         result.append(tok)
     return result
@@ -136,34 +170,111 @@ def _sliding_windows(tokens: list[str], size: int) -> list[str]:
     return [" ".join(tokens[i : i + size]) for i in range(len(tokens) - size + 1)]
 
 
-def _resolve_all_windows(tokens: list[str]) -> dict[str, ResolvedEntity]:
-    """Resolve entity mentions from all unigram, bigram, and trigram windows.
+@dataclass
+class _WindowCandidate:
+    """A resolved sliding window — internal data holder for greedy selection."""
 
-    Deduplicates by ``canonical_label``, keeping the highest-priority match
-    method (acronym > exact > fuzzy) per label.
+    start: int                      # index of first token (inclusive)
+    end: int                        # index past last token (exclusive)
+    entities: list[ResolvedEntity]
+    best_priority: int              # min _STAGE_PRIORITY across entities (0=acronym)
+    best_score: float               # max score across entities
+    size: int                       # window width in tokens
+
+
+def _resolve_all_windows(entity_tokens: list[str]) -> dict[str, ResolvedEntity]:
+    """Resolve entity mentions using greedy span-disjoint window selection.
+
+    Accepts ``entity_tokens`` — a token list built with ``_ENTITY_STOPWORDS``
+    where institution words like "πανεπιστημιο" are **not** filtered out.
+    This allows multi-word university name fragments ("πανεπιστημιο πειραια")
+    to form as bigrams and beat a conflicting bare-city unigram.
+
+    Algorithm
+    ---------
+    1.  For every unigram/bigram/trigram window over ``entity_tokens``:
+        a.  **Glue guard**: skip windows whose tokens are ALL institution/glue
+            words (e.g. bare "πανεπιστημιο").  Such windows partial-match every
+            "ΠΑΝΕΠΙΣΤΗΜΙΟ X" at ~100 and would inject a random university.
+            Multi-word windows with at least one non-glue token are kept.
+        b.  Call ``resolve_mention``; discard windows that return no entity.
+    2.  Sort surviving candidates by ``(best_priority asc, size desc,
+        best_score desc)``:
+        - Priority first — acronym unigrams (priority 0, e.g. ΑΠΘ, ΕΚΠΑ) are
+          always accepted before lower-confidence fuzzy bigrams.
+        - Larger window before smaller, within the same priority — so
+          "πανεπιστημιο πειραια" (size 2, score 92.7) sorts before the
+          bare "πειραια" unigram (size 1, score 90.0).
+    3.  Greedy acceptance: maintain a set of consumed token indices.  Accept a
+        candidate only if its span does not overlap consumed indices; mark its
+        span consumed.
+
+    Result for "… πανεπιστημιο πειραια":
+        - bigram accepted first (span {0,1}), emits ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ.
+        - unigram "πειραια" at index 1 overlaps → dropped.  ΤΕΙ ΠΕΙΡΑΙΑ never
+          surfaces.
+
+    Result for "ΑΠΘ … ΕΚΠΑ" (regression guard):
+        - Both acronym unigrams (priority 0) sort first and are accepted with
+          non-overlapping spans; no fuzzy bigram displaces them.
 
     Args:
-        tokens: Filtered token list from ``_tokenize``.
+        entity_tokens: Token list produced by ``_tokenize(q, _ENTITY_STOPWORDS)``.
 
     Returns:
-        Dict mapping ``canonical_label → ResolvedEntity`` for every distinct
-        entity found.  Empty dict if nothing resolves.
+        Dict mapping ``canonical_label → ResolvedEntity`` for every accepted
+        entity.  Empty dict if nothing resolves.
     """
-    # Collect all candidates across all window sizes.
-    all_candidates: list[ResolvedEntity] = []
+    # --- 1. Gather window candidates ------------------------------------------
+    candidates: list[_WindowCandidate] = []
     for size in (1, 2, 3):
-        for window in _sliding_windows(tokens, size):
-            all_candidates.extend(resolve_mention(window))
+        for i in range(len(entity_tokens) - size + 1):
+            window_toks = entity_tokens[i : i + size]
 
-    # Deduplicate: for the same canonical label, keep the highest-priority entry.
+            # Glue guard: skip all-glue windows (no discriminating non-glue token).
+            if all(normalize_greek(t) in _INSTITUTION_GLUE for t in window_toks):
+                continue
+
+            window_str = " ".join(window_toks)
+            entities = resolve_mention(window_str)
+            if not entities:
+                continue
+
+            best_priority = min(_STAGE_PRIORITY[e.match_method] for e in entities)
+            best_score = max(e.score for e in entities)
+            candidates.append(
+                _WindowCandidate(
+                    start=i,
+                    end=i + size,
+                    entities=entities,
+                    best_priority=best_priority,
+                    best_score=best_score,
+                    size=size,
+                )
+            )
+
+    # --- 2. Sort: highest confidence first, then largest context window --------
+    candidates.sort(key=lambda c: (c.best_priority, -c.size, -c.best_score))
+
+    # --- 3. Greedy span-disjoint acceptance ------------------------------------
+    accepted_indices: set[int] = set()
     best: dict[str, ResolvedEntity] = {}
-    for entity in all_candidates:
-        if entity.canonical_label not in best:
-            best[entity.canonical_label] = entity
-        else:
-            existing = best[entity.canonical_label]
-            if _STAGE_PRIORITY[entity.match_method] < _STAGE_PRIORITY[existing.match_method]:
+
+    for cand in candidates:
+        span = set(range(cand.start, cand.end))
+        if span & accepted_indices:
+            continue  # overlaps an already-accepted window — drop
+        accepted_indices |= span
+
+        # Merge entities from this window, keeping highest-priority per label.
+        for entity in cand.entities:
+            if entity.canonical_label not in best:
                 best[entity.canonical_label] = entity
+            else:
+                existing = best[entity.canonical_label]
+                if _STAGE_PRIORITY[entity.match_method] < _STAGE_PRIORITY[existing.match_method]:
+                    best[entity.canonical_label] = entity
+
     return best
 
 
@@ -295,20 +406,26 @@ def build_grounding_hints(question: str) -> str:
     if not question.strip():
         return ""
 
-    # Step 1 — tokenize (filter short, stopword, non-word tokens).
-    tokens = _tokenize(question)
-    if not tokens:
+    # Step 1a — entity tokens: keep institution words so multi-word university
+    #            name fragments form as bigrams (e.g. "πανεπιστημιο πειραια"
+    #            scores 92.7 for ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ vs bare "πειραια" → ΤΕΙ).
+    entity_tokens = _tokenize(question, _ENTITY_STOPWORDS)
+    # Step 1b — topic tokens: full stopword set so institution words never
+    #            produce spurious topic stems like "πανεπιστ".
+    topic_tokens = _tokenize(question)
+
+    if not entity_tokens and not topic_tokens:
         return ""
 
-    # Step 2 — resolve entity mentions from all unigram/bigram/trigram windows.
-    entities = _resolve_all_windows(tokens)
+    # Step 2 — resolve entity mentions using greedy span-disjoint windows.
+    entities = _resolve_all_windows(entity_tokens)
 
-    # Step 3 — determine which tokens are "claimed" by acronym/exact entity hits.
+    # Step 3 — determine which topic tokens are "claimed" by high-priority hits.
     high_priority = frozenset({"acronym", "exact"})
-    claimed = _tokens_used_by_entity(tokens, entities, high_priority)
+    claimed = _tokens_used_by_entity(topic_tokens, entities, high_priority)
 
     # Step 4 — stem unclaimed topic words.
-    stems = _collect_stems(tokens, claimed)
+    stems = _collect_stems(topic_tokens, claimed)
 
     # Step 5 — nothing found → bail out early.
     if not entities and not stems:

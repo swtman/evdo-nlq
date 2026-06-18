@@ -142,3 +142,55 @@ def test_stem_bullet_has_accented_variant() -> None:
     result = build_grounding_hints("αλγοριθμων")
     # "αλγορ" has last vowel ο → accented variant "αλγόρ"
     assert "αλγορ | αλγόρ" in result
+
+
+# ---------------------------------------------------------------------------
+# Grounding fix #1 — institution-word disambiguation
+# ---------------------------------------------------------------------------
+
+
+def test_panepistimio_peiraia_resolves_to_university_not_tei() -> None:
+    """Explicitly naming 'πανεπιστημιο' must route to ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ.
+
+    Root cause of the old bug: 'πανεπιστημιο' was stripped as a topic stopword,
+    leaving only the bare 'πειραια' unigram which scores 90 for ΤΕΙ ΠΕΙΡΑΙΑ
+    (verbatim substring match) but only 77 for ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ.  The fix
+    keeps institution words for entity matching so the bigram
+    'πανεπιστημιο πειραια' (score 92.7) beats the ΤΕΙ unigram.
+    """
+    result = build_grounding_hints(
+        "Τι συγγράμματα οικονομικών διδάσκονται στο πανεπιστημιο πειραια;"
+    )
+    assert "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ" in result
+    assert "ΤΕΙ ΠΕΙΡΑΙΑ" not in result
+
+
+def test_panepistimio_peiraia_accented_resolves_to_university_not_tei() -> None:
+    """Accented variant 'Πανεπιστήμιο Πειραιά' must also resolve correctly."""
+    result = build_grounding_hints(
+        "Τι συγγράμματα οικονομικών διδάσκονται στο Πανεπιστήμιο Πειραιά;"
+    )
+    assert "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ" in result
+    assert "ΤΕΙ ΠΕΙΡΑΙΑ" not in result
+
+
+def test_two_acronyms_both_retained() -> None:
+    """Both ΑΠΘ and ΕΚΠΑ must appear — greedy selection must not suppress either.
+
+    Both are acronym unigrams (highest priority).  Non-overlapping spans mean
+    both are accepted; no fuzzy bigram should displace them.
+    """
+    result = build_grounding_hints("ΑΠΘ και ΕΚΠΑ")
+    assert "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" in result
+    assert "ΕΘΝΙΚΟ & ΚΑΠΟΔΙΣΤΡΙΑΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ" in result
+
+
+def test_bare_panepistimio_emits_no_university() -> None:
+    """A lone 'πανεπιστημιο' with no discriminating city token must emit nothing.
+
+    The glue guard skips all-glue-word windows; the unigram 'πανεπιστημιο' would
+    otherwise partial-match every 'ΠΑΝΕΠΙΣΤΗΜΙΟ X' at ~100 and inject a random
+    university.
+    """
+    result = build_grounding_hints("πανεπιστημιο")
+    assert "[University]" not in result
