@@ -90,7 +90,12 @@ class Settings(BaseSettings):
         tells the browser "yes, requests from this origin are allowed."
     log_level : str
         Controls how verbose the server's log output is. Common values:
-        "DEBUG" (everything), "INFO" (normal), "WARNING" (problems only).
+        "DEBUG" (everything), "INFO" (normal), "WARNING" (problems only). 
+    grounding_enabled : bool
+        When True (default), the grounding module runs before each LLM call:
+        it resolves entity aliases (e.g. "ΑΠΘ" → canonical evdx:name) and
+        computes Greek word stems, then injects the hints into the system prompt.                                                                                                             
+        Set to False (GROUNDING_ENABLED=0) for A/B baseline comparisons.
     """
 
     llm_provider: str = Field(default="claude", alias="LLM_PROVIDER")
@@ -106,6 +111,7 @@ class Settings(BaseSettings):
     llm_cache_disabled: bool = Field(default=False, alias="LLM_CACHE_DISABLED")
     frontend_origin: str = Field(default="http://localhost:5173", alias="FRONTEND_ORIGIN")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    grounding_enabled: bool = Field(default=True, alias="GROUNDING_ENABLED")
 
     # `env_file` tells Pydantic to also look for values inside `.env` (not
     # just in the shell environment). `populate_by_name` allows using the

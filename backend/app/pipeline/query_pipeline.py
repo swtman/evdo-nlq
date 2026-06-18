@@ -60,6 +60,8 @@ import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from app.config import settings
+from app.grounding import build_grounding_hints
 from app.llm.base import LLMProvider
 from app.ontology.loader import load_summary
 from app.prompts.examples_loader import select_few_shot
@@ -267,6 +269,36 @@ class QueryPipeline:
         self._model_name = model_name
 
     # ------------------------------------------------------------------
+    # Internal: system prompt construction
+    # ------------------------------------------------------------------
+
+    def _build_system(self, question: str) -> str:
+        """Build the filled system prompt for a given question.
+
+        Centralises the prompt construction that was previously duplicated
+        in run() and stream_events(). Uses prompt v5 (adds {grounding_hints}).
+
+        When GROUNDING_ENABLED is False (env var), grounding_hints is set to ""
+        so the prompt behaves identically to v4 — useful for A/B comparisons.
+
+        Args:
+            question: Raw user question, used by the grounding module to
+                      resolve entity mentions and compute word stems.
+
+        Returns:
+            Filled system prompt string ready to pass to the LLM.
+        """
+        grounding_hints = (
+            build_grounding_hints(question) if settings.grounding_enabled else ""
+        )
+        return fill(
+            load("nl-to-sparql", 5),
+            ontology_summary=load_summary(),
+            few_shot_block=select_few_shot(k=8),
+            grounding_hints=grounding_hints,
+        )
+
+    # ------------------------------------------------------------------
     # Public: synchronous path
     # ------------------------------------------------------------------
 
@@ -312,12 +344,8 @@ class QueryPipeline:
             If SparqlClient.execute() fails (GraphDB unreachable or rejects
             the query). The route handler in query.py maps this to HTTP 502.
         """
+        system = self._build_system(question)
         ontology = load_summary()
-        system = fill(
-            load("nl-to-sparql", 4),
-            ontology_summary=ontology,
-            few_shot_block=select_few_shot(k=6),
-        )
         sparql, total_input, total_output, retries = self._generate_with_retry(
             system, question, ontology
         )
@@ -441,13 +469,9 @@ class QueryPipeline:
         question : str
             The user's natural-language question (Greek or English).
         """
-        # Build the system prompt (same as run())
+        # Build the system prompt (same as run()).
+        system = self._build_system(question)
         ontology = load_summary()
-        system = fill(
-            load("nl-to-sparql", 4),
-            ontology_summary=ontology,
-            few_shot_block=select_few_shot(k=6),
-        )
         logger.info("Starting pipeline with system prompt:\n%s", system)
 
         # ── Phase 1: stream SPARQL tokens without blocking the event loop ──

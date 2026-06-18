@@ -45,6 +45,8 @@ class TestLoadExamples:
             "ranking-by-count",
             "multi-book-comparison",
             "not-answerable",
+            "alias-resolution",
+            "topic-stem-match",
         }
         for ex in load_examples():
             assert ex["query_shape"] in valid, (

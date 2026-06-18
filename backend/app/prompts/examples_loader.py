@@ -22,9 +22,14 @@ _cache: list[dict[str, Any]] | None = None
 
 # Shape priority order for few-shot selection (lower = higher priority).
 # Derived from few_shot_priority field in examples.yaml; kept here as a fallback.
+# alias-resolution and topic-stem-match are placed early so they are included at
+# k=6 and teach the grounding patterns (Rule 16 in nl-to-sparql-v5.md).
 _SHAPE_ORDER = [
     "traversal-lookup",
+    "alias-resolution",
+    "topic-stem-match",
     "negative-existence",
+    "not-answerable",
     "multi-level-aggregate-with-concat",
     "set-difference-by-year",
     "set-difference-by-book",
@@ -32,7 +37,6 @@ _SHAPE_ORDER = [
     "multi-level-count",
     "multi-book-comparison",
     "ranking-by-count",
-    "not-answerable",
 ]
 
 REQUIRED_FIELDS = {

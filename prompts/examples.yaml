@@ -41,7 +41,8 @@
 # Schema reference: decisions/005-eval-methodology.md
 # query_shape values: traversal-lookup | multi-level-count | multi-level-aggregate-with-concat |
 #   set-difference-by-year | set-difference-by-book | set-intersection-by-book |
-#   negative-existence | ranking-by-count | multi-book-comparison | not-answerable
+#   negative-existence | ranking-by-count | multi-book-comparison | not-answerable |
+#   alias-resolution | topic-stem-match
 # comparison_mode values: set | ordered | scalar | not-answerable
 # skip_eval: true → example excluded from eval metrics (e.g. known GraphDB heap crash)
 
@@ -906,3 +907,68 @@ examples:
       book 94700120 has a publisher and 5+ distinct evdx:keyword values
       (evdx:keyword is multi-valued: multiple triples per book, not a
       delimited string).
+
+  # ---------------------------------------------------------------------------
+  # Q23 — alias-resolution (Stage 1 Grounding)
+  # ---------------------------------------------------------------------------
+  - id: ex-023
+    source: "handwritten (Stage 1 grounding)"
+    question_english: >
+      Which books are proposed by AUTH?
+    question_greek: "Ποια βιβλία προτείνει το ΑΠΘ;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT DISTINCT ?bt
+      WHERE {
+        ?b a evdx:Book .
+        ?b evdx:title ?bt .
+        ?c a evdx:Course .
+        ?c evdx:hasBook ?b .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+        ?u a evdx:University .
+        ?u evdx:hasDepartment ?d .
+        ?u evdx:name "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" .
+      }
+    query_shape: alias-resolution
+    granularity: university
+    comparison_mode: set
+    skip_eval: true
+    few_shot_priority: 21
+    notes: >
+      Demonstrates Rule 16: resolving the user's acronym ("ΑΠΘ") to the 
+      canonical label provided by the {grounding_hints} block.
+
+  # ---------------------------------------------------------------------------
+  # Q24 — topic-stem-match (Stage 1 Grounding)
+  # ---------------------------------------------------------------------------
+  - id: ex-024
+    source: "handwritten (Stage 1 grounding)"
+    question_english: >
+      Which algorithm books does AUTH propose?
+    question_greek: "Ποια βιβλία αλγορίθμων προτείνει το ΑΠΘ;"
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT DISTINCT ?bt
+      WHERE {
+        ?b a evdx:Book .
+        ?b evdx:title ?bt .
+        OPTIONAL { ?b evdx:keyword ?kw }
+        FILTER (CONTAINS(LCASE(?bt), "αλγορ") || CONTAINS(LCASE(?kw), "αλγορ"))
+        ?c a evdx:Course .
+        ?c evdx:hasBook ?b .
+        ?d a evdx:Department .
+        ?d evdx:hasCourse ?c .
+        ?u a evdx:University .
+        ?u evdx:hasDepartment ?d .
+        ?u evdx:name "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" .
+      }
+    query_shape: topic-stem-match
+    granularity: book
+    comparison_mode: set
+    skip_eval: true
+    few_shot_priority: 22
+    notes: >
+      Demonstrates Rule 16: using a truncated stem ("αλγορ") passed via 
+      {grounding_hints} within a CONTAINS(LCASE(...)) filter on both 
+      evdx:title and the new evdx:keyword property.
