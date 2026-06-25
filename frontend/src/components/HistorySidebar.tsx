@@ -1,82 +1,153 @@
 /**
- * HistorySidebar — the query history overlay panel.
+ * HistorySidebar — history drawer panel (Console theme, ADR-016).
  *
- * Renders inside the overlay div in App.tsx. All state (which entries exist,
- * which is active) is owned by App and passed down as props — this component
- * is intentionally "dumb" (no data-fetching, no localStorage access).
+ * Renders inside the overlay div in App.tsx. Props:
+ *   entries    — all history entries (newest first, max 20)
+ *   activeId   — UUID of the currently displayed cached result
+ *   onSelect   — called when the user clicks an entry
+ *   onClear    — called when the user clicks the footer clear button
+ *   onClose    — called when the ✕ button is clicked
+ *
+ * Local state:
+ *   search     — text filter (substring match on question)
+ *   filter     — 'all' | 'success' | 'error' filter chip
+ *
+ * Entry meta: relative time + provider·model + row-count or σφάλμα badge.
  */
 
 import { useState } from 'react'
 import { t } from '../i18n/el'
 import type { HistoryEntry } from '../types'
 
+type Filter = 'all' | 'success' | 'error'
+
 type Props = {
-  entries: HistoryEntry[]  // newest first, max 20 (enforced by useHistory)
-  activeId: string | null  // UUID of the currently displayed cached result
+  entries: HistoryEntry[]
+  activeId: string | null
   onSelect: (entry: HistoryEntry) => void
   onClear: () => void
+  onClose: () => void
 }
 
-/** Format a Unix timestamp as "HH:mm" in Greek locale (e.g. "14:32 μ.μ."). */
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit' })
+/** Format a Unix timestamp as a relative time string (e.g. "πριν 3 λεπτά"). */
+function relativeTime(ts: number): string {
+  const diffMs = Date.now() - ts
+  const diffMin = Math.floor(diffMs / 60_000)
+  const diffH   = Math.floor(diffMs / 3_600_000)
+  if (diffMin < 1)  return 'μόλις τώρα'
+  if (diffMin < 60) return `πριν ${diffMin} λεπτ${diffMin === 1 ? 'ό' : 'ά'}`
+  if (diffH < 24)   return `πριν ${diffH} ώρ${diffH === 1 ? 'α' : 'ες'}`
+  return new Date(ts).toLocaleDateString('el-GR', { day: '2-digit', month: 'short' })
 }
 
-/** Build the one-line meta string shown above each question (time + row count or error). */
-function itemMeta(entry: HistoryEntry): string {
-  const time = formatTime(entry.timestamp)
-  if (entry.error) return `${time} · ${t.historyError} ✕`
-  return `${time} · ${entry.rows.length} rows`
-}
-
-export function HistorySidebar({ entries, activeId, onSelect, onClear }: Props) {
-  // Local search state — filters the list by NL question substring, client-side only.
+export function HistorySidebar({ entries, activeId, onSelect, onClear, onClose }: Props) {
   const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
 
-  const filtered = search.trim()
-    ? entries.filter(e => e.question.toLowerCase().includes(search.toLowerCase()))
-    : entries
+  const filtered = entries
+    .filter(e => {
+      if (filter === 'success' && e.error) return false
+      if (filter === 'error'   && !e.error) return false
+      return true
+    })
+    .filter(e =>
+      !search.trim() || e.question.toLowerCase().includes(search.toLowerCase())
+    )
 
   return (
     <>
-      <div className="sidebar-label">{t.historyLabel}</div>
+      {/* ── Drawer header ── */}
+      <div className="sidebar-drawer-head">
+        <div className="sidebar-drawer-title">
+          <span className="sidebar-drawer-label">{t.tabHistory}</span>
+          {entries.length > 0 && (
+            <span className="sidebar-badge">{entries.length}</span>
+          )}
+        </div>
+        <button
+          className="sidebar-close"
+          onClick={onClose}
+          type="button"
+          aria-label="Κλείσιμο ιστορικού"
+        >
+          ✕
+        </button>
+      </div>
 
-      <input
-        className="sidebar-search"
-        type="text"
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        placeholder={t.historySearchPlaceholder}
-        aria-label={t.historySearchPlaceholder}
-      />
+      {/* ── Search ── */}
+      <div className="sidebar-search-wrap">
+        <div className="sidebar-search-inner">
+          <span className="sidebar-search-icon" aria-hidden="true">⌕</span>
+          <input
+            className="sidebar-search"
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={t.historySearchPlaceholder}
+            aria-label={t.historySearchPlaceholder}
+          />
+        </div>
+      </div>
 
-      <div className="sidebar-list">
+      {/* ── Filter chips ── */}
+      <div className="sidebar-filters" role="group" aria-label="Φίλτρο ιστορικού">
+        {(['all', 'success', 'error'] as Filter[]).map(f => (
+          <button
+            key={f}
+            className={`sidebar-filter-chip${filter === f ? ' active' : ''}`}
+            onClick={() => setFilter(f)}
+            type="button"
+            aria-pressed={filter === f}
+          >
+            {f === 'all'     ? t.historyFilterAll
+            : f === 'success' ? t.historyFilterSuccess
+            : t.historyFilterError}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Entry list ── */}
+      <div className="sidebar-list" role="list">
         {filtered.length === 0 ? (
           <p className="sidebar-empty">{t.historyEmpty}</p>
         ) : (
           filtered.map(entry => (
             <div
               key={entry.id}
-              // 'active' class adds the burnt-orange left border for the current entry.
               className={`sidebar-item${entry.id === activeId ? ' active' : ''}`}
               onClick={() => onSelect(entry)}
-              role="button"
+              role="listitem"
               tabIndex={0}
               onKeyDown={e => e.key === 'Enter' && onSelect(entry)}
+              aria-current={entry.id === activeId ? 'true' : undefined}
             >
-              <div className="sidebar-item-meta">{itemMeta(entry)}</div>
-              {/* -webkit-line-clamp in CSS truncates long questions to 2 lines. */}
-              <div className="sidebar-item-question">{entry.question}</div>
+              <div className="sidebar-item-meta-row">
+                <span className="sidebar-item-meta">
+                  {relativeTime(entry.timestamp)} · {entry.provider} · {entry.model}
+                </span>
+                {entry.error
+                  ? <span className="sidebar-item-badge error">{t.historyFilterError}</span>
+                  : entry.rows.length === 0
+                  ? <span className="sidebar-item-badge empty">0 γραμμές</span>
+                  : <span className="sidebar-item-badge success">{entry.rows.length} γραμμές</span>
+                }
+              </div>
+              <div className="sidebar-item-question">
+                <span className="q-arrow" aria-hidden="true">› </span>
+                {entry.question}
+              </div>
             </div>
           ))
         )}
       </div>
 
-      {/* Only render the clear button when there's something to clear. */}
+      {/* ── Footer ── */}
       {entries.length > 0 && (
-        <button className="sidebar-footer" onClick={onClear} type="button">
-          {t.historyClear}
-        </button>
+        <div className="sidebar-footer">
+          <button className="sidebar-clear-btn" onClick={onClear} type="button">
+            ✕ {t.historyClear}
+          </button>
+        </div>
       )}
     </>
   )

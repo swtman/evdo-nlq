@@ -1,6 +1,6 @@
 # frontend/ — React + Vite UI
 
-Single-page app: natural-language input form → live SPARQL streaming panel → results table with sort/pagination/export, with error handling and query history. Revamped to parchment-brutalist design (ADR-008).
+Single-page app: natural-language input form → live SPARQL streaming panel → results table with sort/pagination/export, with error handling and query history. Console theme (ADR-016, supersedes ADR-008/009).
 
 ## Stack
 
@@ -16,9 +16,9 @@ Single-page app: natural-language input form → live SPARQL streaming panel →
 ```
 src/
 ├── main.tsx                        React 19 entrypoint, mounts App in StrictMode
-├── App.tsx                         Layout shell: overlay + main column; dual display path (live vs. cached)
+├── App.tsx                         Layout shell: rail + topbar + hero + content-wrap; dual display path (live vs. cached)
 ├── types.ts                        QueryState discriminated union, HistoryEntry, SortState, ColumnVisibility
-├── styles.css                      Parchment-brutalist design tokens (light/dark), animations, all component styles
+├── styles.css                      Console design tokens (light/dark), animations, all component styles
 ├── vite-env.d.ts                   Vite env type augmentation (VITE_USE_MOCK_API, VITE_GIT_SHA)
 ├── components/
 │   ├── QueryForm.tsx               Input + provider/model dropdowns + submit + clear buttons
@@ -40,7 +40,8 @@ src/
 │   ├── client.ts                   SSE parser via fetch + ReadableStream; delegates to mock when VITE_USE_MOCK_API=1
 │   └── mock.ts                     Canned SPARQL stream (18ms/char typewriter) + 46-row result set; no network calls
 ├── utils/
-│   └── exporters.ts                toCSV / toJSON / toXML / toTSV + downloadBlob helper
+│   ├── exporters.ts                toCSV / toJSON / toXML / toTSV + downloadBlob helper
+│   └── highlightSparql.ts          display-only SPARQL tokenizer → typed spans (kw/var/str/pre)
 └── i18n/
     └── el.ts                       All UI strings in Greek (single source of truth)
 ```
@@ -139,18 +140,22 @@ When the user clicks a history entry, `cachedResult` is set in App. All derived 
 - History items have `role="button"` and `tabIndex={0}` with keyboard handlers.
 - All animations respect `prefers-reduced-motion: reduce`.
 
-## Design tokens (styles.css)
+## Design tokens (styles.css) — Console theme (ADR-016)
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--bg` | `#fbf9f4` (parchment) | `#1a1410` | Page background |
-| `--ink` | `#1a1410` | `#fbf9f4` | Text, all borders |
-| `--accent` | `#7c2d12` (burnt orange) | `#ea580c` | Active states, `//` status labels |
-| `--success` | `#14532d` (forest green) | `#22c55e` | Live dot, result count-up |
-| `--font-mono` | `JetBrains Mono, Fira Code` | same | Headings, labels, code, buttons |
-| `--font-body` | `Inter, system-ui` | same | Greek body text, table cells |
+| `--bg` | `#eef2f0` | `#0b100e` | Page background |
+| `--surface` | `#ffffff` | `#121815` | Panel/card background |
+| `--surface-2` | `#f4f8f6` | `#0e1411` | Rail, code bg, alt rows |
+| `--ink` | `#0c1110` | `#e7efe9` | Primary text |
+| `--ink-soft` | `#5a6661` | `#869790` | Secondary labels |
+| `--ink-faint` | `#9aa6a0` | `#54615a` | Placeholders, gutters |
+| `--accent` | `#0c9c6c` | `#2ee6a0` | Emerald — active, links, status |
+| `--kw/--var/--str/--pre` | green/blue/orange/gray | same hue family | SPARQL syntax spans |
+| `--font-mono` | `IBM Plex Mono` | same | Labels, code, buttons |
+| `--font-body` | `IBM Plex Sans` | same | Greek body text, table cells |
 
-All corners are sharp (`border-radius: 0`). Hover pattern: background→`--ink`, color→`--bg`.
+Corners: soft-rounded (`--r-lg:16px / --r-md:12px / --r-sm:8px`). Shadows: soft via `--shadow`.
 
 ## What NOT to do
 

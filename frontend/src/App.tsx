@@ -1,12 +1,20 @@
 /**
- * App — the root component that wires everything together.
+ * App — root component; wires shell layout (rail + header + hero + content) and
+ * all global state (theme, history overlay, dual display path, query lifecycle).
  *
- * Owns the history overlay open/close state and the "dual display path":
- * results are shown from either the live query state OR a cached history entry,
- * whichever is active. All other state lives in the hooks it calls.
+ * Layout (Console theme, ADR-016):
+ *   .app-rail  (64 px sticky left rail — logo + theme toggle)
+ *   .app-main  (flex column)
+ *     .app-header  (topbar: brand + tabs + status)
+ *     .hero        (eyebrow + h1 + QueryForm + example chips)
+ *     .content-wrap
+ *       question-echo (when query is active)
+ *       SparqlPanel
+ *       ResultsTable
+ *       ErrorBanner
  *
- * Layout:
- *   sidebar overlay (history) + main column (header, form, SPARQL panel, results/error)
+ * History overlay: full-screen backdrop + left-sliding drawer (HistorySidebar).
+ * Dual display path: cachedResult ?? live state (same as before).
  */
 
 import { useState, useEffect } from 'react'
@@ -18,18 +26,23 @@ import { SparqlPanel } from './components/SparqlPanel'
 import { ResultsTable } from './components/ResultsTable/ResultsTable'
 import { ErrorBanner } from './components/ErrorBanner'
 import { HistorySidebar } from './components/HistorySidebar'
+import { OntologyPage } from './components/OntologyPage'
 import { t } from './i18n/el'
 import type { HistoryEntry } from './types'
 
 type Theme = 'dark' | 'light'
+type View = 'query' | 'ontology'
 
+/** Read stored preference, then OS default, then 'light'. */
 function getInitialTheme(): Theme {
-  // Read from localStorage so the preference survives page reloads.
-  return (localStorage.getItem('theme') as Theme | null) ?? 'light'
+  const stored = localStorage.getItem('theme') as Theme | null
+  if (stored === 'dark' || stored === 'light') return stored
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark'
+  }
+  return 'light'
 }
 
-// Short git SHA injected by Vite at build time via VITE_GIT_SHA env var.
-// Falls back to 'dev' in development when the var isn't set.
 const GIT_SHA = (import.meta.env.VITE_GIT_SHA as string | undefined)?.slice(0, 7) ?? 'dev'
 
 export default function App() {
@@ -38,29 +51,18 @@ export default function App() {
 
   const [submissionCount, setSubmissionCount] = useState(0)
   const [theme, setTheme] = useState<Theme>(getInitialTheme)
+  const [view, setView] = useState<View>('query')
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null)
   const [cachedResult, setCachedResult] = useState<HistoryEntry | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
 
-  // Captures the question/provider/model of the in-flight query so we can write
-  // to history when the `done` or `error` event arrives.
   const [pendingMeta, setPendingMeta] = useState<{
     question: string; provider: string; model: string
   } | null>(null)
-
-  // Tracks the provider/model used in the last submission so that example-query
-  // clicks in EmptyState reuse the same model (without the user having to reselect).
   const [lastMeta, setLastMeta] = useState<{ provider: string; model: string } | null>(null)
-
-  // The NL question tied to the SPARQL currently on screen. Used to build the
-  // "(edited) <question>" label when the user reruns a manually-edited query.
   const [currentQuestion, setCurrentQuestion] = useState('')
-
-  // Drives QueryForm's `prefillQuestion` prop — set when an example or history item
-  // is clicked so the input reflects what's currently being displayed.
   const [prefillQuestion, setPrefillQuestion] = useState<string | undefined>(undefined)
 
-  // Apply theme to the <html> element and persist the choice.
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('theme', theme)
@@ -69,7 +71,6 @@ export default function App() {
   const toggleTheme = () => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))
 
   // Write to history when a query finishes (done) or fails (error).
-  // We watch state.status rather than state itself to fire only on transitions.
   useEffect(() => {
     if (!pendingMeta) return
     if (state.status === 'done') {
@@ -103,7 +104,6 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.status])
 
-  /** Reset to idle and clear all derived display state. */
   const handleClear = () => {
     clear()
     setActiveHistoryId(null)
@@ -111,13 +111,11 @@ export default function App() {
     setPrefillQuestion('')
     setPendingMeta(null)
     setCurrentQuestion('')
-    // Incrementing submissionCount remounts <SparqlPanel>, resetting its collapsed state.
     setSubmissionCount(c => c + 1)
   }
 
-  /** Fire a new query and track metadata for the eventual history write. */
   const handleSubmit = (question: string, provider: string, model: string) => {
-    setSubmissionCount(c => c + 1) // forces SparqlPanel remount (see key={submissionCount})
+    setSubmissionCount(c => c + 1)
     setActiveHistoryId(null)
     setCachedResult(null)
     setPendingMeta({ question, provider, model })
@@ -126,16 +124,10 @@ export default function App() {
     submit(question, provider, model)
   }
 
-  /** Re-execute a user-edited SPARQL query directly against GraphDB (no LLM call).
-   *
-   * Matches SparqlPanel's `onRerun(editedSparql)` single-argument contract.
-   * Builds the history label as "✎ (edited) <original question>", stripping any
-   * existing tag first so reruns of reruns don't stack the prefix. */
   const handleRerun = (editedSparql: string) => {
-    setSubmissionCount(c => c + 1)  // remount SparqlPanel → resets its internal edit state
+    setSubmissionCount(c => c + 1)
     setActiveHistoryId(null)
     setCachedResult(null)
-    // Strip an existing "(edited)" prefix so reruns of reruns stay clean.
     const baseQuestion = currentQuestion.startsWith(t.historyManualEdit)
       ? currentQuestion.slice(t.historyManualEdit.length).trimStart()
       : currentQuestion
@@ -144,32 +136,33 @@ export default function App() {
       provider: lastMeta?.provider ?? '—',
       model:    lastMeta?.model    ?? '—',
     })
-    // Update currentQuestion so a subsequent rerun of this rerun also uses the correct base.
     setCurrentQuestion(`${t.historyManualEdit} ${baseQuestion}`.trim())
     rerunSparql(editedSparql)
   }
 
-  /** Load a cached result from history without hitting the backend. */
   const handleHistorySelect = (entry: HistoryEntry) => {
     setActiveHistoryId(entry.id)
     setCachedResult(entry)
-    // Sync the input and currentQuestion so editing this cached result uses the right label.
     setPrefillQuestion(entry.question)
     setCurrentQuestion(entry.question)
     setHistoryOpen(false)
   }
 
-  // ── Dual display path ──────────────────────────────────────────────────────
-  // `cachedResult` takes precedence over live state via the ?? operator.
-  // When a history entry is selected, the cached SPARQL/rows are displayed even
-  // though state.status may still be 'idle' or 'done' from the previous query.
+  // ── Chip click: submit example question right away ──────────────────────
+  const handleChipClick = (question: string) => {
+    const provider = lastMeta?.provider ?? providers[0]?.id ?? ''
+    const model    = lastMeta?.model    ?? providers[0]?.models[0] ?? ''
+    setPrefillQuestion(question)
+    handleSubmit(question, provider, model)
+  }
 
+  // ── Dual display path ───────────────────────────────────────────────────
   const sparqlToShow =
     cachedResult?.sparql ??
     (state.status === 'streaming' || state.status === 'done'
       ? state.sparql
       : state.status === 'error'
-      ? state.sparql // may be undefined if the error fired before any SPARQL arrived
+      ? state.sparql
       : undefined)
 
   const showSparqlPanel = Boolean(sparqlToShow || state.status === 'streaming')
@@ -183,113 +176,224 @@ export default function App() {
     ? { inputTokens: liveResult.inputTokens,   outputTokens: liveResult.outputTokens,   retries: liveResult.retries }
     : null
 
+  // Provider·model label shown in topbar
+  const activeProvider = lastMeta
+    ? `${lastMeta.provider} · ${lastMeta.model}`
+    : providers[0]
+    ? `${providers[0].id} · ${providers[0].models[0] ?? ''}`
+    : ''
+
+  const queryIsActive = state.status !== 'idle' || cachedResult !== null
+
   return (
     <div className="app-frame">
 
-      {/* ── History overlay: clicking the backdrop closes it ── */}
+      {/* ── Left rail ── */}
+      <aside className="app-rail" aria-label="Πλαϊνή γραμμή">
+        <div className="rail-logo" aria-hidden="true">e</div>
+        <button
+          className={`rail-btn${view === 'query' ? ' active' : ''}`}
+          onClick={() => setView('query')}
+          title={t.tabQuery}
+          aria-label={t.tabQuery}
+          aria-current={view === 'query' ? 'page' : undefined}
+        >
+          { /* query icon */ }
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 15, fontWeight: 600 }}>{ '{}' }</span>
+        </button>
+        <button
+          className={`rail-btn${view === 'ontology' ? ' active' : ''}`}
+          onClick={() => setView('ontology')}
+          title={t.tabOntology}
+          aria-label={t.tabOntology}
+          aria-current={view === 'ontology' ? 'page' : undefined}
+        >
+          {/* ontology icon */}
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600 }}>◈</span>
+        </button>
+        <button
+          className={`rail-btn${historyOpen ? ' active' : ''}`}
+          onClick={() => setHistoryOpen(p => !p)}
+          title={t.tabHistory}
+          aria-label={t.tabHistory}
+          aria-expanded={historyOpen}
+        >
+          {/* history icon */}
+          <span style={{ fontSize: 16 }}>⊙</span>
+        </button>
+        {/* Theme toggle at the bottom */}
+        <button
+          className="rail-btn bottom"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? t.switchToLight : t.switchToDark}
+          aria-label={theme === 'dark' ? t.switchToLight : t.switchToDark}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
+      </aside>
+
+      {/* ── History drawer overlay ── */}
       <div
         className={`sidebar-overlay${historyOpen ? ' open' : ''}`}
         onClick={() => setHistoryOpen(false)}
+        aria-modal={historyOpen}
+        role={historyOpen ? 'dialog' : undefined}
+        aria-label="Ιστορικό ερωτημάτων"
       >
-        {/* stopPropagation prevents the panel click from bubbling to the backdrop. */}
         <div className="sidebar-overlay-panel" onClick={e => e.stopPropagation()}>
           <HistorySidebar
             entries={entries}
             activeId={activeHistoryId}
             onSelect={handleHistorySelect}
             onClear={clearHistory}
+            onClose={() => setHistoryOpen(false)}
           />
         </div>
       </div>
 
-      {/* ── Main content column ── */}
-      <main className="app-main">
+      {/* ── Main column ── */}
+      <div className="app-main">
 
-        {/* ── Header ── */}
+        {/* ── Topbar ── */}
         <header className="app-header">
           <div className="header-left">
-            <div className="header-title">
-              {t.title}{' '}
-              <span className="accent">{t.titleAccent}</span>
-              {/* Green pulsing square — purely decorative, so aria-hidden. */}
-              <span className="live-dot" aria-hidden="true" />
+            <div className="header-brand">
+              <span className="header-title">evdograph</span>
+              <span className="header-version">v0.1.0</span>
             </div>
-            <p className="header-subtitle">{t.subtitle}</p>
-          </div>
-          <div className="header-meta">
-            <span><span className="version">v0.1.0</span> · build {GIT_SHA}</span>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <nav className="header-tabs" aria-label="Κύρια πλοήγηση">
               <button
-                className="history-toggle"
+                className={`header-tab${view === 'query' ? ' active' : ''}`}
+                onClick={() => setView('query')}
+                aria-current={view === 'query' ? 'page' : undefined}
+              >
+                {t.tabQuery}
+              </button>
+              <button
+                className={`header-tab${view === 'ontology' ? ' active' : ''}`}
+                onClick={() => setView('ontology')}
+                aria-current={view === 'ontology' ? 'page' : undefined}
+              >
+                {t.tabOntology}
+              </button>
+              <button
+                className={`header-tab${historyOpen ? ' active' : ''}`}
                 onClick={() => setHistoryOpen(p => !p)}
-                aria-label="Ιστορικό ερωτημάτων"
+                aria-expanded={historyOpen}
               >
-                {t.historyMobileToggle(entries.length)}
+                {t.tabHistory}
+                {entries.length > 0 && (
+                  <span className="tab-badge">{entries.length}</span>
+                )}
               </button>
-              <button
-                className="theme-toggle"
-                onClick={toggleTheme}
-                aria-label={theme === 'dark' ? t.switchToLight : t.switchToDark}
-              >
-                {theme === 'dark' ? '☀ light' : '☾ dark'}
-              </button>
+            </nav>
+          </div>
+
+          <div className="header-meta">
+            {activeProvider && (
+              <span className="header-provider">{activeProvider}</span>
+            )}
+            <div className="header-graphdb">
+              <span className="live-dot" aria-hidden="true" />
+              {t.graphdbConnected}
             </div>
+            <button
+              className="theme-toggle"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? t.switchToLight : t.switchToDark}
+            >
+              {theme === 'dark' ? '☀' : '☾'}
+            </button>
           </div>
         </header>
 
-        {/* ── Search form ── */}
-        <QueryForm
-          providers={providers}
-          disabled={state.status === 'streaming'}
-          onSubmit={handleSubmit}
-          prefillQuestion={prefillQuestion}
-          showClear={state.status !== 'idle' || cachedResult !== null}
-          onClear={handleClear}
-        />
+        {/* ── ΟΝΤΟΛΟΓΙΑ view ── */}
+        {view === 'ontology' && <OntologyPage />}
 
-        {/* ── SPARQL panel ──
-            key={submissionCount} force-remounts the panel on each new query so its
-            internal `collapsed` state resets cleanly without any prop-drilling. */}
-        {showSparqlPanel && (
-          <SparqlPanel
-            key={submissionCount}
-            sparql={sparqlToShow ?? ''}
-            // Suppress the token cursor and "generating…" label during a rerun —
-            // the LLM is not running, only GraphDB is. The `executing` prop still
-            // fires the GraphDB progress bar via the RERUN_START → executing:true flag.
-            streaming={state.status === 'streaming' && !state.rerun}
-            executing={state.status === 'streaming' && !!state.executing}
-            onRerun={handleRerun}
-          />
+        {/* ── ΕΡΩΤΗΜΑ view ── */}
+        {view === 'query' && (
+          <>
+            {/* ── Hero ── */}
+            <section className="hero" aria-label="Αναζήτηση">
+              <p className="hero-eyebrow" aria-hidden="true">{t.heroEyebrow}</p>
+              <h1 className="hero-title">{t.heroTitle}</h1>
+
+              <QueryForm
+                providers={providers}
+                disabled={state.status === 'streaming'}
+                onSubmit={handleSubmit}
+                prefillQuestion={prefillQuestion}
+                showClear={queryIsActive}
+                onClear={handleClear}
+                gitSha={GIT_SHA}
+              />
+
+              <div className="hero-chips" role="list" aria-label={t.heroTryLabel}>
+                <span className="hero-chips-label">{t.heroTryLabel}</span>
+                {t.heroChips.map(chip => (
+                  <button
+                    key={chip}
+                    className="hero-chip"
+                    role="listitem"
+                    onClick={() => handleChipClick(chip)}
+                    type="button"
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* ── Content area ── */}
+            <div className="content-wrap">
+
+              {/* Question echo */}
+              {queryIsActive && currentQuestion && (
+                <div className="question-echo">
+                  <span className="question-echo-label">{t.questionEchoLabel}</span>
+                  <span className="question-echo-text">«{currentQuestion}»</span>
+                </div>
+              )}
+
+              {/* SPARQL panel — key remounts on each new query to reset collapsed state */}
+              {showSparqlPanel && (
+                <SparqlPanel
+                  key={submissionCount}
+                  sparql={sparqlToShow ?? ''}
+                  streaming={state.status === 'streaming' && !state.rerun}
+                  executing={state.status === 'streaming' && !!state.executing}
+                  onRerun={handleRerun}
+                />
+              )}
+
+              {/* Results table (live or cached) */}
+              {displayColumns && displayRows && displayTokenInfo && (
+                <ResultsTable
+                  columns={displayColumns}
+                  rows={displayRows}
+                  inputTokens={displayTokenInfo.inputTokens}
+                  outputTokens={displayTokenInfo.outputTokens}
+                  retries={displayTokenInfo.retries}
+                  isCached={!!cachedResult}
+                  onExampleSelect={(question: string) => {
+                    const provider = lastMeta?.provider ?? providers[0]?.id ?? ''
+                    const model    = lastMeta?.model    ?? providers[0]?.models[0] ?? ''
+                    setPrefillQuestion(question)
+                    handleSubmit(question, provider, model)
+                  }}
+                />
+              )}
+
+              {/* Error banner — suppressed when showing a cached history entry */}
+              {!cachedResult && state.status === 'error' && (
+                <ErrorBanner message={state.message} onDismiss={dismissError} />
+              )}
+
+            </div>
+          </>
         )}
 
-        {/* ── Results table (live or cached) ── */}
-        {displayColumns && displayRows && displayTokenInfo && (
-          <ResultsTable
-            columns={displayColumns}
-            rows={displayRows}
-            inputTokens={displayTokenInfo.inputTokens}
-            outputTokens={displayTokenInfo.outputTokens}
-            retries={displayTokenInfo.retries}
-            isCached={!!cachedResult}
-            onExampleSelect={(question: string) => {
-              // Reuse the last-used model; fall back to the first available.
-              const provider = lastMeta?.provider ?? providers[0]?.id ?? ''
-              const model    = lastMeta?.model    ?? providers[0]?.models[0] ?? ''
-              setPrefillQuestion(question)
-              handleSubmit(question, provider, model)
-            }}
-          />
-        )}
-
-        {/* ── Error banner ──
-            Suppressed when showing a cached history entry so the old error
-            from the live query doesn't bleed through. */}
-        {!cachedResult && state.status === 'error' && (
-          <ErrorBanner message={state.message} onDismiss={dismissError} />
-        )}
-
-      </main>
+      </div>
     </div>
   )
 }

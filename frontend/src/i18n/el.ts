@@ -20,6 +20,37 @@ export const t = {
   switchToLight: 'Εναλλαγή σε φωτεινό θέμα',
   switchToDark:  'Εναλλαγή σε σκοτεινό θέμα',
 
+  /* ── Console layout — topbar tabs ────────────────────────────────────── */
+  tabQuery:    'ΕΡΩΤΗΜΑ',
+  tabOntology: 'ΟΝΤΟΛΟΓΙΑ',
+  tabHistory:  'ΙΣΤΟΡΙΚΟ',
+
+  /* ── Hero section ────────────────────────────────────────────────────── */
+  heroEyebrow: 'ΦΥΣΙΚΗ ΓΛΩΣΣΑ · SPARQL · ΑΠΟΤΕΛΕΣΜΑΤΑ',
+  heroTitle:   'Τι θέλετε να μάθετε;',
+  heroTryLabel: 'δοκιμάστε',
+  heroChips: [
+    'Πανεπιστήμια στην Ελλάδα',
+    'Βιβλία στο ΑΠΘ',
+    'Μαθήματα Πληροφορικής',
+    'Συγγραφείς Φυσικής',
+  ],
+
+  /* ── Question echo (above SPARQL panel) ──────────────────────────────── */
+  questionEchoLabel: 'ΕΡΩΤΗΣΗ',
+
+  /* ── SPARQL terminal chrome ──────────────────────────────────────────── */
+  sparqlFilename: 'query.sparql',
+  sparqlReady:    'έτοιμο',
+
+  /* ── Status bar ──────────────────────────────────────────────────────── */
+  graphdbConnected: 'graphdb συνδεδεμένο',
+
+  /* ── History drawer filter chips ─────────────────────────────────────── */
+  historyFilterAll:     'όλα',
+  historyFilterSuccess: 'επιτυχία',
+  historyFilterError:   'σφάλμα',
+
   /* ── Query form ──────────────────────────────────────────────────────── */
   searchPlaceholder: 'Ρωτήστε για βιβλία, πανεπιστήμια, μαθήματα...',
   searchButton:      'ΑΝΑΖΗΤΗΣΗ →',
@@ -81,6 +112,56 @@ export const t = {
     'Βιβλία που χρησιμοποιούνται στο ΑΠΘ',
     'Μαθήματα Πληροφορικής στο ΑΠΘ',
   ],
+
+  /* ── Ontology page ──────────────────────────────────────────────────── */
+  ontologyEyebrow:     'ΓΝΩΣΙΑΚΟΣ ΓΡΑΦΟΣ',
+  ontologyTitle:       'Η δομή του EvdoGraph',
+  ontologyLead:        'Πώς οργανώνονται τα δεδομένα των ελληνικών πανεπιστημιακών συγγραμμάτων — οι κλάσεις, οι ιδιότητες και οι σχέσεις που συνδέουν πανεπιστήμια, μαθήματα και βιβλία.',
+  ontologyStatClasses: (n: number): string => `${n} κλάσεις`,
+  ontologyStatRels:    (n: number): string => `${n} σχέσεις`,
+  ontologyStatEntities:(n: string): string => `${n} οντότητες`,
+  ontologyStatBooks:   (n: string): string => `${n} βιβλία`,
+
+  ontologySectionDiagram:  'Διάγραμμα σχήματος',
+  ontologySectionClasses:  'Κλάσεις',
+  ontologySectionRels:     'Σχέσεις',
+  ontologySectionEntities: 'Οντότητες',
+
+  ontologyDiagramCaption: (snapshot: string): string => `στιγμιότυπο ${snapshot}`,
+  ontologyDiagramLegend1: 'σχέση (με αντίστροφη)',
+  ontologyDiagramLegend2: 'πλαίσιο = υπερκλάση',
+  ontologyDiagramLegend3: 'count = πλήθος στιγμιοτύπων',
+
+  ontologyRelFrom:    'Από',
+  ontologyRelProp:    'Σχέση',
+  ontologyRelTo:      'Προς',
+  ontologyRelInverse: 'Αντίστροφη',
+
+  ontologySpotUniTitle: 'Πανεπιστήμια',
+  ontologySpotUniSub:   (n: number, total: number): string =>
+    `${n} με καταχωρημένο όνομα · ${total} συνολικά`,
+  ontologySpotDeptTitle: 'Τμήματα',
+  ontologySpotDeptSub:   (n: number): string => `${n} μοναδικά ονόματα`,
+  ontologySpotBookTitle: 'Βιβλίο — δείγμα',
+  ontologySpotBookSub:   (n: string): string => `από ${n}`,
+  ontologySpotCourseTitle: 'Μαθήματα',
+  ontologySpotCourseSub:   (n: number, total: number): string =>
+    `${n} με καταχωρημένο όνομα · ${total} συνολικά`,
+
+  ontologySearchPlaceholder: 'φιλτράρισμα…',
+  ontologyShowMore: (n: number): string => `+ ${n} ακόμη`,
+  ontologySeeAll: (n: number): string => `δείτε όλα (${n})`,
+  ontologyModalClose: 'κλείσιμο',
+  ontologyModalResults: (n: number): string => `${n} αποτελέσματα`,
+  ontologyBookModalTitle: 'Βιβλία — δείγματα',
+  ontologyBookExampleBtn: 'δείτε παράδειγμα',
+  ontologyExampleTitle: (cls: string): string => `Παράδειγμα οντότητας ${cls}`,
+  ontologyDeptSharedNote: (n: number): string => `${n} ιδρύματα`,
+  ontologyBookCode: 'κωδικός',
+  ontologyBookAuthors: 'συγγραφείς',
+  ontologyBookIsbn: 'isbn',
+  ontologyBookKeywords: 'λέξεις-κλειδιά',
+  ontologyBookPublisher: 'εκδότης',
 
   /* ── Error banner ────────────────────────────────────────────────────── */
   errorPrefix:      '// σφάλμα:',

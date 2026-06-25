@@ -113,12 +113,15 @@ export function ResultsTable({
     <div className="panel">
       {/* ── Results header: row count, token usage, action buttons ── */}
       <div className="results-head">
-        <div className="results-meta">
-          <span className="results-count">{rows.length}{" " + t.resultsLabel}</span>
-          {' ' + inputTokens} in · {outputTokens} out tokens
-          {retries > 0 && ` · ${retries} retries`}
+        <div className="results-meta-group">
+          <span className="results-count">{rows.length}</span>
+          <span className="results-label-text">{t.resultsLabel}</span>
+          <span className="results-meta">
+            {inputTokens}/{outputTokens} tokens
+            {retries > 0 && ` · ${retries} retries`}
+          </span>
           {isCached && (
-            <span className="cached-badge" style={{ marginLeft: 8 }}>{t.cachedBadge}</span>
+            <span className="cached-badge">{t.cachedBadge}</span>
           )}
         </div>
 
