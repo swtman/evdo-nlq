@@ -36,6 +36,8 @@ class TestLoadExamples:
     def test_query_shape_values(self) -> None:
         valid = {
             "traversal-lookup",
+            "book-course-flat-join",
+            "book-course-group-concat",
             "multi-level-count",
             "multi-level-aggregate-with-concat",
             "set-difference-by-year",

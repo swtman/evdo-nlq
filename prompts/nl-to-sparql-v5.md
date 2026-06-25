@@ -69,16 +69,21 @@ Your task: given a user question in Greek or English, produce a single valid SPA
       FILTER NOT EXISTS { ?c1 evdx:hasBook ?b1 . ?b1 evdx:hasCode "X" . ?d1 evdx:hasCourse ?c1 . ?u evdx:hasDepartment ?d1 . }
       ```
 14. The 2026-06-11 schema added book/publisher/professor metadata that was previously absent. Questions about a book's **author(s)** (`evdx:authors`), **ISBN** (`evdx:isbn`), **publisher** (`evdx:hasPublisher`/`evdx:publisherName`), **edition** (`evdx:edition`), **publication year** (`evdx:publicationYear`), or **topic/subject** (`evdx:keyword`) ARE answerable — do not emit `NOT_ANSWERABLE` for these. Likewise, `evdx:professors` on a course gives the teaching professor(s) — "who teaches X" IS answerable. Student enrollment and grades remain genuinely absent (still `NOT_ANSWERABLE`).
-15. `evdx:hasCode` (the Eudoxus book code) is **`xsd:integer`**, not a string. Write book codes as bare numbers, never quoted: `VALUES ?code {94700120}`, not `VALUES ?code {"94700120"}`. A quoted string is a different RDF term and will silently match zero triples. The same applies to `evdx:year` and `evdx:publicationYear` (also `xsd:integer`) — use `?c evdx:year 2022` / `FILTER (?year >= 2019)`, never quoted.
+15. `evdx:hasCode` (the Eudoxus book code) is **`xsd:integer`**, not a string. Write book codes as bare numbers, never quoted: `VALUES ?code {94700120}`, not `VALUES ?code {"94700120"}`. A quoted string is a different RDF term and will silently match zero triples. The same applies to `evdx:year` and `evdx:publicationYear` (also `xsd:integer`) and `evdx:semester` — use `?c evdx:year 2022` / `FILTER (?year >= 2019)` / `?c evdx:semester 1` , never quoted.
 16. When a **"Resolved entities & terms"** block appears above the Rules section, use the hints it provides:
+    - Apply a topic/subject text filter to the label property of the entity the user attributes the topic to — not to a different entity that merely appears elsewhere in the query path. Identify the entity the topic describes from the noun it modifies ("books about X" → the book; "courses about X" → the course), then filter that entity's own evdx:title/evdx:name (and evdx:keyword where it exists). Do not OR the filter across an unrelated entity in the path.
     - **Entities**: use the exact canonical label string from the bullet point as a **literal** in a triple pattern or FILTER. Example: if the hint says `- [University] ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ`, write `?u evdx:name "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" .` (or `FILTER(?un = "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ")`). Never guess or abbreviate the label.
+    - **Resolved title(s)**: when the block contains a `**Resolved title(s)**` section, the grounding module has confirmed those strings are real KG title literals. Bind `evdx:title` with `VALUES` using **all** listed surface forms — do **not** use `CONTAINS` for this entity. Example: if the hints list `- "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ"` and `- "Αρχιτεκτονική Υπολογιστών"`, write:
+      ```sparql
+      VALUES ?courseTitle { "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ" "Αρχιτεκτονική Υπολογιστών" }
+      ?course evdx:title ?courseTitle .
+      ```
     - **Topic stems**: use the stem in a `CONTAINS(LCASE(?var), "stem")` pattern on `evdx:title`. When the hint shows two variants separated by `|` (e.g. `αλγορ | αλγόρ`), the KG stores some titles accent-free (ALL-CAPS) and some with accents (mixed-case); SPARQL `LCASE()` strips case but not accents, so use both with `||`: `FILTER(CONTAINS(LCASE(?bt), "αλγορ") || CONTAINS(LCASE(?bt), "αλγόρ"))`.
     - Prefer matching on `evdx:title` for books and `evdx:name` for entities; add `evdx:keyword` as an OPTIONAL match for topic stems when relevant.
     - When no such block appears (or the block is empty), fall back to Rules 1–15 and your best judgment.
+  17. Use self-explanatory variable names in the query (e.g. `?bookTitle` for book title, `?universityName` for university name, `?departmentName` for department name, `?course` for course, etc.). Avoid generic names like `?bt`, `?ut`, or `?dt`.
 
-## Examples
 
-{few_shot_block}
 
 # Notes
 

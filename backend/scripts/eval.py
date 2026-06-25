@@ -51,10 +51,10 @@ names are tolerated; wrong column ordering is not.
 
 Usage (from backend/):
     uv run python scripts/eval.py --prompt-version 1 --provider fake --language english
-    uv run python scripts/eval.py --prompt-version 2 --provider claude --model claude-haiku-4-5 --language both
+    uv run python scripts/eval.py --prompt-version 4 --provider claude --model claude-haiku-4-5 --language both
 
 Options:
-    --prompt-version  1 or 2 (default: 2)
+    --prompt-version  1-4 (default: 4 — the active production prompt)
     --provider        claude | gemini | fake (default: claude)
     --model           model name (default: claude-haiku-4-5)
     --language        greek | english | both (default: both)
@@ -991,7 +991,7 @@ def main() -> None:
     edited version.
     """
     parser = argparse.ArgumentParser(description="Eval harness for NL->SPARQL.")
-    parser.add_argument("--prompt-version", type=int, default=3, choices=[1, 2, 3, 4])
+    parser.add_argument("--prompt-version", type=int, default=4, choices=[1, 2, 3, 4])
     parser.add_argument("--provider", default="claude", choices=["claude", "gemini", "fake"])
     parser.add_argument("--model", default="claude-haiku-4-5")
     parser.add_argument(

@@ -22,10 +22,15 @@ _cache: list[dict[str, Any]] | None = None
 
 # Shape priority order for few-shot selection (lower = higher priority).
 # Derived from few_shot_priority field in examples.yaml; kept here as a fallback.
-# alias-resolution and topic-stem-match are placed early so they are included at
-# k=6 and teach the grounding patterns (Rule 16 in nl-to-sparql-v5.md).
+# The first 8 shapes are included at k=8 (the pipeline default). Ordering rationale:
+#   1-2: core traversal patterns (single-projection then multi-projection flat join)
+#   3-4: grounding patterns (Rule 16 alias + stem)
+#   5-6: negative-existence + not-answerable (structural guards)
+#   7-8: aggregation and set-difference (complex patterns)
 _SHAPE_ORDER = [
     "traversal-lookup",
+    "book-course-flat-join",
+    "book-course-group-concat",
     "alias-resolution",
     "topic-stem-match",
     "negative-existence",

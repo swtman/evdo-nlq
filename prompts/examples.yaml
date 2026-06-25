@@ -39,10 +39,10 @@
 # decisions/014-ontology-v2-migration.md Follow-ups for the full story.
 #
 # Schema reference: decisions/005-eval-methodology.md
-# query_shape values: traversal-lookup | multi-level-count | multi-level-aggregate-with-concat |
-#   set-difference-by-year | set-difference-by-book | set-intersection-by-book |
-#   negative-existence | ranking-by-count | multi-book-comparison | not-answerable |
-#   alias-resolution | topic-stem-match
+# query_shape values: traversal-lookup | book-course-flat-join | book-course-group-concat |
+#   multi-level-count | multi-level-aggregate-with-concat | set-difference-by-year |
+#   set-difference-by-book | set-intersection-by-book | negative-existence | ranking-by-count |
+#   multi-book-comparison | not-answerable | alias-resolution | topic-stem-match
 # comparison_mode values: set | ordered | scalar | not-answerable
 # skip_eval: true → example excluded from eval metrics (e.g. known GraphDB heap crash)
 
@@ -969,6 +969,114 @@ examples:
     skip_eval: true
     few_shot_priority: 22
     notes: >
-      Demonstrates Rule 16: using a truncated stem ("αλγορ") passed via 
-      {grounding_hints} within a CONTAINS(LCASE(...)) filter on both 
+      Demonstrates Rule 16: using a truncated stem ("αλγορ") passed via
+      {grounding_hints} within a CONTAINS(LCASE(...)) filter on both
       evdx:title and the new evdx:keyword property.
+
+  # ---------------------------------------------------------------------------
+  # Q25 — book-course-flat-join (books AND courses, topic stem + university)
+  # ---------------------------------------------------------------------------
+  - id: ex-025
+    source: "handwritten (flat-join pattern for 'which books AND which courses')"
+    question_english: >
+      Which books on religious topics are recommended by the University of
+      Piraeus in 2022, and in which courses are they assigned?
+    question_greek: "Ποια βιβλία σχετικά με θρησκευτικά θέματα και σε ποια μαθήματα προτείνονται από το Πανεπιστήμιο Πειραιώς το 2022;"
+    gold_sparql: |
+        PREFIX evdx: <https://w3id.org/evdoxus#>
+
+        SELECT ?bt ?kw (GROUP_CONCAT(DISTINCT ?ct; separator=", ") AS ?allCourses)
+        WHERE {
+          # 1. START HERE: Find the single specific university (Highly Restrictive)
+          ?u a evdx:University .
+          ?u evdx:name "ΟΙΚΟΝΟΜΙΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ" .
+          
+          # 2. Get its departments and its 2022 courses
+          ?u evdx:hasDepartment ?d .
+          ?d a evdx:Department .
+          ?d evdx:hasCourse ?filterCourse .
+          
+          ?filterCourse a evdx:Course .
+          ?filterCourse evdx:year 2022 .
+          ?filterCourse evdx:hasBook ?b .  # Now ?b is a very small pool of books
+          
+          # 3. Apply the text filter ONLY to this tiny pool of books
+          ?b a evdx:Book .
+          ?b evdx:title ?bt .
+          FILTER(CONTAINS(LCASE(?bt), "θρησκ") || CONTAINS(LCASE(?bt), "θρήσκ"))
+          
+          # 4. Find all global courses for these specific filtered books
+          ?c a evdx:Course .
+          ?c evdx:hasBook ?b .
+          ?c evdx:title ?ct .
+          
+          # 5. Bring in the keywords last, only for the books that survived the filter
+          OPTIONAL {
+            ?b evdx:keyword ?kw .
+            FILTER(CONTAINS(LCASE(?kw), "θρησκ") || CONTAINS(LCASE(?kw), "θρήσκ"))
+          }
+        }
+        GROUP BY ?b ?bt ?kw
+        ORDER BY ?bt
+    query_shape: book-course-flat-join
+    granularity: book
+    comparison_mode: set
+    skip_eval: true
+    few_shot_priority: 23
+    notes: >
+      Demonstrates Rule 17: when the user asks for BOTH books AND courses
+      ("ποια βιβλία ... και σε ποια μαθήματα"), include both ?bt and ?ct in
+      SELECT DISTINCT. The result has one row per (book, course) pair — a book
+      assigned to three courses produces three rows. Do NOT put ?ct only in
+      WHERE (that collapses all course offerings into one row per book). Also
+      demonstrates the two-variant stem hint from Rule 16: θρησκ | θρήσκ
+      covers ALL-CAPS accent-free and mixed-case accented KG titles.
+
+  # ---------------------------------------------------------------------------
+  # Q26 — book-course-group-concat (one row per book, all courses concatenated)
+  # ---------------------------------------------------------------------------
+  - id: ex-026
+    source: "handwritten (GROUP_CONCAT pattern for 'which books and which courses use them')"
+    question_english: >
+      Which books on religious topics are recommended by the University of
+      Piraeus in 2022? Show each book once with all its courses listed.
+    question_greek: "Ποια βιβλία σχετικά με θρησκευτικά θέματα προτείνει το Πανεπιστήμιο Πειραιώς το 2022; Εμφάνισε κάθε βιβλίο μία φορά με όλα τα μαθήματά του."
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      # Grounding hints: [University] ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ
+      # Topic stem: θρησκ | θρήσκ  (ALL-CAPS accent-free + mixed-case accented titles)
+      SELECT ?bt (GROUP_CONCAT(?ct; SEPARATOR=", ") AS ?Courses)
+      WHERE {
+        ?c evdx:title ?ct .
+        {
+          SELECT DISTINCT ?b ?bt ?c
+          WHERE {
+            ?b a evdx:Book .
+            ?b evdx:title ?bt .
+            FILTER(CONTAINS(LCASE(?bt), "θρησκ") || CONTAINS(LCASE(?bt), "θρήσκ"))
+            ?c a evdx:Course .
+            ?c evdx:hasBook ?b .
+            ?c evdx:year 2022 .
+            ?d a evdx:Department .
+            ?d evdx:hasCourse ?c .
+            ?u a evdx:University .
+            ?u evdx:hasDepartment ?d .
+            ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ" .
+          }
+        }
+      }
+      GROUP BY ?b ?bt
+      ORDER BY ?bt
+    query_shape: book-course-group-concat
+    granularity: book
+    comparison_mode: set
+    skip_eval: true
+    few_shot_priority: 24
+    notes: >
+      Demonstrates Rule 17: when the user wants each book shown ONCE with all
+      its courses in one cell, use GROUP BY ?b ?bt with GROUP_CONCAT(?ct).
+      GROUP BY must include both ?b (URI) and ?bt (title) — grouping only by
+      ?bt collapses books with identical titles. Follows Rule 11: ?c is
+      deduped via the inner SELECT DISTINCT ?b ?bt ?c, then the outer WHERE
+      binds ?ct via ?c evdx:title ?ct. Compare with ex-025 (flat join) which
+      produces one row per (book, course) pair instead.

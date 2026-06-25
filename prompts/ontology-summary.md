@@ -1,7 +1,7 @@
 PREFIX evdx: <https://w3id.org/evdoxus#>
 
 Main classes:
-- evdx:University   — a Greek university (125 instances)
+- evdx:University   — a Greek university (46 unique instances)
 - evdx:Department   — a department within a university (743); linked via evdx:hasDepartment
 - evdx:Course       — a single course offering in a given year/semester (680,231); linked to dept via evdx:hasCourse
 - evdx:Book         — a textbook (48,679); linked to course via evdx:hasBook
