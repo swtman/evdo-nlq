@@ -94,8 +94,18 @@ class Settings(BaseSettings):
     grounding_enabled : bool
         When True (default), the grounding module runs before each LLM call:
         it resolves entity aliases (e.g. "ΑΠΘ" → canonical evdx:name) and
-        computes Greek word stems, then injects the hints into the system prompt.                                                                                                             
+        computes Greek word stems, then injects the hints into the system prompt.
         Set to False (GROUNDING_ENABLED=0) for A/B baseline comparisons.
+    course_linking_enabled : bool
+        When True (default), the TF-IDF title ranker tries to resolve
+        multi-word course/book names from the question to exact KG title
+        literals before falling back to stem-CONTAINS hints.
+        Set to False (COURSE_LINKING_ENABLED=0) to disable and always use stems.
+    course_match_threshold : float
+        Minimum cosine similarity score (0..1) for a TF-IDF title match to be
+        accepted as a resolved title.  Matches below this threshold are discarded
+        and the pipeline falls back to stem-CONTAINS.  Default 0.7; tune
+        upward if false positives appear, downward if recall is too low.
     """
 
     llm_provider: str = Field(default="claude", alias="LLM_PROVIDER")
@@ -112,6 +122,8 @@ class Settings(BaseSettings):
     frontend_origin: str = Field(default="http://localhost:5173", alias="FRONTEND_ORIGIN")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     grounding_enabled: bool = Field(default=True, alias="GROUNDING_ENABLED")
+    course_linking_enabled: bool = Field(default=True, alias="COURSE_LINKING_ENABLED")
+    course_match_threshold: float = Field(default=0.7, alias="COURSE_MATCH_THRESHOLD")
 
     # `env_file` tells Pydantic to also look for values inside `.env` (not
     # just in the shell environment). `populate_by_name` allows using the

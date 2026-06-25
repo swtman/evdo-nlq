@@ -54,6 +54,16 @@ class _GazetteerData(TypedDict):
     departments: list[dict[str, str]]
     university_index: dict[str, list[str]]
     department_index: dict[str, list[dict[str, str]]]
+    courses: list[str]
+    """All distinct raw course title strings from the KG (evdx:Course evdx:title)."""
+    course_surface_map: dict[str, list[str]]
+    """Maps normalize_greek(title) → [raw surface form, ...].
+
+    The KG stores some titles ALL-CAPS accent-free ("ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ")
+    and others mixed-case accented ("Αρχιτεκτονική Υπολογιστών").  Grouping by
+    normalized key ensures the TF-IDF index matches on the accent-free query but
+    the VALUES clause can emit every actual KG string.
+    """
 
 # Path to the labels snapshot: 4 .parent calls walk from
 #   backend/app/grounding/gazetteer.py → backend/app/grounding/ → backend/app/
@@ -107,11 +117,13 @@ def _load() -> _GazetteerData:
     the raw university list and department pairs, and builds normalized lookup
     indices.  Every subsequent call skips I/O and returns the cached dict.
 
-    The returned dict has four keys:
-        ``universities``      – list[str], 46 distinct canonical labels
-        ``departments``       – list[dict[str, str]], 799 distinct pairs
-        ``university_index``  – dict[str, list[str]], normalized → [canonical_label, ...]
-        ``department_index``  – dict[str, list[dict]], normalized → [{university, department}, ...]
+    The returned dict has six keys:
+        ``universities``       – list[str], 46 distinct canonical labels
+        ``departments``        – list[dict[str, str]], 799 distinct pairs
+        ``university_index``   – dict[str, list[str]], normalized → [canonical_label, ...]
+        ``department_index``   – dict[str, list[dict]], normalized → [{university, department}, ...]
+        ``courses``            – list[str], all distinct raw course title strings
+        ``course_surface_map`` – dict[str, list[str]], normalized title → [surface forms]
 
     Returns
     -------
@@ -178,12 +190,39 @@ def _load() -> _GazetteerData:
         key = normalize_greek(dept["department"])
         department_index.setdefault(key, []).append(dept)
 
-    # --- 6. Populate cache and return -----------------------------------------
+    # --- 6. Load course titles ------------------------------------------------
+    # The "courses" key was added to grounding_labels.json in a later refresh.
+    # If the file predates the update it will be absent; return empty structures
+    # so the title ranker degrades gracefully (no resolved titles, stems still work).
+    raw_courses: list[str] = raw.get("courses", [])
+
+    # Deduplicate raw titles while preserving order.
+    seen_titles: set[str] = set()
+    courses: list[str] = []
+    for title in raw_courses:
+        if title not in seen_titles:
+            seen_titles.add(title)
+            courses.append(title)
+
+    # Build normalized → [surface forms] map.
+    # Multiple raw titles that normalize to the same string (e.g. "ΑΛΓΟΡΙΘΜΟΙ" and
+    # "Αλγόριθμοι" both normalize to "αλγοριθμοι") are grouped under one key.
+    # The TF-IDF index operates on the normalized keys; the VALUES clause in SPARQL
+    # emits all surface forms so both KG storage variants are matched.
+    course_surface_map: dict[str, list[str]] = {}
+    for title in courses:
+        key = normalize_greek(title)
+        if key:  # skip empty strings from normalize_greek (shouldn't happen, but guard)
+            course_surface_map.setdefault(key, []).append(title)
+
+    # --- 7. Populate cache and return -----------------------------------------
     _cache = {
         "universities": universities,
         "departments": departments,
         "university_index": university_index,
         "department_index": department_index,
+        "courses": courses,
+        "course_surface_map": course_surface_map,
     }
     return _cache
 
@@ -258,3 +297,48 @@ def get_department_index() -> dict[str, list[dict[str, str]]]:
         ``{"university": str, "department": str}`` dicts.
     """
     return _load()["department_index"]
+
+
+def get_courses() -> list[str]:
+    """Return the list of all distinct raw course title strings from EvdoGraph.
+
+    Titles are the raw ``evdx:title`` strings stored in the KG on ``evdx:Course``
+    nodes.  The KG stores some titles ALL-CAPS accent-free (e.g.
+    "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ") and others mixed-case accented (e.g.
+    "Αρχιτεκτονική Υπολογιστών") — both variants are included.
+
+    Returns an empty list if ``scripts/grounding_labels.json`` was generated
+    before the ``"courses"`` key was added.  Re-run ``scripts/dump_labels.py``
+    to populate the corpus.
+
+    Returns
+    -------
+    list[str]
+        All distinct raw course title strings, in the order they appear after
+        deduplication.  May be empty if the corpus has not been refreshed.
+    """
+    return _load()["courses"]
+
+
+def get_course_surface_map() -> dict[str, list[str]]:
+    """Return a mapping from normalized title to raw KG surface form(s).
+
+    The TF-IDF title index operates on normalized (accent-free, lowercase)
+    title strings.  When a query matches a normalized key, the VALUES clause
+    in the generated SPARQL should bind to every raw surface form stored in
+    the KG — this map provides those raw forms.
+
+    Example
+    -------
+    >>> m = get_course_surface_map()
+    >>> m.get("αρχιτεκτονικη υπολογιστων")
+    ["ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ", "Αρχιτεκτονική Υπολογιστών"]
+
+    Returns
+    -------
+    dict[str, list[str]]
+        Mapping from ``normalize_greek(title)`` to a list of raw title strings
+        that normalize to that key.  Empty dict if the corpus has not been
+        refreshed.
+    """
+    return _load()["course_surface_map"]

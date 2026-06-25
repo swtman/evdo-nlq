@@ -39,9 +39,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from app.config import settings
 from app.grounding.linker import ResolvedEntity, resolve_mention
 from app.grounding.normalize import normalize_greek
 from app.grounding.stem import greek_stem
+from app.grounding.title_index import TitleMatch, rank_titles
 
 # ---------------------------------------------------------------------------
 # Greek stopwords (normalized form — accent-free, lowercase, ς→σ)
@@ -60,8 +62,14 @@ _GREEK_STOPWORDS: frozenset[str] = frozenset({
     "ποιοσ", "ποια", "ποιο",
     # Common verbs
     "ειναι", "εχει", "εχουν", "ειχε", "εχω", "θελω",
-    # Question words
+    # Question words (all case forms so residual phrase stays clean for title ranking)
     "ποια", "ποιοσ", "ποιεσ", "ποιων", "ποσα", "ποτε", "που", "πωσ", "γιατι",
+    "ποιουσ",   # acc pl. masc. "ποιους" — e.g. "ποιους καθηγητές ..."
+    # Attribute/role nouns (what the user is ASKING for, not part of the title)
+    # Filtering these keeps the title-ranking phrase clean.
+    "καθηγητεσ", "καθηγητη", "καθηγητησ", "καθηγητεσ",  # professor (various cases)
+    "συγγραφεασ", "συγγραφεισ", "συγγραφεα",              # author
+    "εκδοτησ", "εκδοτεσ",                                  # publisher
     # Common domain nouns (too generic to be useful stems)
     "βιβλια", "βιβλιο", "μαθημα", "μαθηματα", "κουρσα", "κορσα",
     "τμημα", "πανεπιστημιο", "τεχνολογικο", "ιδρυμα",
@@ -410,8 +418,9 @@ def build_grounding_hints(question: str) -> str:
     #            name fragments form as bigrams (e.g. "πανεπιστημιο πειραια"
     #            scores 92.7 for ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ vs bare "πειραια" → ΤΕΙ).
     entity_tokens = _tokenize(question, _ENTITY_STOPWORDS)
-    # Step 1b — topic tokens: full stopword set so institution words never
-    #            produce spurious topic stems like "πανεπιστ".
+    # Step 1b — topic tokens: full stopword set (including attribute nouns like
+    #            "καθηγητεσ") so only genuine content words survive for title
+    #            ranking and stemming.
     topic_tokens = _tokenize(question)
 
     if not entity_tokens and not topic_tokens:
@@ -424,14 +433,36 @@ def build_grounding_hints(question: str) -> str:
     high_priority = frozenset({"acronym", "exact"})
     claimed = _tokens_used_by_entity(topic_tokens, entities, high_priority)
 
-    # Step 4 — stem unclaimed topic words.
+    # Step 4a — title ranking.
+    # Take the residual content words (unclaimed, non-stopword tokens) as the
+    # candidate phrase for a specific course/book title the user named.
+    # e.g. "αρχιτεκτονικη υπολογιστων" after "ΑΠΘ" is claimed and stopwords removed.
+    title_matches: list[TitleMatch] = []
+    if settings.course_linking_enabled:
+        residual_tokens = [t for i, t in enumerate(topic_tokens) if i not in claimed]
+        if residual_tokens:
+            phrase = " ".join(residual_tokens)
+            candidates = rank_titles(phrase, k=3)
+            # Apply acceptance threshold — below it the match is too uncertain;
+            # fall back to stem-CONTAINS for this query.
+            title_matches = [
+                m for m in candidates if m.score >= settings.course_match_threshold
+            ]
+
+    # Step 4b — if a title match fired, consume the residual tokens so they
+    # don't also produce stems.  The exact VALUES binding makes CONTAINS redundant.
+    if title_matches:
+        # All residual topic tokens are now covered by the title resolution.
+        claimed = frozenset(range(len(topic_tokens)))
+
+    # Step 5 — stem remaining unclaimed topic words (fallback when no title fired).
     stems = _collect_stems(topic_tokens, claimed)
 
-    # Step 5 — nothing found → bail out early.
-    if not entities and not stems:
+    # Step 6 — nothing found → bail out early.
+    if not entities and not title_matches and not stems:
         return ""
 
-    # Step 6 — format the output block.
+    # Step 7 — format the output block.
     lines: list[str] = ["## Resolved entities & terms", ""]
 
     if entities:
@@ -439,10 +470,21 @@ def build_grounding_hints(question: str) -> str:
         for entity in entities.values():
             lines.append(_format_entity_line(entity))
 
-    if entities and stems:
-        lines.append("")  # blank line between sections
+    if title_matches:
+        if entities:
+            lines.append("")  # blank line between entities and titles
+        lines.append(
+            "**Resolved title(s)** (the question names a specific course/book —"
+            " bind evdx:title to these exact literals with VALUES;"
+            " do NOT use CONTAINS for it):"
+        )
+        for match in title_matches:
+            for surface in match.surface_forms:
+                lines.append(f'- "{surface}"')
 
     if stems:
+        if entities or title_matches:
+            lines.append("")  # blank line before stems section
         lines.append(
             '**Topic stems** (use in CONTAINS(LCASE(?label), "stem");'
             " if two variants are shown separated by |, use both with ||):"
