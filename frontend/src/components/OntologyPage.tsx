@@ -21,11 +21,15 @@ import { EntityModal } from './EntityModal'
 
 // ── Section label with count badge ───────────────────────────────────────────
 
-function SectionLabel({ label, count }: { label: string; count?: number | string }) {
+// `count` is accepted (and passed by every call site) but its display is
+// currently paused — see the commented-out badge below. Prefixed with `_`
+// so the still-threaded prop doesn't trip noUnusedParameters; re-enable the
+// badge by uncommenting the JSX and dropping the underscore.
+function SectionLabel({ label, count: _count }: { label: string; count?: number | string }) {
   return (
     <div className="od-section-label" aria-hidden="true">
       <span>{label}</span>
-      {/* {count !== undefined && <span className="od-section-count">{count}</span>} */}
+      {/* {_count !== undefined && <span className="od-section-count">{_count}</span>} */}
     </div>
   )
 }

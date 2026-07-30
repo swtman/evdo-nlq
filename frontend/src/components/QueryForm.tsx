@@ -12,7 +12,11 @@ type Props = {
   /** Show the clear button whenever results or a cached view are present. */
   showClear?: boolean
   onClear?: () => void
-  /** Build SHA displayed in the header area next to provider selects. */
+  /** Build SHA displayed in the header area next to provider selects.
+   *  Currently unused — the badge that read it is commented out in App.tsx
+   *  (search for `gitSha={GIT_SHA}`). Still accepted here so re-enabling
+   *  that badge is a one-line change; underscored to satisfy
+   *  noUnusedParameters in the meantime. */
   gitSha?: string
 }
 
@@ -26,7 +30,7 @@ type Props = {
  * The textarea auto-grows vertically as the user types so the full question
  * stays visible. Enter submits; Shift+Enter inserts a newline.
  */
-export function QueryForm({ providers, disabled, onSubmit, prefillQuestion, showClear, onClear, gitSha }: Props) {
+export function QueryForm({ providers, disabled, onSubmit, prefillQuestion, showClear, onClear, gitSha: _gitSha }: Props) {
   const [question, setQuestion] = useState('')
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel] = useState('')

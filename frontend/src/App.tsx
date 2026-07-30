@@ -43,7 +43,9 @@ function getInitialTheme(): Theme {
   return 'light'
 }
 
-const GIT_SHA = (import.meta.env.VITE_GIT_SHA as string | undefined)?.slice(0, 7) ?? 'dev'
+// Build-SHA badge (fed into QueryForm's commented-out `gitSha` prop below) is
+// currently paused. Re-add `const GIT_SHA = (import.meta.env.VITE_GIT_SHA as
+// string | undefined)?.slice(0, 7) ?? 'dev'` here if that badge is reactivated.
 
 export default function App() {
   const { state, providers, submit, rerunSparql, dismissError, clear } = useQueryStream()
@@ -176,12 +178,10 @@ export default function App() {
     ? { inputTokens: liveResult.inputTokens,   outputTokens: liveResult.outputTokens,   retries: liveResult.retries }
     : null
 
-  // Provider·model label shown in topbar
-  const activeProvider = lastMeta
-    ? `${lastMeta.provider} · ${lastMeta.model}`
-    : providers[0]
-    ? `${providers[0].id} · ${providers[0].models[0] ?? ''}`
-    : ''
+  // Provider·model label for the topbar (`.header-provider` chip below) is
+  // currently commented out — its display was paused, not removed. Re-derive
+  // it from `lastMeta` here if that chip is reactivated; see the commented
+  // JSX a few dozen lines down for exactly what it fed.
 
   const queryIsActive = state.status !== 'idle' || cachedResult !== null
 
