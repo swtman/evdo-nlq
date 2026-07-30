@@ -97,15 +97,26 @@ class Settings(BaseSettings):
         computes Greek word stems, then injects the hints into the system prompt.
         Set to False (GROUNDING_ENABLED=0) for A/B baseline comparisons.
     course_linking_enabled : bool
-        When True (default), the TF-IDF title ranker tries to resolve
-        multi-word course/book names from the question to exact KG title
-        literals before falling back to stem-CONTAINS hints.
+        When True (default), the FTS5 + rapidfuzz (token_sort_ratio) title
+        ranker tries to resolve multi-word course names from the question to
+        exact KG title literals before falling back to stem-CONTAINS hints.
         Set to False (COURSE_LINKING_ENABLED=0) to disable and always use stems.
     course_match_threshold : float
-        Minimum cosine similarity score (0..1) for a TF-IDF title match to be
-        accepted as a resolved title.  Matches below this threshold are discarded
-        and the pipeline falls back to stem-CONTAINS.  Default 0.7; tune
-        upward if false positives appear, downward if recall is too low.
+        Minimum rapidfuzz token_sort_ratio similarity (0..1 — the value in
+        TitleMatch.score) for a course title match to be accepted as a
+        resolved title.  Matches below this threshold are discarded and the
+        pipeline falls back to stem-CONTAINS.  Default 0.7; tune upward if
+        false positives appear, downward if recall is too low.
+    book_linking_enabled : bool
+        Same as course_linking_enabled, but for book titles. Separate flag
+        (not shared with course_linking_enabled) so either corpus can be
+        disabled independently for an A/B comparison.
+    book_match_threshold : float
+        Same as course_match_threshold, but for book titles. Kept as its own
+        setting (not shared with course_match_threshold) because book titles
+        commonly carry subtitles and edition markers that course titles
+        don't, which can pull token_sort_ratio scores down for a genuine
+        match — the two corpora may end up needing different tuning.
     """
 
     llm_provider: str = Field(default="claude", alias="LLM_PROVIDER")
@@ -124,6 +135,8 @@ class Settings(BaseSettings):
     grounding_enabled: bool = Field(default=True, alias="GROUNDING_ENABLED")
     course_linking_enabled: bool = Field(default=True, alias="COURSE_LINKING_ENABLED")
     course_match_threshold: float = Field(default=0.7, alias="COURSE_MATCH_THRESHOLD")
+    book_linking_enabled: bool = Field(default=True, alias="BOOK_LINKING_ENABLED")
+    book_match_threshold: float = Field(default=0.7, alias="BOOK_MATCH_THRESHOLD")
 
     # `env_file` tells Pydantic to also look for values inside `.env` (not
     # just in the shell environment). `populate_by_name` allows using the
