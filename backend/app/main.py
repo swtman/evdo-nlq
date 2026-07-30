@@ -29,6 +29,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.entities import router as entities_router
 from app.api.providers import router as providers_router
 from app.api.query import router as query_router
 from app.config import settings
@@ -142,6 +143,10 @@ app.add_middleware(
 # On each hot-reload, Python re-imports this module: logging is reconfigured,
 # `FastAPI()` is re-created, and `settings` is re-read from .env. This means
 # changing .env and saving any source file will pick up the new values.
+#
+# entities_router → GET /entities/search (course/book title search, shared
+# with the SPARQL grounding pipeline — see app/api/entities.py)
 # ---------------------------------------------------------------------------
 app.include_router(query_router)
 app.include_router(providers_router)
+app.include_router(entities_router)
