@@ -73,13 +73,19 @@ Your task: given a user question in Greek or English, produce a single valid SPA
 16. When a **"Resolved entities & terms"** block appears above the Rules section, use the hints it provides:
     - Apply a topic/subject text filter to the label property of the entity the user attributes the topic to — not to a different entity that merely appears elsewhere in the query path. Identify the entity the topic describes from the noun it modifies ("books about X" → the book; "courses about X" → the course), then filter that entity's own evdx:title/evdx:name (and evdx:keyword where it exists). Do not OR the filter across an unrelated entity in the path.
     - **Entities**: use the exact canonical label string from the bullet point as a **literal** in a triple pattern or FILTER. Example: if the hint says `- [University] ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ`, write `?u evdx:name "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" .` (or `FILTER(?un = "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ")`). Never guess or abbreviate the label.
-    - **Resolved title(s)**: when the block contains a `**Resolved title(s)**` section, the grounding module has confirmed those strings are real KG title literals. Bind `evdx:title` with `VALUES` using **all** listed surface forms — do **not** use `CONTAINS` for this entity. Example: if the hints list `- "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ"` and `- "Αρχιτεκτονική Υπολογιστών"`, write:
+    - **Resolved title(s)**: when the block contains a `**Resolved title(s)**` section, the grounding module has confirmed those strings are real KG title literals. Each line is tagged with the class that owns the title — `[Course]` or `[Book]` — and, on one line, may list several surface forms separated by `|`: those are storage variants of the **same** title (e.g. ALL-CAPS accent-free vs. mixed-case accented), not different titles. Bind the tagged class's `evdx:title` with `VALUES` using **all** surface forms on that line — do **not** use `CONTAINS` for a resolved title. Example — for `- [Course] "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ" | "Αρχιτεκτονική Υπολογιστών"`:
       ```sparql
       VALUES ?courseTitle { "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ" "Αρχιτεκτονική Υπολογιστών" }
-      ?course evdx:title ?courseTitle .
+      ?course a evdx:Course ; evdx:title ?courseTitle .
       ```
+      and for `- [Book] "Βάσεις Δεδομένων"`:
+      ```sparql
+      VALUES ?bookTitle { "Βάσεις Δεδομένων" }
+      ?book a evdx:Book ; evdx:title ?bookTitle .
+      ```
+      If both a `[Course]` and a `[Book]` line appear for the same title text, use whichever the question is actually about — if it asks for the books belonging to a named course, the `[Course]` line is the filter and `evdx:hasBook` reaches the books; do not bind the `[Book]` line's title in that case. When the block adds a parenthetical note that a title matched both classes, follow that note's guidance.
     - **Topic stems**: use the stem in a `CONTAINS(LCASE(?var), "stem")` pattern on `evdx:title`. When the hint shows two variants separated by `|` (e.g. `αλγορ | αλγόρ`), the KG stores some titles accent-free (ALL-CAPS) and some with accents (mixed-case); SPARQL `LCASE()` strips case but not accents, so use both with `||`: `FILTER(CONTAINS(LCASE(?bt), "αλγορ") || CONTAINS(LCASE(?bt), "αλγόρ"))`.
-    - Prefer matching on `evdx:title` for books and `evdx:name` for entities; add `evdx:keyword` as an OPTIONAL match for topic stems when relevant.
+    - Prefer matching on `evdx:title` for books and `evdx:name` for entities — this does not override the class tags on a Resolved title(s) line above; add `evdx:keyword` as an OPTIONAL match for topic stems when relevant.
     - When no such block appears (or the block is empty), fall back to Rules 1–15 and your best judgment.
   17. Use self-explanatory variable names in the query (e.g. `?bookTitle` for book title, `?universityName` for university name, `?departmentName` for department name, `?course` for course, etc.). Avoid generic names like `?bt`, `?ut`, or `?dt`.
 
@@ -100,6 +106,17 @@ Your task: given a user question in Greek or English, produce a single valid SPA
   `topic-stem-match` (ex-024), demonstrating the exact SPARQL patterns Rule 16 describes.
 - The prompt version used in `backend/app/pipeline/query_pipeline.py` is bumped from `4` to `5`
   via the `_build_system()` helper (see `decisions/012-grounding-and-firesparql-adoption.md`).
+- **2026-07-31, edited in place (not forked to v6):** Rule 16's `Resolved title(s)` bullet now
+  covers **both** courses and books. The grounding module searches both corpora on every question
+  (previously courses only, despite this rule already claiming to cover books) and tags each
+  resolved title `[Course]`/`[Book]`, since ~3,498 titles exist as both a course and a book and
+  the two require completely different SPARQL. See ADR-019. No new few-shot example was added for
+  this (deferred — revisit if the model measurably mis-binds a tagged title); the rule text and
+  its inline worked examples are the only teaching mechanism so far, same as the original
+  course-only version. Editing v5 in place rather than forking v6 avoids resetting the eval
+  baseline for what is one rule's wording. Side effect worth knowing: any prompt edit changes the
+  LLM DiskCache key (`sha256(system+user+model)`), so the next real run after this change pays
+  full tokens for every question — not a regression, just a one-time cache miss.
 
 ## What changed in v4 vs v3
 
