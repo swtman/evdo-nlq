@@ -76,7 +76,7 @@ export const t = {
   resultsLabel:   'Αποτελέσματα',
   columnsLabel:   '⊞ στήλες',
   exportLabel:    '↓ εξαγωγή ▾',
-  exportAllRows:  '// εξαγωγή όλων των γραμμών',
+  exportAllRows:  'εξαγωγή των αποτελεσμάτων σε αρχείο',
   exportCsv:      'CSV',
   exportCsvDesc:  'comma-separated',
   exportJson:     'JSON',

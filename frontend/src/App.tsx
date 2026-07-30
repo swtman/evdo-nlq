@@ -190,7 +190,7 @@ export default function App() {
 
       {/* ── Left rail ── */}
       <aside className="app-rail" aria-label="Πλαϊνή γραμμή">
-        <div className="rail-logo" aria-hidden="true">e</div>
+        <div className="rail-logo" aria-hidden="true"> <img src="/eudoxus-logo.svg" alt="Eudoxus Logo" /> </div>
         <button
           className={`rail-btn${view === 'query' ? ' active' : ''}`}
           onClick={() => setView('query')}

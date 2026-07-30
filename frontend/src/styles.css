@@ -154,8 +154,7 @@ body {
 .rail-logo {
   width: 28px;
   height: 28px;
-  background: var(--accent);
-  border-radius: 8px;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -341,11 +340,11 @@ body {
 .hero {
   padding: 60px 32px 44px;
   text-align: center;
-  background-image:
+  /* background-image:
     linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px); */
   background-size: 36px 36px;
-  border-bottom: 1px solid var(--border);
+  /* border-bottom: 1px solid var(--border); */
 }
 
 .hero-eyebrow {
@@ -2041,7 +2040,7 @@ table.results-table tbody tr:nth-child(n+11) {
 .od-spotlight-sub {
   font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--ink-faint);
+  color: var(--accent);
   margin: 0 0 12px;
 }
 
@@ -2095,7 +2094,7 @@ table.results-table tbody tr:nth-child(n+11) {
 .od-list-item {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--ink-soft);
+  color: var(--ink);
   border-bottom: 1px solid var(--border);
   padding: 5px 2px;
   line-height: 1.4;
@@ -2270,7 +2269,7 @@ table.results-table tbody tr:nth-child(n+11) {
 .od-modal-count {
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--ink-faint);
+  color: var(--accent);
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 999px;
