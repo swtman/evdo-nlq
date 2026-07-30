@@ -17,10 +17,12 @@ labels — which then get injected into the SPARQL query.
 
 DATA SOURCE
 -----------
-Labels are loaded from ``scripts/grounding_labels.json`` at the repo root.  That
-file is a snapshot extracted from a live EvdoGraph SPARQL query; it contains
-duplicate entries (the same university appears once per book in the dataset).
-We dedup on load so callers always work with distinct labels.
+Labels are loaded from ``backend/app/data/entities.db`` (see ``db.py``), a
+SQLite database built offline by ``backend/scripts/build_entity_db.py`` from a
+live EvdoGraph SPARQL snapshot. Deduplication already happened when the
+database was built (see ADR-018), so the rows read here are already distinct —
+this module still dedups defensively on load in case the database is ever
+rebuilt without going through the builder script.
 
 MODULE-LEVEL CACHE
 ------------------
@@ -40,10 +42,9 @@ departments are still reachable.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import TypedDict
 
+from app.grounding import db
 from app.grounding.normalize import normalize_greek
 
 
@@ -54,23 +55,6 @@ class _GazetteerData(TypedDict):
     departments: list[dict[str, str]]
     university_index: dict[str, list[str]]
     department_index: dict[str, list[dict[str, str]]]
-    courses: list[str]
-    """All distinct raw course title strings from the KG (evdx:Course evdx:title)."""
-    course_surface_map: dict[str, list[str]]
-    """Maps normalize_greek(title) → [raw surface form, ...].
-
-    The KG stores some titles ALL-CAPS accent-free ("ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ")
-    and others mixed-case accented ("Αρχιτεκτονική Υπολογιστών").  Grouping by
-    normalized key ensures the TF-IDF index matches on the accent-free query but
-    the VALUES clause can emit every actual KG string.
-    """
-
-# Path to the labels snapshot: 4 .parent calls walk from
-#   backend/app/grounding/gazetteer.py → backend/app/grounding/ → backend/app/
-#   → backend/ → repo root, then down into scripts/.
-_LABELS_FILE = (
-    Path(__file__).parent.parent.parent.parent / "scripts" / "grounding_labels.json"
-)
 
 # ---------------------------------------------------------------------------
 # ACRONYM_MAP — hand-curated abbreviation → canonical evdx:name mapping
@@ -111,19 +95,21 @@ _cache: _GazetteerData | None = None  # None = not yet loaded
 
 
 def _load() -> _GazetteerData:
-    """Load and cache the gazetteer data from disk.
+    """Load and cache the gazetteer data from ``entities.db``.
 
-    On the first call, reads ``scripts/grounding_labels.json``, deduplicates
-    the raw university list and department pairs, and builds normalized lookup
-    indices.  Every subsequent call skips I/O and returns the cached dict.
+    On the first call, reads the ``university`` and ``department`` tables,
+    deduplicates defensively, and builds normalized lookup indices. Every
+    subsequent call skips I/O and returns the cached dict.
 
-    The returned dict has six keys:
-        ``universities``       – list[str], 46 distinct canonical labels
-        ``departments``        – list[dict[str, str]], 799 distinct pairs
-        ``university_index``   – dict[str, list[str]], normalized → [canonical_label, ...]
-        ``department_index``   – dict[str, list[dict]], normalized → [{university, department}, ...]
-        ``courses``            – list[str], all distinct raw course title strings
-        ``course_surface_map`` – dict[str, list[str]], normalized title → [surface forms]
+    The returned dict has four keys:
+        ``universities``     – list[str], 46 distinct canonical labels
+        ``departments``      – list[dict[str, str]], 799 distinct pairs
+        ``university_index`` – dict[str, list[str]], normalized → [canonical_label, ...]
+        ``department_index`` – dict[str, list[dict]], normalized → [{university, department}, ...]
+
+    Course titles are NOT part of the gazetteer — they are large (~73k
+    distinct titles) and queried on demand via SQL in ``title_index.py``
+    rather than loaded into memory here. See ADR-018.
 
     Returns
     -------
@@ -133,45 +119,36 @@ def _load() -> _GazetteerData:
     Raises
     ------
     FileNotFoundError
-        If ``scripts/grounding_labels.json`` is missing.  The file is checked
-        into git and should always be present.
+        If ``entities.db`` is missing. See ``db.get_connection``.
     """
     global _cache
 
     if _cache is not None:
         return _cache
 
-    # --- 1. Read raw data from disk -------------------------------------------
-    if not _LABELS_FILE.exists():
-        raise FileNotFoundError(
-            f"Gazetteer labels file not found: {_LABELS_FILE}\n"
-            "Run scripts/dump_labels.py to regenerate it."
+    conn = db.get_connection()
+    try:
+        # --- 1. Read + dedup universities --------------------------------------
+        # Defensive dedup: the builder script already writes distinct rows, but
+        # this module should not assume that if entities.db was ever produced
+        # some other way.
+        universities: list[str] = sorted(
+            {row["name"] for row in conn.execute("SELECT name FROM university")}
         )
 
-    raw = json.loads(_LABELS_FILE.read_text(encoding="utf-8"))
+        # --- 2. Read + dedup department pairs -----------------------------------
+        seen_pairs: set[tuple[str, str]] = set()
+        departments: list[dict[str, str]] = []
+        for row in conn.execute("SELECT university, department FROM department"):
+            pair = (row["university"], row["department"])
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                departments.append({"university": row["university"], "department": row["department"]})
+        departments.sort(key=lambda d: (d["university"], d["department"]))
+    finally:
+        conn.close()
 
-    # --- 2. Deduplicate universities -------------------------------------------
-    # The JSON has 133 raw entries (same university repeated once per book).
-    # Use a set to get 46 distinct labels, then sort for stable ordering.
-    universities: list[str] = sorted(set(raw["universities"]))
-
-    # --- 3. Deduplicate department pairs ---------------------------------------
-    # The JSON has 2483 raw dicts; many are duplicates.  A (university, dept)
-    # tuple uniquely identifies a pair — use a set to get 799 distinct pairs.
-    seen_pairs: set[tuple[str, str]] = set()
-    departments: list[dict[str, str]] = []
-    for entry in raw["departments"]:
-        pair = (entry["university"], entry["department"])
-        if pair not in seen_pairs:
-            seen_pairs.add(pair)
-            departments.append(
-                {"university": entry["university"], "department": entry["department"]}
-            )
-
-    # Sort for stable ordering (by university then department name)
-    departments.sort(key=lambda d: (d["university"], d["department"]))
-
-    # --- 4. Build normalized university index ---------------------------------
+    # --- 3. Build normalized university index -----------------------------------
     # Maps normalize_greek(canonical_label) → [canonical_label].
     # Most keys map to exactly one label; collisions are possible if two
     # universities normalize to the same string (unlikely but handled).
@@ -180,7 +157,7 @@ def _load() -> _GazetteerData:
         key = normalize_greek(uni)
         university_index.setdefault(key, []).append(uni)
 
-    # --- 5. Build normalized department index ---------------------------------
+    # --- 4. Build normalized department index ------------------------------------
     # Maps normalize_greek(dept_name) → [{"university": ..., "department": ...}, ...].
     # normalize_greek strips parenthetical status suffixes like "(ΚΑΤΑΡΓΗΘΗΚΕ)"
     # so abolished departments are indexed under the same key as their active
@@ -190,39 +167,12 @@ def _load() -> _GazetteerData:
         key = normalize_greek(dept["department"])
         department_index.setdefault(key, []).append(dept)
 
-    # --- 6. Load course titles ------------------------------------------------
-    # The "courses" key was added to grounding_labels.json in a later refresh.
-    # If the file predates the update it will be absent; return empty structures
-    # so the title ranker degrades gracefully (no resolved titles, stems still work).
-    raw_courses: list[str] = raw.get("courses", [])
-
-    # Deduplicate raw titles while preserving order.
-    seen_titles: set[str] = set()
-    courses: list[str] = []
-    for title in raw_courses:
-        if title not in seen_titles:
-            seen_titles.add(title)
-            courses.append(title)
-
-    # Build normalized → [surface forms] map.
-    # Multiple raw titles that normalize to the same string (e.g. "ΑΛΓΟΡΙΘΜΟΙ" and
-    # "Αλγόριθμοι" both normalize to "αλγοριθμοι") are grouped under one key.
-    # The TF-IDF index operates on the normalized keys; the VALUES clause in SPARQL
-    # emits all surface forms so both KG storage variants are matched.
-    course_surface_map: dict[str, list[str]] = {}
-    for title in courses:
-        key = normalize_greek(title)
-        if key:  # skip empty strings from normalize_greek (shouldn't happen, but guard)
-            course_surface_map.setdefault(key, []).append(title)
-
-    # --- 7. Populate cache and return -----------------------------------------
+    # --- 5. Populate cache and return ---------------------------------------------
     _cache = {
         "universities": universities,
         "departments": departments,
         "university_index": university_index,
         "department_index": department_index,
-        "courses": courses,
-        "course_surface_map": course_surface_map,
     }
     return _cache
 
@@ -297,48 +247,3 @@ def get_department_index() -> dict[str, list[dict[str, str]]]:
         ``{"university": str, "department": str}`` dicts.
     """
     return _load()["department_index"]
-
-
-def get_courses() -> list[str]:
-    """Return the list of all distinct raw course title strings from EvdoGraph.
-
-    Titles are the raw ``evdx:title`` strings stored in the KG on ``evdx:Course``
-    nodes.  The KG stores some titles ALL-CAPS accent-free (e.g.
-    "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ") and others mixed-case accented (e.g.
-    "Αρχιτεκτονική Υπολογιστών") — both variants are included.
-
-    Returns an empty list if ``scripts/grounding_labels.json`` was generated
-    before the ``"courses"`` key was added.  Re-run ``scripts/dump_labels.py``
-    to populate the corpus.
-
-    Returns
-    -------
-    list[str]
-        All distinct raw course title strings, in the order they appear after
-        deduplication.  May be empty if the corpus has not been refreshed.
-    """
-    return _load()["courses"]
-
-
-def get_course_surface_map() -> dict[str, list[str]]:
-    """Return a mapping from normalized title to raw KG surface form(s).
-
-    The TF-IDF title index operates on normalized (accent-free, lowercase)
-    title strings.  When a query matches a normalized key, the VALUES clause
-    in the generated SPARQL should bind to every raw surface form stored in
-    the KG — this map provides those raw forms.
-
-    Example
-    -------
-    >>> m = get_course_surface_map()
-    >>> m.get("αρχιτεκτονικη υπολογιστων")
-    ["ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ", "Αρχιτεκτονική Υπολογιστών"]
-
-    Returns
-    -------
-    dict[str, list[str]]
-        Mapping from ``normalize_greek(title)`` to a list of raw title strings
-        that normalize to that key.  Empty dict if the corpus has not been
-        refreshed.
-    """
-    return _load()["course_surface_map"]

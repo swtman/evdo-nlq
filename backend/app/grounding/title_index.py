@@ -1,69 +1,97 @@
-"""TF-IDF char-n-gram ranked retrieval for course/book titles.
+"""SQLite FTS5 + rapidfuzz ranked retrieval for course/book titles.
 
 WHAT THIS MODULE DOES
----------------------
+----------------------
 Given a phrase extracted from a user question (e.g. "αρχιτεκτονικη υπολογιστων"),
 ``rank_titles`` ranks the real KG course title corpus against that phrase and
-returns the closest matching title(s) with cosine similarity scores.
+returns the closest matching title(s) with a similarity score.
 
 The caller (``hints.build_grounding_hints``) uses these matches to inject an
 exact ``VALUES ?title { "..." }`` binding into the LLM system prompt, replacing
 the imprecise single-stem ``CONTAINS`` filter that would otherwise apply.
 
-WHY CHAR N-GRAMS?
------------------
-Greek titles in EvdoGraph are stored in ALL-CAPS accent-free form after
-``normalize_greek`` (e.g. "αρχιτεκτονικη υπολογιστων").  User queries arrive
-with accents and inflected forms.  Character n-grams over normalized strings
-sidestep both problems:
+TWO-STAGE RANKING (candidate generation, then rerank)
+-------------------------------------------------------
+Comparing the query phrase against all ~73,000 course titles one at a time is
+too slow to do on every request (this module used to fit a TF-IDF vectorizer
+over the whole corpus on first use — a ~5-6 second one-time cost; see
+ADR-018). Instead:
 
-  - **Case/accent:** ``normalize_greek`` strips both before vectorization, so
-    "Αρχιτεκτονική" and "ΑΡΧΙΤΕΚΤΟΝΙΚΗ" both become "αρχιτεκτονικη".
-  - **Inflection:** "υπολογιστων" (gen pl) shares char trigrams and 4-grams
-    with the stem "υπολογιστ" — the inflectional suffix contributes fewer,
-    lower-weight features, so the normalized title still ranks highest.
-  - **Word order:** TF-IDF weights terms independently, so "υπολογιστων
-    αρχιτεκτονικη" scores the same as "αρχιτεκτονικη υπολογιστων".
+  1. **Candidate generation (SQLite FTS5).** Each content word of the query is
+     reduced to a stem via ``greek_stem`` (e.g. "υπολογιστων" -> "υπολογιστ")
+     and turned into an FTS5 *prefix* query term (``"υπολογιστ"*``). The terms
+     are OR'd together, so a title needs to share just ONE stemmed word with
+     the query to become a candidate — this stage is deliberately high-recall,
+     not high-precision. It narrows the corpus from ~73,000 titles down to at
+     most ``_CANDIDATE_LIMIT`` (500) candidate titles in well under a
+     millisecond, because FTS5 looks the stem up in an index instead of
+     scanning every title.
 
-Analyzer ``"char_wb"`` pads each word with word-boundary sentinels (spaces)
-before extracting n-grams, preserving word boundaries as features.  This gives
-better precision than plain ``"char"`` for Greek inflection at word endings.
+  2. **Rerank (rapidfuzz).** ``rapidfuzz.fuzz.token_sort_ratio`` scores each
+     candidate against the full query phrase. This is where precision comes
+     from: a title that matches every word of the phrase scores far higher
+     than one that only shares a single word, so "αρχιτεκτονική υπολογιστών"
+     outranks "αρχιτεκτονική τοπίου" for the query "αρχιτεκτονικη
+     υπολογιστων" even though stage 1 returns both as candidates.
+
+     WHY ``token_sort_ratio`` AND NOT ``WRatio``?
+       ``linker.py`` uses ``fuzz.WRatio`` for university/department matching,
+       and it is tempting to reuse it here for consistency. But ``WRatio``
+       is deliberately lenient toward *partial* matches — it is designed so
+       that a short user mention ("ΑΠΘ") scores high against a long
+       canonical name it is a fragment of ("ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ
+       ΘΕΣ/ΝΙΚΗΣ"). That is exactly the wrong behaviour for title
+       resolution: with ``WRatio``, the single generic word "αλγορίθμων"
+       ("algorithms") scores 90/100 against the specific course "Ανάλυση
+       και Σχεδίαση Αλγορίθμων" ("Algorithm Analysis and Design") purely
+       because it is a substring fragment of it — even though the user
+       named a topic, not that course. ``token_sort_ratio`` instead
+       measures whole-string similarity (after sorting each string's words,
+       so word order does not matter): the same pair scores 48.8/100,
+       correctly falling below ``settings.course_match_threshold``, while a
+       genuine full-phrase match in a different inflection ("υπολογιστου"
+       vs. "υπολογιστων") still scores 92/100. Verified against the real
+       corpus while implementing this module — see ADR-018.
 
 RANKER SEAM
 -----------
-``rank_titles`` delegates to ``_rank``, which takes an ``_IndexState``.
-Swapping the ranking backend (e.g. to BM25 via ``rank_bm25.BM25Okapi``) means
-only ``_build_index`` and ``_rank`` need changing; the public ``TitleMatch``
-signature and callers remain stable.  See ADR-015.
+This is the second ranking backend this module has had (the first was
+TF-IDF cosine similarity, ADR-015; this one is ADR-018). The public contract —
+``TitleMatch``, ``rank_titles``, ``rank_titles_from_corpus`` — is unchanged
+across the swap, so callers (``hints.py``) needed no changes.
 
 CORPUS SOURCE
 -------------
-The title corpus is loaded from ``get_course_surface_map()`` in
-``app.grounding.gazetteer``, which reads ``scripts/grounding_labels.json``.
-That file must have been generated by ``scripts/dump_labels.py`` with the
-``"courses"`` key present.  If absent, ``rank_titles`` returns ``[]`` (no-op).
+The committed SQLite database at ``backend/app/data/entities.db`` (see
+``db.py``), built offline by ``backend/scripts/build_entity_db.py`` from a
+live GraphDB SPARQL dump. If the database is missing, ``rank_titles`` raises
+``FileNotFoundError`` with instructions to rebuild it (see ``db.get_connection``).
 
-MODULE-LEVEL CACHE
-------------------
-``_get_index()`` fits the vectorizer once and caches the result in
-``_INDEX_CACHE``.  Fitting is cheap for ~10k titles but not free; caching
-avoids re-fitting on every query request.
+CONNECTIONS ARE NOT CACHED
+---------------------------
+Unlike the old TF-IDF version, there is no module-level index cache here.
+Opening a SQLite connection and running an indexed query costs microseconds,
+so ``rank_titles`` opens a fresh read-only connection per call and closes it
+before returning. This also sidesteps the fact that a single
+``sqlite3.Connection`` is not safe to share across FastAPI's threadpool
+workers without extra locking.
 
 For testing, use ``rank_titles_from_corpus(surface_map, phrase, k)`` which
-takes an explicit corpus dict and bypasses the module cache entirely.
+builds a throwaway ``:memory:`` database from an explicit corpus dict and
+bypasses ``entities.db`` entirely.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from rapidfuzz import fuzz, process
 
-from app.grounding.gazetteer import get_course_surface_map
+from app.grounding import db
 from app.grounding.normalize import normalize_greek
-
+from app.grounding.schema import create_schema, sync_course_fts
+from app.grounding.stem import greek_stem
 
 # ---------------------------------------------------------------------------
 # Public data types
@@ -80,13 +108,13 @@ class TitleMatch:
         The accent-free, lowercase key used for ranking (output of
         ``normalize_greek`` applied to the raw title).
     score : float
-        Cosine similarity between the query vector and this title's vector,
-        in the range [0, 1].  Higher is better.
+        Similarity score in the range [0, 1] (rapidfuzz's WRatio, which is
+        0-100, divided by 100). Higher is better.
     surface_forms : list[str]
         All raw KG title strings that normalize to ``normalized_title``.
         Includes both ALL-CAPS accent-free variants ("ΑΡΧΙΤΕΚΤΟΝΙΚΗ
         ΥΠΟΛΟΓΙΣΤΩΝ") and mixed-case accented variants ("Αρχιτεκτονική
-        Υπολογιστών"), whichever are present in the KG.  The caller should
+        Υπολογιστών"), whichever are present in the KG. The caller should
         emit all of them in a SPARQL ``VALUES`` binding so the query matches
         regardless of how the title is stored.
     """
@@ -103,29 +131,20 @@ class TitleMatch:
 
 @dataclass
 class _IndexState:
-    """All fitted artifacts needed to score a query against the corpus.
+    """Wraps the SQLite connection ``_rank`` queries against.
 
-    ``vectorizer`` is None and ``matrix`` is None when the corpus is empty
-    (e.g. ``grounding_labels.json`` predates the "courses" key).  ``_rank``
-    short-circuits on None and returns an empty list.
+    A thin wrapper (rather than passing a bare connection around) so the
+    ranking seam documented above stays easy to swap again in the future.
     """
 
-    vectorizer: TfidfVectorizer | None
-    """Fitted TfidfVectorizer (None for empty corpus)."""
-
-    matrix: object  # scipy.sparse.csr_matrix | None
-    """Fitted TF-IDF matrix, shape (n_titles, n_features) (None for empty corpus)."""
-
-    normalized_titles: list[str]
-    """Ordered list of normalized title strings — row i of ``matrix``."""
-
-    surface_map: dict[str, list[str]]
-    """Mapping normalize_greek(title) → [raw surface form, ...].  Used to
-    look up raw forms for the matched normalized key."""
+    conn: sqlite3.Connection
 
 
-# Module-level cache: populated on first call to _get_index().
-_INDEX_CACHE: _IndexState | None = None
+# Maximum number of candidate titles stage 1 (FTS5) hands to stage 2
+# (rapidfuzz). Large enough that a true match is essentially never excluded
+# (in practice a shared stem word narrows ~73k titles to low hundreds), small
+# enough that rapidfuzz's per-candidate scoring stays well under a millisecond.
+_CANDIDATE_LIMIT = 500
 
 
 # ---------------------------------------------------------------------------
@@ -134,50 +153,35 @@ _INDEX_CACHE: _IndexState | None = None
 
 
 def _build_index(surface_map: dict[str, list[str]]) -> _IndexState:
-    """Fit a TF-IDF vectorizer over normalized title strings from ``surface_map``.
+    """Build a throwaway in-memory SQLite database from ``surface_map``.
 
-    Pure function — no I/O, no module state.  Used both by ``_get_index()``
-    (live corpus) and ``rank_titles_from_corpus`` (test corpus).
+    Pure with respect to the filesystem — never touches ``entities.db``. Used
+    by ``rank_titles_from_corpus`` (tests) so tests are fully isolated from
+    the live data and from each other.
 
     Args:
-        surface_map: Mapping ``normalize_greek(title)`` → ``[raw title, ...]``.
-                     Keys are the documents; values are kept for result lookup.
+        surface_map: Mapping ``normalize_greek(title)`` -> ``[raw title, ...]``.
 
     Returns:
-        An ``_IndexState`` with a fitted vectorizer and matrix, or an empty
-        state (both None) if ``surface_map`` is empty.
+        An ``_IndexState`` wrapping the populated in-memory connection.
     """
-    normalized_titles = sorted(surface_map.keys())
-    if not normalized_titles:
-        return _IndexState(
-            vectorizer=None,
-            matrix=None,
-            normalized_titles=[],
-            surface_map=surface_map,
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    create_schema(conn)
+
+    rows = [
+        (norm, surface)
+        for norm, surfaces in surface_map.items()
+        for surface in surfaces
+    ]
+    if rows:
+        conn.executemany(
+            "INSERT INTO course(norm, surface) VALUES (?, ?)", rows
         )
+        sync_course_fts(conn)
+    conn.commit()
 
-    vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5))
-    matrix = vectorizer.fit_transform(normalized_titles)
-
-    return _IndexState(
-        vectorizer=vectorizer,
-        matrix=matrix,
-        normalized_titles=normalized_titles,
-        surface_map=surface_map,
-    )
-
-
-def _get_index() -> _IndexState:
-    """Return the module-level cached index, building it on first call.
-
-    Reads the live course corpus from ``get_course_surface_map()`` (which
-    reads ``scripts/grounding_labels.json``).  Subsequent calls return the
-    same cached ``_IndexState`` object.
-    """
-    global _INDEX_CACHE
-    if _INDEX_CACHE is None:
-        _INDEX_CACHE = _build_index(get_course_surface_map())
-    return _INDEX_CACHE
+    return _IndexState(conn=conn)
 
 
 # ---------------------------------------------------------------------------
@@ -185,53 +189,110 @@ def _get_index() -> _IndexState:
 # ---------------------------------------------------------------------------
 
 
-def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
-    """Rank corpus titles against ``phrase`` using cosine similarity.
+def _fts_query_terms(phrase: str) -> list[str]:
+    """Turn a normalized phrase into a list of FTS5 prefix-query stems.
 
-    Pure function — takes an explicit ``_IndexState`` so it can be used by
-    both the live ``rank_titles`` and the test helper
-    ``rank_titles_from_corpus``.
+    Each content word is reduced via ``greek_stem`` so inflected forms in the
+    query (e.g. genitive "υπολογιστων") still match a differently-inflected
+    title in the corpus (e.g. "ΥΠΟΛΟΓΙΣΤΕΣ"), because both share the same
+    stem prefix. Duplicate stems are removed; empty stems are dropped.
 
     Args:
-        phrase: Raw user phrase to rank against the corpus.  Will be
-                normalized before vectorization.
+        phrase: An already ``normalize_greek``-processed phrase.
+
+    Returns:
+        A sorted list of distinct, non-empty stems. Sorted only for
+        deterministic test output — order does not affect the OR query below.
+    """
+    tokens = phrase.split()
+    stems = {greek_stem(t) for t in tokens}
+    return sorted(s for s in stems if s)
+
+
+def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
+    """Rank corpus titles against ``phrase`` via FTS5 candidates + rapidfuzz rerank.
+
+    Pure function of ``state`` — takes an explicit ``_IndexState`` so it works
+    identically for the live ``rank_titles`` (real ``entities.db`` connection)
+    and the test helper ``rank_titles_from_corpus`` (in-memory connection).
+
+    Args:
+        phrase: Raw user phrase to rank against the corpus. Normalized
+                internally before matching.
         k: Maximum number of results to return.
-        state: Pre-built index state (vectorizer + matrix + title list).
+        state: An ``_IndexState`` wrapping an open, schema-initialized
+               SQLite connection.
 
     Returns:
         List of up to ``k`` ``TitleMatch`` objects sorted by score descending.
-        Titles with score 0.0 are excluded (no shared n-gram features at all).
+        Titles with score 0.0 are excluded (no meaningful overlap at all).
     """
-    if state.vectorizer is None or not state.normalized_titles:
+    q_norm = normalize_greek(phrase)
+    if not q_norm:
         return []
 
-    q_normalized = normalize_greek(phrase)
-    if not q_normalized:
+    stems = _fts_query_terms(q_norm)
+    if not stems:
         return []
 
-    # Vectorize the query using the already-fitted vocabulary.
-    q_vec = state.vectorizer.transform([q_normalized])
+    # Each stem becomes a quoted FTS5 prefix term ("term"*). Quoting protects
+    # against stems that happen to collide with FTS5 query-syntax keywords
+    # (e.g. a stem literally spelled "OR" or "NOT" would otherwise be parsed
+    # as an operator rather than matched literally).
+    fts_query = " OR ".join(f'"{stem}"*' for stem in stems)
 
-    # Compute cosine similarity against every corpus title.
-    # cosine_similarity returns shape (1, n_titles); squeeze to 1-D.
-    scores: np.ndarray = cosine_similarity(q_vec, state.matrix)[0]  # type: ignore[assignment]
+    # Stage 1 — candidate generation: which titles share at least one
+    # stemmed word with the query? High recall by design; precision comes
+    # from stage 2 below.
+    #
+    # ORDER BY bm25(course_fts) is not optional. Common stems (e.g.
+    # "τεχνολογια" alone matches ~1,500 distinct titles; this query's three
+    # stems together match 2,165) routinely exceed _CANDIDATE_LIMIT. Without
+    # an ORDER BY, SQLite's LIMIT truncates to an ARBITRARY subset of the
+    # matches, not the most relevant ones — a real user query for "τεχνολογια
+    # βασεων δεδομενων" (a title that exists verbatim in the corpus) returned
+    # zero results because the exact match fell outside the arbitrary first
+    # 500 rows SQLite happened to return. bm25() ranks rows by relevance to
+    # the MATCH (lower = better, hence ascending ORDER BY — SQLite convention,
+    # not a bug); ordering before LIMIT guarantees truncation drops the least
+    # relevant candidates first, never a near-exact match. Verified empirically:
+    # the exact-match title above ranks position 0 of 2,165 under this order.
+    cursor = state.conn.execute(
+        "SELECT DISTINCT c.norm "
+        "FROM course_fts f JOIN course c ON c.id = f.rowid "
+        "WHERE course_fts MATCH ? "
+        "ORDER BY bm25(course_fts) "
+        "LIMIT ?",
+        (fts_query, _CANDIDATE_LIMIT),
+    )
+    candidate_norms = [row["norm"] for row in cursor.fetchall()]
+    if not candidate_norms:
+        return []
 
-    # Pick top-k indices sorted by score descending.
-    top_k = min(k, len(state.normalized_titles))
-    top_indices: np.ndarray = np.argsort(scores)[::-1][:top_k]
+    # Stage 2 — rerank: score every candidate against the full phrase.
+    # token_sort_ratio (not WRatio — see module docstring "WHY token_sort_ratio")
+    # measures whole-phrase similarity, so a query that names only a fragment
+    # of a title scores low instead of the high partial-match score WRatio
+    # would give it. process.extract returns (choice, score, index) tuples
+    # already sorted by score descending.
+    ranked = process.extract(
+        q_norm, candidate_norms, scorer=fuzz.token_sort_ratio, limit=k
+    )
 
     results: list[TitleMatch] = []
-    for idx in top_indices:
-        score = float(scores[idx])
+    for norm, score, _idx in ranked:
         if score <= 0.0:
-            break  # remaining indices have zero overlap — stop early
-        norm_title = state.normalized_titles[int(idx)]
-        surface_forms = state.surface_map.get(norm_title, [norm_title])
-        results.append(TitleMatch(
-            normalized_title=norm_title,
-            score=score,
-            surface_forms=list(surface_forms),
-        ))
+            continue
+        surface_rows = state.conn.execute(
+            "SELECT surface FROM course WHERE norm = ? ORDER BY surface", (norm,)
+        ).fetchall()
+        results.append(
+            TitleMatch(
+                normalized_title=norm,
+                score=score / 100.0,
+                surface_forms=[r["surface"] for r in surface_rows],
+            )
+        )
 
     return results
 
@@ -244,29 +305,32 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
 def rank_titles(phrase: str, k: int = 3) -> list[TitleMatch]:
     """Rank the KG course title corpus against ``phrase``.
 
-    Uses the module-level cached TF-IDF index built from the live course
-    corpus (``scripts/grounding_labels.json`` → ``get_course_surface_map()``).
+    Opens a fresh, read-only connection to the committed ``entities.db`` for
+    the duration of this call (see module docstring for why connections are
+    not cached).
 
-    Returns up to ``k`` results sorted by cosine similarity (highest first).
-    Returns ``[]`` if the corpus is empty (refresh with
-    ``scripts/dump_labels.py``) or if no title shares any char n-gram with
-    the phrase.
-
-    The caller (``hints.build_grounding_hints``) is responsible for applying
-    the acceptance threshold (``settings.course_match_threshold``) and
-    deciding how to format the results in the hint block.
+    Returns up to ``k`` results sorted by similarity (highest first). Returns
+    ``[]`` if the phrase yields no usable stems, or if no candidate title
+    shares a stemmed word with the phrase.
 
     Args:
         phrase: Raw content phrase from the user question (after entity and
-                stopword tokens have been removed).  E.g.
-                "αρχιτεκτονικη υπολογιστων".  Accents and casing are
+                stopword tokens have been removed), e.g.
+                "αρχιτεκτονικη υπολογιστων". Accents and casing are
                 normalized internally.
-        k: Maximum number of ranked candidates to return.  Default 3.
+        k: Maximum number of ranked candidates to return. Default 3.
 
     Returns:
         List of ``TitleMatch`` objects sorted by score descending, length 0..k.
+
+    Raises:
+        FileNotFoundError: If ``entities.db`` is missing. See ``db.get_connection``.
     """
-    return _rank(phrase, k, _get_index())
+    conn = db.get_connection()
+    try:
+        return _rank(phrase, k, _IndexState(conn=conn))
+    finally:
+        conn.close()
 
 
 def rank_titles_from_corpus(
@@ -276,18 +340,21 @@ def rank_titles_from_corpus(
 ) -> list[TitleMatch]:
     """Rank titles from an explicit corpus dict (for unit tests).
 
-    Identical to ``rank_titles`` but builds a fresh index from ``surface_map``
-    instead of reading the live gazetteer.  Does NOT populate or read the
-    module-level cache, so tests are isolated from each other and from the
-    live data on disk.
+    Identical to ``rank_titles`` but builds a fresh in-memory database from
+    ``surface_map`` instead of reading ``entities.db``. Fully isolated from
+    the live data and from other tests.
 
     Args:
-        surface_map: A ``normalize_greek(title)`` → ``[raw surface form, ...]``
-                     dict.  Typically a small fixture corpus.
+        surface_map: A ``normalize_greek(title)`` -> ``[raw surface form, ...]``
+                     dict. Typically a small fixture corpus.
         phrase: Raw user phrase to rank.
         k: Maximum number of results.
 
     Returns:
         List of ``TitleMatch`` objects sorted by score descending.
     """
-    return _rank(phrase, k, _build_index(surface_map))
+    state = _build_index(surface_map)
+    try:
+        return _rank(phrase, k, state)
+    finally:
+        state.conn.close()
