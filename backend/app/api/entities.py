@@ -22,11 +22,12 @@ functions directly and needs an HTTP interface.
 
 SCOPE
 -----
-Only ``class=course`` returns real results right now. ``class=book`` is
-accepted but always returns an empty list — no book title corpus has been
-built yet (see ADR-018's "Deferred" section). This lets the frontend book
-search box call the same endpoint shape today and light up automatically
-once a book corpus lands, with no endpoint changes needed.
+Both ``class=course`` and ``class=book`` return real, live-ranked results —
+each backed by its own FTS5-indexed table in ``entities.db`` (see
+``schema.py``, ADR-019). Adding a third title-bearing class in the future is
+purely a ``schema.TITLE_CLASSES`` change; this endpoint needs no edits, since
+it already validates against that same constant rather than hardcoding its
+own set of supported classes.
 """
 
 from __future__ import annotations
@@ -34,14 +35,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.grounding.schema import TITLE_CLASSES
 from app.grounding.title_index import rank_titles
 
 router = APIRouter()
-
-# class= values this endpoint currently understands. "book" is accepted (so
-# the frontend doesn't need a feature flag) but always yields empty results
-# until a book corpus exists.
-_SUPPORTED_CLASSES = {"course", "book"}
 
 
 class EntitySearchResult(BaseModel):
@@ -79,17 +76,24 @@ def _pick_display_surface(surface_forms: list[str]) -> str:
     (when available) reads far better than shouting in all-caps. Falls back
     to the first surface form if every variant happens to be all-uppercase.
 
+    The returned string has its whitespace collapsed for display ONLY — the
+    database (and everything the grounding pipeline binds into SPARQL)
+    deliberately keeps the raw KG literal untouched, including any invisible
+    characters (see ``app/grounding/clean.py``). A visible leading tab or
+    embedded non-breaking space is a presentation nuisance here, not a
+    correctness concern, so it's fine to tidy up only at this final step.
+
     Args:
         surface_forms: Non-empty list of raw KG title strings for one
                         normalized title (``TitleMatch.surface_forms``).
 
     Returns:
-        The chosen display string.
+        The chosen display string, whitespace-collapsed.
     """
     for surface in surface_forms:
         if surface != surface.upper():  # has at least one lowercase letter
-            return surface
-    return surface_forms[0]
+            return " ".join(surface.split())
+    return " ".join(surface_forms[0].split())
 
 
 @router.get("/entities/search", response_model=EntitySearchResponse)
@@ -108,19 +112,13 @@ def search_entities(
 
     Returns 400 if ``class`` is not one of the supported values.
     """
-    if entity_class not in _SUPPORTED_CLASSES:
+    if entity_class not in TITLE_CLASSES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported class {entity_class!r}. Supported: {sorted(_SUPPORTED_CLASSES)}",
+            detail=f"Unsupported class {entity_class!r}. Supported: {sorted(TITLE_CLASSES)}",
         )
 
-    if entity_class == "book":
-        # No book corpus yet — see ADR-018 "Deferred". Empty, not an error,
-        # so the frontend can treat this the same as "no matches" rather
-        # than a failure state.
-        return EntitySearchResponse(query=q, results=[], total=0)
-
-    matches = rank_titles(q, k=limit)
+    matches = rank_titles(q, k=limit, entity_class=entity_class)
     results = [
         EntitySearchResult(title=_pick_display_surface(m.surface_forms), score=m.score)
         for m in matches
