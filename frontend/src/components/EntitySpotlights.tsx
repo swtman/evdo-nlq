@@ -74,7 +74,7 @@ function UniversityCard() {
         {filtered.slice(0, LIST_MAX).map(u => (
           <li key={u} className="od-list-item">{u}</li>
         ))}
-        {filtered.length === 0 && <li className="od-list-empty">—</li>}
+        {filtered.length === 0 && <li className="od-list-empty">κανένα αποτέλεσμα</li>}
       </ul>
 
       <button
@@ -106,7 +106,7 @@ function UniversityCard() {
             {filtered.map(u => (
               <li key={u} className="od-list-item">{u}</li>
             ))}
-            {filtered.length === 0 && <li className="od-list-empty">—</li>}
+            {filtered.length === 0 && <li className="od-list-empty">κανένα αποτέλεσμα</li>}
           </ul>
         </EntityModal>
       )}
@@ -158,7 +158,7 @@ function DepartmentCard() {
             )}
           </li>
         ))}
-        {items.length === 0 && <li className="od-list-empty">—</li>}
+        {items.length === 0 && <li className="od-list-empty">κανένα αποτέλεσμα</li>}
       </ul>
     )
   }
@@ -264,7 +264,10 @@ function CourseCard() {
         {!loading && shown.map(r => (
           <li key={r.title} className="od-list-item">{r.title}</li>
         ))}
-        {!loading && shown.length === 0 && (
+        {!loading && shown.length === 0 && query.trim() === '' && (
+          <li className="od-list-empty">{t.ontologySearchPrompt}</li>
+        )}
+        {!loading && shown.length === 0 && query.trim() !== '' && (
           <li className="od-list-empty">{t.ontologyCourseNoResults}</li>
         )}
       </ul>
@@ -305,7 +308,10 @@ function BookCard() {
         {!loading && shown.map(r => (
           <li key={r.title} className="od-list-item">{r.title}</li>
         ))}
-        {!loading && shown.length === 0 && (
+        {!loading && shown.length === 0 && query.trim() === '' && (
+          <li className="od-list-empty">{t.ontologySearchPrompt}</li>
+        )}
+        {!loading && shown.length === 0 && query.trim() !== '' && (
           <li className="od-list-empty">{t.ontologyBookNoResults}</li>
         )}
       </ul>

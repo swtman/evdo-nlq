@@ -146,14 +146,18 @@ export const t = {
     `${distinctTitles} μοναδικοί τίτλοι · ${totalInstances} συνολικά βιβλία`,
   ontologyBookSearchPlaceholder: 'αναζήτηση βιβλίου… π.χ. τεχνητή νοημοσύνη',
   ontologyBookOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
-  ontologyBookNoResults: 'καμία αντιστοίχιση',
+  ontologyBookNoResults: 'κανένα αποτέλεσμα',
+  // Shown before any query is typed — distinct from "no results", which only
+  // applies once a search has actually run and come back empty. Shared by
+  // the course and book cards (see ontologySearching, reused the same way).
+  ontologySearchPrompt: 'πληκτρολογήστε για αναζήτηση…',
   ontologySpotCourseTitle: 'Μαθήματα',
   ontologySpotCourseSub:   (distinctTitles: string, totalInstances: string): string =>
     `${distinctTitles} μοναδικοί τίτλοι · ${totalInstances} συνολικές προσφορές μαθημάτων`,
   ontologyCourseSearchPlaceholder: 'αναζήτηση μαθήματος… π.χ. αρχιτεκτονική υπολογιστών',
   ontologySearching:   'αναζήτηση…',
   ontologyCourseOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
-  ontologyCourseNoResults: 'καμία αντιστοίχιση',
+  ontologyCourseNoResults: 'κανένα αποτέλεσμα',
 
   ontologySearchPlaceholder: 'φιλτράρισμα…',
   ontologyShowMore: (n: number): string => `+ ${n} ακόμη`,
