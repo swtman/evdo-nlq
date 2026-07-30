@@ -3,10 +3,11 @@
 WHAT THIS SCRIPT DOES
 -----------------------
 Produces the single SQLite database the grounding module reads at runtime
-(``app/grounding/db.py``): university names, department names, and course
-titles, each keyed by their ``normalize_greek()`` form for fast lookup, plus
-an FTS5 full-text index over course titles for the candidate-generation stage
-of ``app/grounding/title_index.py`` (see ADR-018).
+(``app/grounding/db.py``): university names, department names, course titles,
+and book titles, each keyed by their ``normalize_greek()`` form for fast
+lookup, plus an FTS5 full-text index per title corpus for the
+candidate-generation stage of ``app/grounding/title_index.py`` (see ADR-018,
+ADR-019).
 
 This replaces two things at once:
   1. The old ``scripts/dump_labels.py`` + ``scripts/grounding_labels.json``
@@ -18,31 +19,42 @@ This replaces two things at once:
      ``title_index.py`` on the first grounded query (a ~5-6 second one-time
      cost; ADR-015).
 
-Both universities/departments and courses are cleaned and deduplicated here,
-offline, once — not on every server start.
+Universities, departments, courses, and books are all cleaned and
+deduplicated here, offline, once — not on every server start.
 
 WHERE THE RAW DATA COMES FROM
 -------------------------------
 Either:
-  (a) live GraphDB, via the same three SPARQL queries as the old
-      ``dump_labels.py`` (default), or
-  (b) an existing ``scripts/grounding_labels.json``-shaped dump, via
+  (a) live GraphDB, via the same SPARQL queries as the old ``dump_labels.py``
+      plus a book-title query (default), or
+  (b) an existing ``grounding_labels.json``-shaped dump, via
       ``--from-json <path>`` — useful for rebuilding without hitting the
-      network, e.g. while iterating on the cleaning/schema logic.
+      network, e.g. while iterating on the cleaning/schema logic. Older dumps
+      (from before books were added) have no ``"books"`` key — read
+      defensively, warn, and produce an empty (but valid) book corpus rather
+      than failing.
 
-CLEANING RULES (course titles only — universities/departments are already clean)
-------------------------------------------------------------------------------
-  - Collapse internal whitespace and strip leading/trailing whitespace
-    (the raw KG dump has titles like "\\tΑΝΕΞΑΡΤΗΤΗ ΣΠΟΥΔΗ 2").
-  - Drop titles that become empty after that.
-  - Drop titles containing U+FFFD (the Unicode "replacement character" —
-    evidence of a mojibake/encoding-corrupted record).
-  - Group surface forms by their ``normalize_greek()`` key so that KG
-    variants of the same title (ALL-CAPS accent-free vs. mixed-case accented)
-    end up as multiple ``surface`` rows sharing one ``norm`` value.
-  Every drop is counted and reported — see "Report what was dropped" in
-  CLAUDE.md's cost-awareness section; silent truncation is not acceptable
-  for a data artifact this deliberately curated.
+CLEANING RULES (courses and books — universities/departments are already clean)
+---------------------------------------------------------------------------------
+Both title corpora go through the identical ``clean_titles()`` function in
+``app/grounding/clean.py`` — see that module's docstring for the full
+reasoning, in short:
+  - The stored ``surface`` is the RAW KG literal, untouched. SPARQL matches
+    literals by exact code-point equality, so any whitespace-collapsing
+    applied before storage would silently break ``VALUES`` bindings for
+    titles containing invisible characters like NBSP (found in 52 real book
+    titles; the same bug almost certainly affects some course titles too —
+    it was never separately measured before this fix).
+  - A whitespace-collapsed form is used ONLY to validate non-emptiness and to
+    compute ``norm`` (the search key) — ranking behavior is therefore
+    unchanged by this fix.
+  - Titles containing U+FFFD (mojibake) or a literal newline are dropped.
+  - Surface forms are grouped by ``normalize_greek()`` key, so KG variants of
+    the same title (ALL-CAPS accent-free vs. mixed-case accented) end up as
+    multiple ``surface`` rows sharing one ``norm`` value.
+  Every drop is counted and reported, itemized by reason — see "Report what
+  was dropped" in CLAUDE.md's cost-awareness section; silent truncation is
+  not acceptable for a data artifact this deliberately curated.
 
 USAGE (from backend/)
 -----------------------
@@ -64,6 +76,7 @@ from typing import Any
 # Allow running from backend/ with: uv run python scripts/build_entity_db.py
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from app.grounding.clean import DropCounts, clean_titles  # noqa: E402
 from app.grounding.normalize import normalize_greek  # noqa: E402
 from app.grounding.schema import create_schema, sync_title_fts  # noqa: E402
 
@@ -102,6 +115,14 @@ SELECT DISTINCT ?ctitle WHERE {
 ORDER BY ?ctitle
 """
 
+BOOK_QUERY = PREFIXES + """
+SELECT DISTINCT ?btitle WHERE {
+  ?b a evdx:Book ;
+     evdx:title ?btitle .
+}
+ORDER BY ?btitle
+"""
+
 
 # ---------------------------------------------------------------------------
 # Raw data acquisition
@@ -109,10 +130,12 @@ ORDER BY ?ctitle
 
 
 def fetch_from_graphdb(endpoint: str, timeout: int = 600) -> dict[str, Any]:
-    """Run the three label queries against a live GraphDB endpoint.
+    """Run the four label queries against a live GraphDB endpoint.
 
-    Mirrors the queries in the old ``scripts/dump_labels.py`` exactly, so the
-    resulting raw shape is identical to a ``grounding_labels.json`` dump.
+    Mirrors the queries in the old ``scripts/dump_labels.py`` for
+    universities/departments/courses, plus a book-title query added for
+    ADR-019, so the resulting raw shape is a superset of a
+    ``grounding_labels.json`` dump.
     """
     if SPARQLWrapper is None:
         print("Install SPARQLWrapper first: uv add sparqlwrapper", file=sys.stderr)
@@ -138,11 +161,25 @@ def fetch_from_graphdb(endpoint: str, timeout: int = 600) -> dict[str, Any]:
     print("Querying course titles ...")
     courses = [b["ctitle"]["value"] for b in run(COURSE_QUERY)]
 
-    return {"universities": universities, "departments": departments, "courses": courses}
+    print("Querying book titles ...")
+    books = [b["btitle"]["value"] for b in run(BOOK_QUERY)]
+
+    return {
+        "universities": universities,
+        "departments": departments,
+        "courses": courses,
+        "books": books,
+    }
 
 
 def load_from_json(path: Path) -> dict[str, Any]:
-    """Load a ``grounding_labels.json``-shaped dump from disk (no network)."""
+    """Load a ``grounding_labels.json``-shaped dump from disk (no network).
+
+    Older dumps (from before book titles were added) have no ``"books"``
+    key — that is handled by the caller reading with ``raw.get("books", [])``
+    and warning, not here, so this function's contract stays "just read the
+    file" regardless of which keys it happens to contain.
+    """
     print(f"Loading raw labels from {path} ...")
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -170,39 +207,27 @@ def clean_departments(raw_departments: list[dict[str, str]]) -> list[dict[str, s
     return result
 
 
-def clean_courses(raw_courses: list[str]) -> tuple[dict[str, set[str]], int]:
-    """Clean and group raw course titles by their normalized key.
-
-    Returns:
-        A tuple of:
-          - ``surface_map``: ``normalize_greek(title) -> {raw surface form, ...}``.
-          - ``dropped``: count of raw titles discarded (empty after whitespace
-            collapse, or containing a Unicode replacement character).
-    """
-    surface_map: dict[str, set[str]] = {}
-    dropped = 0
-    for raw_title in raw_courses:
-        surface = " ".join(raw_title.split())  # collapse/trim whitespace
-        if not surface or "�" in surface:
-            dropped += 1
-            continue
-        norm = normalize_greek(surface)
-        if not norm:
-            dropped += 1
-            continue
-        surface_map.setdefault(norm, set()).add(surface)
-    return surface_map, dropped
-
-
 # ---------------------------------------------------------------------------
 # Database writing
 # ---------------------------------------------------------------------------
 
 
+def _insert_title_rows(conn: sqlite3.Connection, table: str, surface_map: dict[str, set[str]]) -> None:
+    """Insert ``(norm, surface)`` rows for one title table and sync its FTS index."""
+    rows = [
+        (norm, surface)
+        for norm, surfaces in surface_map.items()
+        for surface in sorted(surfaces)
+    ]
+    conn.executemany(f"INSERT INTO {table}(norm, surface) VALUES (?, ?)", rows)
+    sync_title_fts(conn, table)
+
+
 def build_database(
     universities: list[str],
     departments: list[dict[str, str]],
-    surface_map: dict[str, set[str]],
+    course_map: dict[str, set[str]],
+    book_map: dict[str, set[str]],
     output: Path,
     snapshot: str,
 ) -> None:
@@ -230,13 +255,8 @@ def build_database(
             ],
         )
 
-        course_rows = [
-            (norm, surface)
-            for norm, surfaces in surface_map.items()
-            for surface in sorted(surfaces)
-        ]
-        conn.executemany("INSERT INTO course(norm, surface) VALUES (?, ?)", course_rows)
-        sync_title_fts(conn, "course")
+        _insert_title_rows(conn, "course", course_map)
+        _insert_title_rows(conn, "book", book_map)
 
         conn.commit()
     finally:
@@ -274,20 +294,36 @@ def main() -> None:
 
     universities = clean_universities(raw["universities"])
     departments = clean_departments(raw["departments"])
-    surface_map, dropped = clean_courses(raw.get("courses", []))
 
-    raw_course_count = len(raw.get("courses", []))
-    unique_surfaces = sum(len(s) for s in surface_map.values())
+    raw_books = raw.get("books", [])
+    if not raw_books and args.from_json:
+        print(
+            "WARNING: dump has no 'books' key (or it's empty) — book search "
+            "will find nothing until you rebuild from a newer dump or live GraphDB.",
+            file=sys.stderr,
+        )
 
-    build_database(universities, departments, surface_map, args.output, args.snapshot)
+    course_map, course_drops = clean_titles(raw.get("courses", []))
+    book_map, book_drops = clean_titles(raw_books)
+
+    build_database(universities, departments, course_map, book_map, args.output, args.snapshot)
+
+    def _report(label: str, raw_count: int, surface_map: dict[str, set[str]], drops: DropCounts) -> None:
+        unique_surfaces = sum(len(s) for s in surface_map.values())
+        print(f"{label} titles (raw):   {raw_count}")
+        print(f"  dropped — mojibake:   {drops.mojibake}")
+        print(f"  dropped — empty:      {drops.empty}")
+        print(f"  dropped — newline:    {drops.newline}")
+        print(f"  unique surface forms: {unique_surfaces}")
+        print(f"  unique normalized:    {len(surface_map)}")
 
     print()
     print(f"Universities:          {len(universities)}")
     print(f"Departments:           {len(departments)}")
-    print(f"Course titles (raw):   {raw_course_count}")
-    print(f"  dropped (bad data):  {dropped}")
-    print(f"  unique surface forms:{unique_surfaces}")
-    print(f"  unique normalized:   {len(surface_map)}")
+    _report("Course", len(raw.get("courses", [])), course_map, course_drops)
+    print()
+    _report("Book", len(raw_books), book_map, book_drops)
+    print(f"\nSnapshot: {args.snapshot}")
     print(f"Wrote -> {args.output}")
 
 
