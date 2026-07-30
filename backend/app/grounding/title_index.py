@@ -3,12 +3,23 @@
 WHAT THIS MODULE DOES
 ----------------------
 Given a phrase extracted from a user question (e.g. "αρχιτεκτονικη υπολογιστων"),
-``rank_titles`` ranks the real KG course title corpus against that phrase and
-returns the closest matching title(s) with a similarity score.
+``rank_titles`` ranks a real KG title corpus — course titles by default, or
+book titles via ``entity_class="book"`` — against that phrase and returns the
+closest matching title(s) with a similarity score.
 
 The caller (``hints.build_grounding_hints``) uses these matches to inject an
 exact ``VALUES ?title { "..." }`` binding into the LLM system prompt, replacing
 the imprecise single-stem ``CONTAINS`` filter that would otherwise apply.
+
+TWO SEPARATE CORPORA, NOT ONE MERGED ONE
+-------------------------------------------
+Course and book titles live in separate tables (``course``/``course_fts`` and
+``book``/``book_fts`` — see ``schema.py``), each with its own
+``_CANDIDATE_LIMIT``-sized candidate budget (see the ``ORDER BY bm25`` comment
+inside ``_rank``, which explains why that budget has to be ordered at all). A
+merged FTS index would split that budget across both corpora and reintroduce
+the same truncation bug in a subtler form — one that only bites when both
+corpora are dense in the same stem (ADR-019).
 
 TWO-STAGE RANKING (candidate generation, then rerank)
 -------------------------------------------------------
@@ -22,10 +33,10 @@ ADR-018). Instead:
      and turned into an FTS5 *prefix* query term (``"υπολογιστ"*``). The terms
      are OR'd together, so a title needs to share just ONE stemmed word with
      the query to become a candidate — this stage is deliberately high-recall,
-     not high-precision. It narrows the corpus from ~73,000 titles down to at
-     most ``_CANDIDATE_LIMIT`` (500) candidate titles in well under a
-     millisecond, because FTS5 looks the stem up in an index instead of
-     scanning every title.
+     not high-precision. It narrows the corpus (~73,000 course titles, or
+     ~37,000 book titles) down to at most ``_CANDIDATE_LIMIT`` (500,
+     *per class*) candidate titles in well under a millisecond, because FTS5
+     looks the stem up in an index instead of scanning every title.
 
   2. **Rerank (rapidfuzz).** ``rapidfuzz.fuzz.token_sort_ratio`` scores each
      candidate against the full query phrase. This is where precision comes
@@ -90,7 +101,7 @@ from rapidfuzz import fuzz, process
 
 from app.grounding import db
 from app.grounding.normalize import normalize_greek
-from app.grounding.schema import create_schema, sync_title_fts
+from app.grounding.schema import TITLE_CLASSES, create_schema, sync_title_fts
 from app.grounding.stem import greek_stem
 
 # ---------------------------------------------------------------------------
@@ -117,11 +128,18 @@ class TitleMatch:
         Υπολογιστών"), whichever are present in the KG. The caller should
         emit all of them in a SPARQL ``VALUES`` binding so the query matches
         regardless of how the title is stored.
+    entity_class : str
+        Which corpus this match came from — ``"course"`` or ``"book"``.
+        Trailing and defaulted so existing construction sites (before this
+        field existed) still compile. Needed once a caller (``hints.py``)
+        ranks both corpora and merges the two result lists — at that point
+        provenance is only recoverable if it travels on the object itself.
     """
 
     normalized_title: str
     score: float
     surface_forms: list[str] = field(default_factory=list)
+    entity_class: str = "course"
 
 
 # ---------------------------------------------------------------------------
@@ -131,19 +149,25 @@ class TitleMatch:
 
 @dataclass
 class _IndexState:
-    """Wraps the SQLite connection ``_rank`` queries against.
+    """Wraps the SQLite connection and target table ``_rank`` queries against.
 
     A thin wrapper (rather than passing a bare connection around) so the
     ranking seam documented above stays easy to swap again in the future.
+    ``table`` is what makes this class-capable — the class currently being
+    queried is exactly the kind of state this wrapper exists to carry.
     """
 
     conn: sqlite3.Connection
+    table: str = "course"
 
 
 # Maximum number of candidate titles stage 1 (FTS5) hands to stage 2
-# (rapidfuzz). Large enough that a true match is essentially never excluded
-# (in practice a shared stem word narrows ~73k titles to low hundreds), small
-# enough that rapidfuzz's per-candidate scoring stays well under a millisecond.
+# (rapidfuzz), PER CLASS — course and book each get their own budget from
+# their own separate FTS index (see "TWO SEPARATE CORPORA" in the module
+# docstring). Large enough that a true match is essentially never excluded
+# (in practice a shared stem word narrows tens of thousands of titles to low
+# hundreds), small enough that rapidfuzz's per-candidate scoring stays well
+# under a millisecond.
 _CANDIDATE_LIMIT = 500
 
 
@@ -152,7 +176,7 @@ _CANDIDATE_LIMIT = 500
 # ---------------------------------------------------------------------------
 
 
-def _build_index(surface_map: dict[str, list[str]]) -> _IndexState:
+def _build_index(surface_map: dict[str, list[str]], entity_class: str = "course") -> _IndexState:
     """Build a throwaway in-memory SQLite database from ``surface_map``.
 
     Pure with respect to the filesystem — never touches ``entities.db``. Used
@@ -161,10 +185,17 @@ def _build_index(surface_map: dict[str, list[str]]) -> _IndexState:
 
     Args:
         surface_map: Mapping ``normalize_greek(title)`` -> ``[raw title, ...]``.
+        entity_class: Which table to populate — one of ``TITLE_CLASSES``.
 
     Returns:
         An ``_IndexState`` wrapping the populated in-memory connection.
+
+    Raises:
+        ValueError: If ``entity_class`` is not a known title class.
     """
+    if entity_class not in TITLE_CLASSES:
+        raise ValueError(f"unknown title class {entity_class!r}; expected one of {TITLE_CLASSES}")
+
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     create_schema(conn)
@@ -176,12 +207,12 @@ def _build_index(surface_map: dict[str, list[str]]) -> _IndexState:
     ]
     if rows:
         conn.executemany(
-            "INSERT INTO course(norm, surface) VALUES (?, ?)", rows
+            f"INSERT INTO {entity_class}(norm, surface) VALUES (?, ?)", rows
         )
-        sync_title_fts(conn, "course")
+        sync_title_fts(conn, entity_class)
     conn.commit()
 
-    return _IndexState(conn=conn)
+    return _IndexState(conn=conn, table=entity_class)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +258,9 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
         List of up to ``k`` ``TitleMatch`` objects sorted by score descending.
         Titles with score 0.0 are excluded (no meaningful overlap at all).
     """
+    if state.table not in TITLE_CLASSES:
+        raise ValueError(f"unknown title class {state.table!r}; expected one of {TITLE_CLASSES}")
+
     q_norm = normalize_greek(phrase)
     if not q_norm:
         return []
@@ -241,28 +275,44 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
     # as an operator rather than matched literally).
     fts_query = " OR ".join(f'"{stem}"*' for stem in stems)
 
+    # SQL placeholders (?) can only substitute VALUES, never IDENTIFIERS —
+    # SELECT * FROM ? is not valid SQL in any database, because the query
+    # planner must know which table it's reading before it can plan anything.
+    # A dynamic table name is therefore string interpolation by necessity;
+    # what makes it safe here is that `state.table` is checked against the
+    # closed TITLE_CLASSES tuple immediately above, never used un-guarded.
+    # (`state.table` ultimately traces back to the `?class=` query param on
+    # GET /entities/search — this guard is the layer that actually touches
+    # SQL, so it's where the safety property has to be enforced, in addition
+    # to the API layer's own validation.)
+    table = state.table
+    fts_table = f"{table}_fts"
+
     # Stage 1 — candidate generation: which titles share at least one
     # stemmed word with the query? High recall by design; precision comes
     # from stage 2 below.
     #
-    # ORDER BY bm25(course_fts) is not optional. Common stems (e.g.
-    # "τεχνολογια" alone matches ~1,500 distinct titles; this query's three
-    # stems together match 2,165) routinely exceed _CANDIDATE_LIMIT. Without
-    # an ORDER BY, SQLite's LIMIT truncates to an ARBITRARY subset of the
-    # matches, not the most relevant ones — a real user query for "τεχνολογια
-    # βασεων δεδομενων" (a title that exists verbatim in the corpus) returned
-    # zero results because the exact match fell outside the arbitrary first
-    # 500 rows SQLite happened to return. bm25() ranks rows by relevance to
-    # the MATCH (lower = better, hence ascending ORDER BY — SQLite convention,
-    # not a bug); ordering before LIMIT guarantees truncation drops the least
-    # relevant candidates first, never a near-exact match. Verified empirically:
-    # the exact-match title above ranks position 0 of 2,165 under this order.
+    # ORDER BY bm25(...) is not optional. Common stems (e.g. "τεχνολογια"
+    # alone matches ~1,500 distinct course titles; a real query's three
+    # stems together matched 2,165) routinely exceed _CANDIDATE_LIMIT.
+    # Without an ORDER BY, SQLite's LIMIT truncates to an ARBITRARY subset of
+    # the matches, not the most relevant ones — a real user query for
+    # "τεχνολογια βασεων δεδομενων" (a title that exists verbatim in the
+    # corpus) returned zero results because the exact match fell outside the
+    # arbitrary first 500 rows SQLite happened to return. bm25() ranks rows
+    # by relevance to the MATCH (lower = better, hence ascending ORDER BY —
+    # SQLite convention, not a bug); ordering before LIMIT guarantees
+    # truncation drops the least relevant candidates first, never a
+    # near-exact match. Verified empirically: the exact-match title above
+    # ranks position 0 of 2,165 under this order. This applies per class —
+    # see "TWO SEPARATE CORPORA" in the module docstring for why course and
+    # book each get their own 500-slot budget instead of sharing one.
     cursor = state.conn.execute(
-        "SELECT DISTINCT c.norm "
-        "FROM course_fts f JOIN course c ON c.id = f.rowid "
-        "WHERE course_fts MATCH ? "
-        "ORDER BY bm25(course_fts) "
-        "LIMIT ?",
+        f"SELECT DISTINCT c.norm "
+        f"FROM {fts_table} f JOIN {table} c ON c.id = f.rowid "
+        f"WHERE {fts_table} MATCH ? "
+        f"ORDER BY bm25({fts_table}) "
+        f"LIMIT ?",
         (fts_query, _CANDIDATE_LIMIT),
     )
     candidate_norms = [row["norm"] for row in cursor.fetchall()]
@@ -284,13 +334,14 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
         if score <= 0.0:
             continue
         surface_rows = state.conn.execute(
-            "SELECT surface FROM course WHERE norm = ? ORDER BY surface", (norm,)
+            f"SELECT surface FROM {table} WHERE norm = ? ORDER BY surface", (norm,)
         ).fetchall()
         results.append(
             TitleMatch(
                 normalized_title=norm,
                 score=score / 100.0,
                 surface_forms=[r["surface"] for r in surface_rows],
+                entity_class=table,
             )
         )
 
@@ -302,8 +353,8 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
 # ---------------------------------------------------------------------------
 
 
-def rank_titles(phrase: str, k: int = 3) -> list[TitleMatch]:
-    """Rank the KG course title corpus against ``phrase``.
+def rank_titles(phrase: str, k: int = 3, *, entity_class: str = "course") -> list[TitleMatch]:
+    """Rank a KG title corpus (course or book) against ``phrase``.
 
     Opens a fresh, read-only connection to the committed ``entities.db`` for
     the duration of this call (see module docstring for why connections are
@@ -319,16 +370,22 @@ def rank_titles(phrase: str, k: int = 3) -> list[TitleMatch]:
                 "αρχιτεκτονικη υπολογιστων". Accents and casing are
                 normalized internally.
         k: Maximum number of ranked candidates to return. Default 3.
+        entity_class: Which corpus to search — ``"course"`` (default) or
+                      ``"book"``. Keyword-only so a bare third positional
+                      argument (an easy mix-up with ``k``) can't happen, and
+                      defaulted so every existing call site is unaffected.
 
     Returns:
         List of ``TitleMatch`` objects sorted by score descending, length 0..k.
+        Each match's ``entity_class`` equals the ``entity_class`` argument.
 
     Raises:
         FileNotFoundError: If ``entities.db`` is missing. See ``db.get_connection``.
+        ValueError: If ``entity_class`` is not a known title class.
     """
     conn = db.get_connection()
     try:
-        return _rank(phrase, k, _IndexState(conn=conn))
+        return _rank(phrase, k, _IndexState(conn=conn, table=entity_class))
     finally:
         conn.close()
 
@@ -337,6 +394,8 @@ def rank_titles_from_corpus(
     surface_map: dict[str, list[str]],
     phrase: str,
     k: int = 3,
+    *,
+    entity_class: str = "course",
 ) -> list[TitleMatch]:
     """Rank titles from an explicit corpus dict (for unit tests).
 
@@ -349,11 +408,17 @@ def rank_titles_from_corpus(
                      dict. Typically a small fixture corpus.
         phrase: Raw user phrase to rank.
         k: Maximum number of results.
+        entity_class: Which table to build/query — ``"course"`` (default) or
+                      ``"book"``. Lets a test build a book fixture corpus and
+                      assert the ranker treats it identically to a course one.
 
     Returns:
         List of ``TitleMatch`` objects sorted by score descending.
+
+    Raises:
+        ValueError: If ``entity_class`` is not a known title class.
     """
-    state = _build_index(surface_map)
+    state = _build_index(surface_map, entity_class)
     try:
         return _rank(phrase, k, state)
     finally:

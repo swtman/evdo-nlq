@@ -1,8 +1,10 @@
-"""Tests for app.grounding.title_index — TF-IDF ranked course title retrieval.
+"""Tests for app.grounding.title_index — FTS5 + rapidfuzz title retrieval.
 
 All tests use an in-memory fixture corpus and the ``rank_titles_from_corpus``
 helper so they are completely offline (no disk I/O, no live GraphDB, no module
-cache pollution between tests).
+cache pollution between tests). Most tests exercise the default course table;
+a dedicated section near the end covers book-class ranking, cross-class
+isolation, and the identifier-safety guard.
 
 The fixture corpus mimics the EvdoGraph naming convention:
   - ALL-CAPS accent-free variant (how some titles are stored in the KG).
@@ -229,7 +231,7 @@ def test_title_match_is_frozen() -> None:
 
 
 def test_title_match_fields() -> None:
-    """TitleMatch exposes normalized_title, score, and surface_forms."""
+    """TitleMatch exposes normalized_title, score, surface_forms, entity_class."""
     match = TitleMatch(
         normalized_title="αρχιτεκτονικη υπολογιστων",
         score=0.85,
@@ -238,3 +240,66 @@ def test_title_match_fields() -> None:
     assert match.normalized_title == "αρχιτεκτονικη υπολογιστων"
     assert match.score == pytest.approx(0.85)
     assert len(match.surface_forms) == 2
+    assert match.entity_class == "course"  # default, for construction sites predating the field
+
+
+def test_title_match_entity_class_is_settable() -> None:
+    match = TitleMatch(normalized_title="x", score=1.0, entity_class="book")
+    assert match.entity_class == "book"
+
+
+# ---------------------------------------------------------------------------
+# Book-class ranking, cross-class isolation, and the identifier-safety guard
+# ---------------------------------------------------------------------------
+
+_BOOK_FIXTURE_CORPUS: dict[str, list[str]] = {
+    "βασεισ δεδομενων": ["ΒΑΣΕΙΣ ΔΕΔΟΜΕΝΩΝ", "Βάσεις Δεδομένων"],
+    "τεχνητη νοημοσυνη": ["Τεχνητή Νοημοσύνη"],
+}
+
+
+def test_book_class_ranks_like_course_class() -> None:
+    """rank_titles_from_corpus(entity_class='book') behaves identically to
+    the course path for the same kind of fixture — the ranker has no
+    class-specific logic beyond which table it reads."""
+    results = rank_titles_from_corpus(
+        _BOOK_FIXTURE_CORPUS, "βασεισ δεδομενων", k=3, entity_class="book"
+    )
+    assert len(results) >= 1
+    assert results[0].normalized_title == "βασεισ δεδομενων"
+    assert results[0].entity_class == "book"
+    assert set(results[0].surface_forms) == {"ΒΑΣΕΙΣ ΔΕΔΟΜΕΝΩΝ", "Βάσεις Δεδομένων"}
+
+
+def test_cross_class_isolation() -> None:
+    """Loading a corpus as 'book' must not populate 'course' on the SAME
+    database — the test that proves the two-table design (ADR-019) actually
+    holds. If someone later 'simplifies' to a single merged table, this is
+    the test that goes red.
+
+    Reaches into _build_index/_rank directly (rather than the public
+    rank_titles_from_corpus) because the thing being verified is a property
+    of one shared connection: `dataclasses.replace` points a second
+    _IndexState at the SAME connection, just naming the other table, so a
+    query against 'course' is proven to see the identical database that
+    'book' was just loaded into — not a coincidentally-empty fresh one.
+    """
+    from dataclasses import replace
+
+    from app.grounding.title_index import _build_index, _rank
+
+    state = _build_index(_BOOK_FIXTURE_CORPUS, entity_class="book")
+    try:
+        book_results = _rank("βασεισ δεδομενων", 3, state)
+        assert len(book_results) >= 1  # sanity: the corpus does match as a book
+
+        course_state = replace(state, table="course")  # same conn, other table
+        course_results = _rank("βασεισ δεδομενων", 3, course_state)
+        assert course_results == []  # same connection, course table untouched
+    finally:
+        state.conn.close()
+
+
+def test_unknown_entity_class_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="unknown title class"):
+        rank_titles_from_corpus(_BOOK_FIXTURE_CORPUS, "βασεισ δεδομενων", k=3, entity_class="publisher")
