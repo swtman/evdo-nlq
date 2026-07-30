@@ -141,8 +141,12 @@ export const t = {
     `${n} με καταχωρημένο όνομα · ${total} συνολικά`,
   ontologySpotDeptTitle: 'Τμήματα',
   ontologySpotDeptSub:   (n: number): string => `743 διαφορετικά τμήματα · ${n} μοναδικά ονόματα τμημάτων`,
-  ontologySpotBookTitle: 'Βιβλίο — δείγμα',
-  ontologySpotBookSub:   (n: string): string => `από ${n}`,
+  ontologySpotBookTitle: 'Βιβλία',
+  ontologySpotBookSub:   (distinctTitles: string, totalInstances: string): string =>
+    `${distinctTitles} μοναδικοί τίτλοι · ${totalInstances} συνολικά βιβλία`,
+  ontologyBookSearchPlaceholder: 'αναζήτηση βιβλίου… π.χ. τεχνητή νοημοσύνη',
+  ontologyBookOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
+  ontologyBookNoResults: 'καμία αντιστοίχιση',
   ontologySpotCourseTitle: 'Μαθήματα',
   ontologySpotCourseSub:   (distinctTitles: string, totalInstances: string): string =>
     `${distinctTitles} μοναδικοί τίτλοι · ${totalInstances} συνολικές προσφορές μαθημάτων`,
@@ -156,7 +160,6 @@ export const t = {
   ontologySeeAll: (n: number): string => `δείτε τα όλα (${n})`,
   ontologyModalClose: 'κλείσιμο',
   ontologyModalResults: (n: number): string => `${n} αποτελέσματα`,
-  ontologyBookModalTitle: 'Βιβλία — δείγματα',
   ontologyBookExampleBtn: 'δείτε παράδειγμα',
   ontologyExampleTitle: (cls: string): string => `Παράδειγμα οντότητας ${cls}`,
   ontologyDeptSharedNote: (n: number): string => `${n} ιδρύματα`,

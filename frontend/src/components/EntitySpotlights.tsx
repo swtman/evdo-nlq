@@ -11,18 +11,17 @@
  *      through (see backend/app/api/entities.py). Not bundled: ~73k distinct
  *      titles would be an 8 MB import for a feature that only needs the top
  *      few ranked matches per keystroke — see ADR-018.
- *
- * The Books card was removed (2026-07-30): it depended on a `sampleBooks`
- * export that no longer exists in ontology.ts, and no book title corpus has
- * been built yet (course titles only — see ADR-018 "Deferred"). It returns
- * once a book corpus exists, following the same live-search pattern as
- * CourseCard.
+ *   4. Books        — same live-search pattern as Courses, against the same
+ *      endpoint with class=book (~37k distinct titles). Mirrors CourseCard
+ *      exactly rather than the old (pre-ADR-018, dead-code) record-browser
+ *      design — that would need the endpoint to return full metadata per
+ *      keystroke instead of just {title, score}; see ADR-019.
  */
 
 import { useState, useMemo } from 'react'
 import entitiesRaw from '../data/entities.json'
-import { courseSearchStats, classes } from '../data/ontology'
-import { useCourseSearch } from '../hooks/useCourseSearch'
+import { courseSearchStats, bookSearchStats, classes } from '../data/ontology'
+import { useCourseSearch, useBookSearch } from '../hooks/useEntitySearch'
 import { EntityModal } from './EntityModal'
 import { t } from '../i18n/el'
 
@@ -217,24 +216,25 @@ function DepartmentCard() {
   )
 }
 
-// ── Course card ─────────────────────────────────────────────────────────────
+// ── Course / Book cards ─────────────────────────────────────────────────────
 //
 // Unlike University/Department (bundled list, client-side filter), course
-// search is live: each keystroke (debounced) queries GET /entities/search,
-// which ranks the ~73k-title corpus server-side and returns only the top
-// matches. There is no separate "preview 8 / see all N" tier here — the
-// results ARE already the top-ranked matches, so a "see all" modal would
-// misleadingly imply a larger exhaustive list exists behind it. Instead the
-// full result list (up to the endpoint's limit) renders inline, with a
-// loading state during the debounce window and an explicit offline label
-// when falling back to the local sample (see useCourseSearch).
+// and book search are live: each keystroke (debounced) queries
+// GET /entities/search, which ranks the corpus server-side (~73k course /
+// ~37k book titles) and returns only the top matches. There is no separate
+// "preview 8 / see all N" tier here — the results ARE already the top-ranked
+// matches, so a "see all" modal would misleadingly imply a larger exhaustive
+// list exists behind it. Instead the full result list (up to the endpoint's
+// limit) renders inline, with a loading state during the debounce window and
+// an explicit offline label when falling back to the local sample (see
+// useEntitySearch).
 
-const COURSE_RESULTS_SHOWN = 100
+const RESULTS_SHOWN = 100
 
 function CourseCard() {
   const [query, setQuery] = useState('')
   const { results, loading, offline } = useCourseSearch(query)
-  const shown = results.slice(0, COURSE_RESULTS_SHOWN)
+  const shown = results.slice(0, RESULTS_SHOWN)
 
   return (
     <div className="od-spotlight-card">
@@ -272,6 +272,47 @@ function CourseCard() {
   )
 }
 
+function BookCard() {
+  const [query, setQuery] = useState('')
+  const { results, loading, offline } = useBookSearch(query)
+  const shown = results.slice(0, RESULTS_SHOWN)
+
+  return (
+    <div className="od-spotlight-card">
+      <h3 className="od-spotlight-title">{t.ontologySpotBookTitle}</h3>
+      <p className="od-spotlight-sub">
+        {t.ontologySpotBookSub(
+          bookSearchStats.distinctTitlesFormatted,
+          classes.find(c => c.id === 'Book')?.countFormatted ?? '',
+        )}
+      </p>
+      {offline && <p className="od-spotlight-offline-note">{t.ontologyBookOffline}</p>}
+
+      <div className="od-search">
+        <span className="od-search-icon" aria-hidden="true">⌕</span>
+        <input
+          className="od-search-input"
+          type="search"
+          placeholder={t.ontologyBookSearchPlaceholder}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          aria-label={`${t.ontologyBookSearchPlaceholder} ${t.ontologySpotBookTitle}`}
+        />
+      </div>
+
+      <ul className="od-list" aria-label={`Λίστα ${t.ontologySpotBookTitle}`}>
+        {loading && <li className="od-list-empty">{t.ontologySearching}</li>}
+        {!loading && shown.map(r => (
+          <li key={r.title} className="od-list-item">{r.title}</li>
+        ))}
+        {!loading && shown.length === 0 && (
+          <li className="od-list-empty">{t.ontologyBookNoResults}</li>
+        )}
+      </ul>
+    </div>
+  )
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export function EntitySpotlights() {
@@ -280,6 +321,7 @@ export function EntitySpotlights() {
       <UniversityCard />
       <DepartmentCard />
       <CourseCard />
+      <BookCard />
     </div>
   )
 }

@@ -1,12 +1,17 @@
 /**
  * ontology.ts — hand-authored structured description of the EvdoGraph ontology.
  *
- * Source of truth for all structural blocks in OntologyPage:
- *   SchemaDiagram, class reference cards, relationships table, sampleBooks.
+ * Source of truth for all structural blocks in OntologyPage and
+ * EntitySpotlights: SchemaDiagram, class reference cards, relationships
+ * table, example nodes (exampleNodes), and the small offline fallback
+ * samples for the live course/book search cards (courseSearchStats /
+ * SAMPLE_COURSE_TITLES, bookSearchStats / SAMPLE_BOOK_TITLES — the real,
+ * ~73k/~37k title corpora live in backend/app/data/entities.db, not here;
+ * see ADR-018/ADR-019).
  *
  * Instance counts from: notes/ONTOLOGY-NOTES.md (confirmed via live probe 2026-06-12).
  * Property info from: prompts/ontology-summary.md.
- * Snapshot date: 2026-06.
+ * Snapshot date: 2026-06 (course search stats), 2026-07-31 (book search stats).
  */
 
 export interface OntologyClass {
@@ -207,16 +212,23 @@ export const totals = {
 // ── Course search stats (for the ΟΝΤΟΛΟΓΙΑ course search card) ────────────────
 //
 // distinctTitles: count of distinct normalized course titles in
-//   backend/app/data/entities.db (built by scripts/build_entity_db.py from
-//   the same 2026-06 snapshot as the rest of this file). Many Course
-//   *instances* (see classes[Course].count = 680.231 above) share the same
-//   title across different years/semesters/departments — distinctTitles is
-//   how many different titles a search can actually find.
+//   backend/app/data/entities.db (built by scripts/build_entity_db.py). Many
+//   Course *instances* (see classes[Course].count = 680.231 above) share the
+//   same title across different years/semesters/departments — distinctTitles
+//   is how many different titles a search can actually find.
+//
+// Updated 2026-07-31 (72,949 -> 72,937): the entities.db rebuild that added
+// book search also fixed a data-integrity bug in the course-cleaning code
+// (see app/grounding/clean.py) and, as a side effect of the fix, started
+// dropping the small number of titles containing a literal newline (38 of
+// them) rather than silently collapsing the newline into a space. The count
+// dropped slightly because of that new, deliberate drop reason — not because
+// titles went missing from the KG.
 
 export const courseSearchStats = {
-  distinctTitles: 72949,
-  distinctTitlesFormatted: '72.949',
-  snapshot: '2026-06',
+  distinctTitles: 72937,
+  distinctTitlesFormatted: '72.937',
+  snapshot: '2026-07-31',
 }
 
 // Small set of real course titles (same 2026-06 snapshot), used only as an
@@ -231,6 +243,34 @@ export const SAMPLE_COURSE_TITLES: string[] = [
   'Γραμμική Άλγεβρα',
   'Εισαγωγή στον Προγραμματισμό (Python)',
   'Ψηφιακή Επεξεργασία Σημάτων',
+]
+
+// ── Book search stats (for the ΟΝΤΟΛΟΓΙΑ book search card) ────────────────────
+//
+// distinctTitles: count of distinct normalized book titles in
+//   backend/app/data/entities.db, from the 2026-07-31 rebuild that added the
+//   book corpus (scripts/build_entity_db.py). Many Book *instances* (see
+//   classes[Book].count = 48.679 above) share the same title across
+//   editions/printings — distinctTitles is how many different titles a
+//   search can actually find.
+
+export const bookSearchStats = {
+  distinctTitles: 36947,
+  distinctTitlesFormatted: '36.947',
+  snapshot: '2026-07-31',
+}
+
+// Small set of real book titles (2026-07-31 snapshot), used only as an
+// offline fallback for the book search card — same pattern as
+// SAMPLE_COURSE_TITLES above.
+export const SAMPLE_BOOK_TITLES: string[] = [
+  'Τεχνητή Νοημοσύνη',
+  'Βάσεις Δεδομένων (Τράπεζες Πληροφοριών)',
+  'Δίκτυα Υπολογιστών',
+  'Λειτουργικά συστήματα',
+  'Γραμμική Άλγεβρα',
+  'Αλγόριθμοι',
+  'Ψηφιακή επεξεργασία σημάτων',
 ]
 
 // ── Example nodes — one real KG node per class ───────────────────────────────
