@@ -204,6 +204,35 @@ export const totals = {
   snapshot: '06/2026',
 }
 
+// ── Course search stats (for the ΟΝΤΟΛΟΓΙΑ course search card) ────────────────
+//
+// distinctTitles: count of distinct normalized course titles in
+//   backend/app/data/entities.db (built by scripts/build_entity_db.py from
+//   the same 2026-06 snapshot as the rest of this file). Many Course
+//   *instances* (see classes[Course].count = 680.231 above) share the same
+//   title across different years/semesters/departments — distinctTitles is
+//   how many different titles a search can actually find.
+
+export const courseSearchStats = {
+  distinctTitles: 72949,
+  distinctTitlesFormatted: '72.949',
+  snapshot: '2026-06',
+}
+
+// Small set of real course titles (same 2026-06 snapshot), used only as an
+// offline fallback for the course search card when the backend is
+// unreachable — see EntitySpotlights.tsx. Not a substitute for live search;
+// the card labels this state explicitly so it's never mistaken for a result.
+export const SAMPLE_COURSE_TITLES: string[] = [
+  'Αρχιτεκτονική Υπολογιστών',
+  'Τεχνητή Νοημοσύνη',
+  'Λειτουργικά Συστήματα',
+  'Δίκτυα Υπολογιστών',
+  'Γραμμική Άλγεβρα',
+  'Εισαγωγή στον Προγραμματισμό (Python)',
+  'Ψηφιακή Επεξεργασία Σημάτων',
+]
+
 // ── Example nodes — one real KG node per class ───────────────────────────────
 //
 // University (evdx:university_8): AUTh — ID derived from URI suffix; name from

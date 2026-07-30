@@ -140,12 +140,16 @@ export const t = {
   ontologySpotUniSub:   (n: number, total: number): string =>
     `${n} με καταχωρημένο όνομα · ${total} συνολικά`,
   ontologySpotDeptTitle: 'Τμήματα',
-  ontologySpotDeptSub:   (n: number): string => `${n} μοναδικά ονόματα`,
+  ontologySpotDeptSub:   (n: number): string => `743 διαφορετικά τμήματα · ${n} μοναδικά ονόματα τμημάτων`,
   ontologySpotBookTitle: 'Βιβλίο — δείγμα',
   ontologySpotBookSub:   (n: string): string => `από ${n}`,
   ontologySpotCourseTitle: 'Μαθήματα',
-  ontologySpotCourseSub:   (n: number, total: number): string =>
-    `${n} με καταχωρημένο όνομα · ${total} συνολικά`,
+  ontologySpotCourseSub:   (distinctTitles: string, totalInstances: string): string =>
+    `${distinctTitles} μοναδικοί τίτλοι · ${totalInstances} συνολικές προσφορές μαθημάτων`,
+  ontologyCourseSearchPlaceholder: 'αναζήτηση μαθήματος… π.χ. αρχιτεκτονική υπολογιστών',
+  ontologySearching:   'αναζήτηση…',
+  ontologyCourseOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
+  ontologyCourseNoResults: 'καμία αντιστοίχιση',
 
   ontologySearchPlaceholder: 'φιλτράρισμα…',
   ontologyShowMore: (n: number): string => `+ ${n} ακόμη`,
