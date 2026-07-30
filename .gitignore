@@ -81,10 +81,15 @@ bibliography/
 notes/grounding-nlq-exploration.md
 scripts/
 
+# ── Private docs — never on the public remote (local-only, 2026-07-30) ─────────
+# CLAUDE.md files were tracked from earlier commits (grandfathered in, same as
+# a few decisions/ files below) despite decisions/ and notes/ already being
+# ignored above. Untracked here going forward; git rm --cached applied once.
+CLAUDE.md
+
 # Backend logs
 backend/.claude/
 
 
 # TODO:all the CLAUDE.md files
 # and remove them from the github repo by ``git rm --cached TODO.md`` etc. 
-h
