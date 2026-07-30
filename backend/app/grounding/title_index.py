@@ -90,7 +90,7 @@ from rapidfuzz import fuzz, process
 
 from app.grounding import db
 from app.grounding.normalize import normalize_greek
-from app.grounding.schema import create_schema, sync_course_fts
+from app.grounding.schema import create_schema, sync_title_fts
 from app.grounding.stem import greek_stem
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ def _build_index(surface_map: dict[str, list[str]]) -> _IndexState:
         conn.executemany(
             "INSERT INTO course(norm, surface) VALUES (?, ?)", rows
         )
-        sync_course_fts(conn)
+        sync_title_fts(conn, "course")
     conn.commit()
 
     return _IndexState(conn=conn)

@@ -65,7 +65,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.grounding.normalize import normalize_greek  # noqa: E402
-from app.grounding.schema import create_schema, sync_course_fts  # noqa: E402
+from app.grounding.schema import create_schema, sync_title_fts  # noqa: E402
 
 try:
     from SPARQLWrapper import JSON, SPARQLWrapper
@@ -236,7 +236,7 @@ def build_database(
             for surface in sorted(surfaces)
         ]
         conn.executemany("INSERT INTO course(norm, surface) VALUES (?, ?)", course_rows)
-        sync_course_fts(conn)
+        sync_title_fts(conn, "course")
 
         conn.commit()
     finally:
