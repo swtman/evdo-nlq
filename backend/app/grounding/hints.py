@@ -8,9 +8,33 @@ grounding module.  Given a raw user question (Greek or English), it:
   1. Tokenizes the question into individual word tokens.
   2. Resolves entity mentions (single tokens AND 2/3-token windows) via
      ``linker.resolve_mention``.
-  3. Stems remaining topic words via ``stem.greek_stem``.
-  4. Formats the results into a markdown block ready for injection into the
+  3. Resolves a specific course/book title from the residual content words,
+     via ``title_index.rank_titles`` — searching BOTH the course and book
+     corpora (see "COURSE AND BOOK TITLE RESOLUTION" below).
+  4. Stems remaining topic words via ``stem.greek_stem``.
+  5. Formats the results into a markdown block ready for injection into the
      system prompt that precedes the LLM SPARQL-generation call.
+
+COURSE AND BOOK TITLE RESOLUTION
+-----------------------------------
+Both corpora are searched on every question (when their respective
+``settings.course_linking_enabled`` / ``settings.book_linking_enabled`` flags
+are on), not just one guessed from question wording. The obvious alternative
+— detect "βιβλία" vs. "μάθημα" and search only that corpus — was rejected:
+those exact words are stopwords, already stripped from ``topic_tokens``
+before title ranking runs, and the signal is unreliable in the direction
+that matters most ("ποια βιβλία χρησιμοποιεί το μάθημα Χ" says "βιβλία" but
+names a Course). A wrong guess would silently search the wrong corpus and
+find nothing — the same invisible-failure shape as the whitespace bug this
+module's title matching was extended to fix (see ``clean.py``).
+
+Because both corpora are searched, the same normalized title can legitimately
+match both a Course and a Book (measured: ~3,498 titles exist in both). The
+output is tagged ``[Course]``/``[Book]`` per resolved title (see
+``_format_title_line``) so the LLM can tell them apart, and a collision note
+fires only when the SAME title matched both classes — not merely "a course
+and a book both matched something" (two different titles matching is not an
+ambiguity). See ADR-019.
 
 WHY INJECT HINTS INTO THE SYSTEM PROMPT?
 -----------------------------------------
@@ -379,6 +403,32 @@ def _format_entity_line(entity: ResolvedEntity) -> str:
     return f"- [Department @ {parent}] {entity.canonical_label}"
 
 
+# Display label per TitleMatch.entity_class — keys must match schema.TITLE_CLASSES.
+_TITLE_CLASS_LABELS: dict[str, str] = {"course": "Course", "book": "Book"}
+
+
+def _format_title_line(match: TitleMatch) -> str:
+    """Format a single resolved title as a class-tagged markdown bullet.
+
+    One line per TITLE, not per surface form — multiple surface forms (e.g.
+    the ALL-CAPS accent-free and mixed-case accented KG storage variants of
+    the same title) are joined with " | ", reusing the convention the
+    Topic-stems section already uses for "variants of the same thing", so
+    the model isn't taught a second syntax for the same idea.
+
+    Example: ``- [Course] "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ" | "Αρχιτεκτονική Υπολογιστών"``
+
+    Args:
+        match: A ``TitleMatch`` with its ``entity_class`` set.
+
+    Returns:
+        A markdown bullet string (no trailing newline).
+    """
+    label = _TITLE_CLASS_LABELS[match.entity_class]
+    surfaces = " | ".join(f'"{s}"' for s in match.surface_forms)
+    return f"- [{label}] {surfaces}"
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -388,10 +438,13 @@ def build_grounding_hints(question: str) -> str:
     """Build a grounding hint block to inject into the LLM system prompt.
 
     Takes a raw user question (Greek or English) and returns a formatted
-    markdown string with two optional sections:
+    markdown string with up to three optional sections:
 
       - **Entities** — canonical KG labels resolved from the question (exact
         strings to use in SPARQL FILTER/VALUES clauses).
+      - **Resolved title(s)** — specific course/book titles resolved from the
+        question, class-tagged ``[Course]``/``[Book]`` (see
+        "COURSE AND BOOK TITLE RESOLUTION" in the module docstring).
       - **Topic stems** — Greek word stems for CONTAINS filters.
 
     Returns ``""`` (empty string) when the question yields neither entities nor
@@ -433,24 +486,35 @@ def build_grounding_hints(question: str) -> str:
     high_priority = frozenset({"acronym", "exact"})
     claimed = _tokens_used_by_entity(topic_tokens, entities, high_priority)
 
-    # Step 4a — title ranking.
+    # Step 4a — title ranking, BOTH classes.
     # Take the residual content words (unclaimed, non-stopword tokens) as the
-    # candidate phrase for a specific course/book title the user named.
-    # e.g. "αρχιτεκτονικη υπολογιστων" after "ΑΠΘ" is claimed and stopwords removed.
-    title_matches: list[TitleMatch] = []
-    if settings.course_linking_enabled:
-        residual_tokens = [t for i, t in enumerate(topic_tokens) if i not in claimed]
-        if residual_tokens:
-            phrase = " ".join(residual_tokens)
-            candidates = rank_titles(phrase, k=3)
-            # Apply acceptance threshold — below it the match is too uncertain;
-            # fall back to stem-CONTAINS for this query.
-            title_matches = [
-                m for m in candidates if m.score >= settings.course_match_threshold
+    # candidate phrase for a specific course/book title the user named, e.g.
+    # "αρχιτεκτονικη υπολογιστων" after "ΑΠΘ" is claimed and stopwords removed.
+    # Search course and book independently — see "COURSE AND BOOK TITLE
+    # RESOLUTION" in the module docstring for why this is unconditional
+    # rather than gated on a guessed class.
+    residual_tokens = [t for i, t in enumerate(topic_tokens) if i not in claimed]
+    course_matches: list[TitleMatch] = []
+    book_matches: list[TitleMatch] = []
+    if residual_tokens:
+        phrase = " ".join(residual_tokens)
+        if settings.course_linking_enabled:
+            # Apply acceptance threshold — below it the match is too
+            # uncertain; fall back to stem-CONTAINS for this query.
+            course_matches = [
+                m for m in rank_titles(phrase, k=3, entity_class="course")
+                if m.score >= settings.course_match_threshold
             ]
+        if settings.book_linking_enabled:
+            book_matches = [
+                m for m in rank_titles(phrase, k=3, entity_class="book")
+                if m.score >= settings.book_match_threshold
+            ]
+    title_matches: list[TitleMatch] = course_matches + book_matches
 
-    # Step 4b — if a title match fired, consume the residual tokens so they
-    # don't also produce stems.  The exact VALUES binding makes CONTAINS redundant.
+    # Step 4b — if any title matched (either class), consume the residual
+    # tokens so they don't also produce stems.  The exact VALUES binding
+    # makes CONTAINS redundant for whichever title(s) were resolved.
     if title_matches:
         # All residual topic tokens are now covered by the title resolution.
         claimed = frozenset(range(len(topic_tokens)))
@@ -474,13 +538,36 @@ def build_grounding_hints(question: str) -> str:
         if entities:
             lines.append("")  # blank line between entities and titles
         lines.append(
-            "**Resolved title(s)** (the question names a specific course/book —"
-            " bind evdx:title to these exact literals with VALUES;"
-            " do NOT use CONTAINS for it):"
+            "**Resolved title(s)** (the question names one or more specific KG"
+            " titles — bind the tagged class's evdx:title to these exact"
+            " literals with VALUES; do NOT use CONTAINS for them):"
         )
-        for match in title_matches:
-            for surface in match.surface_forms:
-                lines.append(f'- "{surface}"')
+        # Courses first, then books; each group already sorted score-descending
+        # by rank_titles. Deterministic order matters: the LLM DiskCache key is
+        # a hash of the full prompt, so nondeterministic ordering would halve
+        # the cache hit rate for no benefit.
+        for match in course_matches:
+            lines.append(_format_title_line(match))
+        for match in book_matches:
+            lines.append(_format_title_line(match))
+
+        # Collision note — fires ONLY when the SAME normalized title matched
+        # both classes, not merely "a course and a book both matched
+        # something" (two different titles matching is not an ambiguity, and
+        # a note there would be factually false). See module docstring
+        # "COURSE AND BOOK TITLE RESOLUTION".
+        course_norms = {m.normalized_title for m in course_matches}
+        book_norms = {m.normalized_title for m in book_matches}
+        for norm in sorted(course_norms & book_norms):
+            representative = next(
+                m.surface_forms[0] for m in course_matches if m.normalized_title == norm
+            )
+            lines.append(
+                f'(Note: "{representative}" matched BOTH a Course and a Book.'
+                " Bind only the class the question is about; if it asks for"
+                " the books of a named course, bind the [Course] title and"
+                " reach the books via evdx:hasBook.)"
+            )
 
     if stems:
         if entities or title_matches:

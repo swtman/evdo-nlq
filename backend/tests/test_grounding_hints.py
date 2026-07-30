@@ -194,3 +194,137 @@ def test_bare_panepistimio_emits_no_university() -> None:
     """
     result = build_grounding_hints("πανεπιστημιο")
     assert "[University]" not in result
+
+
+# ---------------------------------------------------------------------------
+# Class-tagged Resolved title(s) format (dual course/book search) — added for
+# book title linking. rank_titles is monkeypatched so these tests exercise
+# the FORMATTING and DISAMBIGUATION logic only, independent of entities.db
+# contents or real corpus ranking (that's title_index's own test suite).
+#
+# The question text is a made-up, non-Greek-word phrase so it can't
+# accidentally resolve as an entity via the real gazetteer/linker — these
+# tests only care about the residual content phrase reaching rank_titles.
+# ---------------------------------------------------------------------------
+
+import app.grounding.hints as hints_module  # noqa: E402
+from app.grounding.title_index import TitleMatch  # noqa: E402
+
+_NONSENSE_QUESTION = "ζωροβατικη μελετη ξενοφωνικης"
+
+
+def _course_match(norm="ζωροβατικη μελετη", score=0.9, surfaces=None):
+    return TitleMatch(
+        normalized_title=norm, score=score,
+        surface_forms=surfaces or [f"{norm.upper()}"], entity_class="course",
+    )
+
+
+def _book_match(norm="ξενοφωνικης θεωριας", score=0.9, surfaces=None):
+    return TitleMatch(
+        normalized_title=norm, score=score,
+        surface_forms=surfaces or [f"{norm.upper()}"], entity_class="book",
+    )
+
+
+def test_course_only_match_formats_with_course_tag(monkeypatch) -> None:
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        return [_course_match()] if entity_class == "course" else []
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "[Course]" in result
+    assert "[Book]" not in result
+    assert "matched BOTH" not in result
+
+
+def test_book_only_match_formats_with_book_tag(monkeypatch) -> None:
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        return [_book_match()] if entity_class == "book" else []
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "[Book]" in result
+    assert "[Course]" not in result
+    assert "matched BOTH" not in result
+
+
+def test_different_titles_both_classes_no_collision_note(monkeypatch) -> None:
+    """Course matches title A, book matches a DIFFERENT title B — both lines
+    render, but no note: two different titles matching is not an ambiguity,
+    and a note there would be factually false."""
+
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        return [_course_match()] if entity_class == "course" else [_book_match()]
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "[Course]" in result
+    assert "[Book]" in result
+    assert "matched BOTH" not in result
+
+
+def test_same_title_both_classes_emits_collision_note(monkeypatch) -> None:
+    """The SAME normalized title matching both classes must emit both lines
+    AND the collision note, naming the colliding title."""
+
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        norm, surface = "ιδια τιτλος", "ΙΔΙΑ ΤΙΤΛΟΣ"
+        if entity_class == "course":
+            return [_course_match(norm=norm, surfaces=[surface])]
+        return [_book_match(norm=norm, surfaces=[surface])]
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "[Course]" in result
+    assert "[Book]" in result
+    assert "matched BOTH a Course and a Book" in result
+    assert "ΙΔΙΑ ΤΙΤΛΟΣ" in result  # names the colliding title
+
+
+def test_surface_forms_joined_with_pipe(monkeypatch) -> None:
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        if entity_class != "course":
+            return []
+        return [_course_match(surfaces=["ΑΛΦΑ ΒΗΤΑ", "Άλφα Βήτα"])]
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert '"ΑΛΦΑ ΒΗΤΑ" | "Άλφα Βήτα"' in result
+
+
+def test_book_linking_disabled_suppresses_book_search(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        calls.append(entity_class)
+        return [_course_match()] if entity_class == "course" else [_book_match()]
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(hints_module.settings, "book_linking_enabled", False)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "book" not in calls
+    assert "course" in calls
+    assert "[Book]" not in result
+
+
+def test_per_class_thresholds_apply_independently(monkeypatch) -> None:
+    """A score that clears the book threshold but not the (higher) course
+    threshold must be accepted for book and dropped for course."""
+
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        return [_course_match(score=0.75)] if entity_class == "course" else [_book_match(score=0.75)]
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(hints_module.settings, "course_match_threshold", 0.8)
+    monkeypatch.setattr(hints_module.settings, "book_match_threshold", 0.7)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "[Course]" not in result  # 0.75 < 0.8 course threshold
+    assert "[Book]" in result  # 0.75 >= 0.7 book threshold
