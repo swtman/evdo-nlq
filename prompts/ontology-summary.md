@@ -16,7 +16,7 @@ Key properties (traversal):
 Key properties (literals):
 - evdx:title           LearningEntity (Course or Book) → string
 - evdx:name            AcademicEntity (Dept or University) → string
-- evdx:semester        Course → string (e.g. "1", "2")
+- evdx:semester        Course → integer (e.g. 6, unquoted — see IMPORTANT note below)
 - evdx:year            Course → integer (e.g. 2021)
 - evdx:professors      Course → string (professor name(s) teaching this offering)
 - evdx:hasCode         LearningEntity → integer (Eudoxus internal code — NOT an ISBN; write as an unquoted number, e.g. VALUES ?code {94700120})
@@ -42,6 +42,9 @@ IMPORTANT:
   querying Departments to avoid merging identically-named items.
 - evdx:hasCode is the Eudoxus-internal code, distinct from evdx:isbn (the ISBN).
   It is an xsd:integer — use unquoted numbers (94700120, not "94700120").
+- evdx:semester, evdx:year, and evdx:publicationYear are all xsd:integer —
+  use unquoted numbers (?c evdx:semester 6, not "6"). A quoted string is a
+  different RDF term from an integer and silently matches zero triples.
 - evdx:hasSchool is a string literal on Department/University (a school NAME),
   NOT a link to a separate School class.
 - A Department can have multiple evdx:belongsToUniversity parents (joint
