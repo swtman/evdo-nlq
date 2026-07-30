@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <!-- Outer Left Panel -->
+  <polygon points="15,30 42,45 42,159.3 15,145" fill="#587c86" />
+
+  <!-- Outer Right Panel -->
+  <polygon points="185,30 158,45 158,159.3 185,145" fill="#568f9a" />
+
+  <!-- Middle Left - Top Spike -->
+  <polygon points="42,17 67,45 42,45" fill="#19b2c5" />
+
+  <!-- Middle Right - Top Spike -->
+  <polygon points="158,17 133,45 158,45" fill="#19b2c5" />
+
+  <!-- Center-Left - Top Spike -->
+  <polygon points="67,17 100,75 67,45" fill="#009eb3" />
+
+  <!-- Center-Right - Top Spike -->
+  <polygon points="133,17 100,75 133,45" fill="#009eb3" />
+
+  <!-- Middle Left Panel -->
+  <polygon points="42,45 67,45 67,172.5 42,159.3" fill="#175b6c" />
+
+  <!-- Middle Right Panel -->
+  <polygon points="133,45 158,45 158,159.3 133,172.5" fill="#177382" />
+
+  <!-- Center Left Main Panel -->
+  <polygon points="67,45 100,75 100,190 67,172.5" fill="#134d5b" />
+
+  <!-- Center Right Main Panel -->
+  <polygon points="100,75 133,45 133,172.5 100,190" fill="#125666" />
+</svg>

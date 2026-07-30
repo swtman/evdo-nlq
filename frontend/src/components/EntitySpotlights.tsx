@@ -2,7 +2,7 @@
  * EntitySpotlights — three side-by-side entity spotlight cards.
  *
  * Cards:
- *   1. Universities — compact preview + "δείτε όλα" opens a searchable modal
+ *   1. Universities — compact preview + "δείτε τα όλα" opens a searchable modal
  *   2. Departments  — same pattern; de-duped names annotated with sharing-uni count
  *   3. Books        — shows one selected book record; "δείτε τα όλα" modal picks another
  *   4. Courses      — shows one selected course record; "δείτε τα όλα" modal picks another
@@ -284,101 +284,101 @@ function CourseCard() {
 
 // // ── Book sample card ──────────────────────────────────────────────────────────
 
-// function BookCard() {
-//   const bookCount    = classes.find(c => c.id === 'Book')?.countFormatted ?? '48.679'
-//   const [selectedIdx, setSelectedIdx] = useState(0)
-//   const [modalOpen,   setModalOpen]   = useState(false)
-//   const [bookQuery,   setBookQuery]   = useState('')
+function BookCard() {
+  const bookCount    = classes.find(c => c.id === 'Book')?.countFormatted ?? '48.679'
+  const [selectedIdx, setSelectedIdx] = useState(0)
+  const [modalOpen,   setModalOpen]   = useState(false)
+  const [bookQuery,   setBookQuery]   = useState('')
 
-//   const book = sampleBooks[selectedIdx]
+  const book = sampleBooks[selectedIdx]
 
-//   const filteredBooks = useMemo(() => {
-//     const q = bookQuery.trim().toLowerCase()
-//     if (!q) return sampleBooks
-//     return sampleBooks.filter(
-//       b => b.title.toLowerCase().includes(q) || b.authors.toLowerCase().includes(q)
-//     )
-//   }, [bookQuery])
+  const filteredBooks = useMemo(() => {
+    const q = bookQuery.trim().toLowerCase()
+    if (!q) return sampleBooks
+    return sampleBooks.filter(
+      b => b.title.toLowerCase().includes(q) || b.authors.toLowerCase().includes(q)
+    )
+  }, [bookQuery])
 
-//   return (
-//     <div className="od-spotlight-card">
-//       <h3 className="od-spotlight-title">{t.ontologySpotBookTitle}</h3>
-//       <p className="od-spotlight-sub">{t.ontologySpotBookSub(bookCount)}</p>
+  return (
+    <div className="od-spotlight-card">
+      <h3 className="od-spotlight-title">{t.ontologySpotBookTitle}</h3>
+      <p className="od-spotlight-sub">{t.ontologySpotBookSub(bookCount)}</p>
 
-//       <dl className="od-book-record">
-//         <dt>{t.ontologyBookCode}</dt>
-//         <dd className="od-book-code">{book.code}</dd>
+      <dl className="od-book-record">
+        <dt>{t.ontologyBookCode}</dt>
+        <dd className="od-book-code">{book.code}</dd>
 
-//         <dt>{t.ontologyBookAuthors}</dt>
-//         <dd>{book.authors}</dd>
+        <dt>{t.ontologyBookAuthors}</dt>
+        <dd>{book.authors}</dd>
 
-//         <dt>{t.ontologyBookIsbn}</dt>
-//         <dd>{book.isbn}</dd>
+        <dt>{t.ontologyBookIsbn}</dt>
+        <dd>{book.isbn}</dd>
 
-//         <dt>{t.ontologyBookKeywords}</dt>
-//         <dd className="od-book-keywords">
-//           {book.keywords.map(kw => (
-//             <span key={kw} className="od-kw-chip">{kw}</span>
-//           ))}
-//         </dd>
+        <dt>{t.ontologyBookKeywords}</dt>
+        <dd className="od-book-keywords">
+          {book.keywords.map(kw => (
+            <span key={kw} className="od-kw-chip">{kw}</span>
+          ))}
+        </dd>
 
-//         <dt>{t.ontologyBookPublisher}</dt>
-//         <dd>{book.publisher}</dd>
-//       </dl>
+        <dt>{t.ontologyBookPublisher}</dt>
+        <dd>{book.publisher}</dd>
+      </dl>
 
-//       <div className="od-book-title">{book.title}</div>
+      <div className="od-book-title">{book.title}</div>
 
-//       <button
-//         className="od-show-more"
-//         type="button"
-//         onClick={() => setModalOpen(true)}
-//       >
-//         {t.ontologySeeAll(sampleBooks.length)}
-//       </button>
+      <button
+        className="od-show-more"
+        type="button"
+        onClick={() => setModalOpen(true)}
+      >
+        {t.ontologySeeAll(sampleBooks.length)}
+      </button>
 
-//       {modalOpen && (
-//         <EntityModal
-//           title={t.ontologyBookModalTitle}
-//           count={filteredBooks.length}
-//           onClose={() => setModalOpen(false)}
-//         >
-//           <div className="od-search">
-//             <span className="od-search-icon" aria-hidden="true">⌕</span>
-//             <input
-//               className="od-search-input"
-//               type="search"
-//               placeholder={t.ontologySearchPlaceholder}
-//               value={bookQuery}
-//               onChange={e => setBookQuery(e.target.value)}
-//               aria-label={`${t.ontologySearchPlaceholder} ${t.ontologyBookModalTitle}`}
-//             />
-//           </div>
-//           <ul className="od-list" aria-label="Λίστα βιβλίων">
-//             {filteredBooks.map(b => {
-//               const realIdx = sampleBooks.indexOf(b)
-//               return (
-//                 <li key={b.code} className="od-list-item od-list-item--selectable">
-//                   <button
-//                     type="button"
-//                     className={`od-list-item-btn${realIdx === selectedIdx ? ' od-list-item-btn--active' : ''}`}
-//                     onClick={() => { setSelectedIdx(realIdx); setModalOpen(false) }}
-//                     aria-current={realIdx === selectedIdx ? 'true' : undefined}
-//                   >
-//                     <span className="od-list-item-name">{b.title}</span>
-//                     <span className="od-list-item-badge">{b.authors.split(' / ')[0]}</span>
-//                   </button>
-//                 </li>
-//               )
-//             })}
-//             {filteredBooks.length === 0 && (
-//               <li className="od-list-empty">—</li>
-//             )}
-//           </ul>
-//         </EntityModal>
-//       )}
-//     </div>
-//   )
-// }
+      {modalOpen && (
+        <EntityModal
+          title={t.ontologyBookModalTitle}
+          count={filteredBooks.length}
+          onClose={() => setModalOpen(false)}
+        >
+          <div className="od-search">
+            <span className="od-search-icon" aria-hidden="true">⌕</span>
+            <input
+              className="od-search-input"
+              type="search"
+              placeholder={t.ontologySearchPlaceholder}
+              value={bookQuery}
+              onChange={e => setBookQuery(e.target.value)}
+              aria-label={`${t.ontologySearchPlaceholder} ${t.ontologyBookModalTitle}`}
+            />
+          </div>
+          <ul className="od-list" aria-label="Λίστα βιβλίων">
+            {filteredBooks.map(b => {
+              const realIdx = sampleBooks.indexOf(b)
+              return (
+                <li key={b.code} className="od-list-item od-list-item--selectable">
+                  <button
+                    type="button"
+                    className={`od-list-item-btn${realIdx === selectedIdx ? ' od-list-item-btn--active' : ''}`}
+                    onClick={() => { setSelectedIdx(realIdx); setModalOpen(false) }}
+                    aria-current={realIdx === selectedIdx ? 'true' : undefined}
+                  >
+                    <span className="od-list-item-name">{b.title}</span>
+                    <span className="od-list-item-badge">{b.authors.split(' / ')[0]}</span>
+                  </button>
+                </li>
+              )
+            })}
+            {filteredBooks.length === 0 && (
+              <li className="od-list-empty">—</li>
+            )}
+          </ul>
+        </EntityModal>
+      )}
+    </div>
+  )
+}
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
@@ -387,7 +387,7 @@ export function EntitySpotlights() {
     <div className="od-spotlights">
       <UniversityCard />
       <DepartmentCard />
-      <CourseCard />
+      {/* <CourseCard /> */}
       {/* BookCard — needs sampleBooks from ontology.ts; to be restored */}
     </div>
   )

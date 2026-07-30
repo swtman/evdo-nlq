@@ -25,7 +25,7 @@ function SectionLabel({ label, count }: { label: string; count?: number | string
   return (
     <div className="od-section-label" aria-hidden="true">
       <span>{label}</span>
-      {count !== undefined && <span className="od-section-count">{count}</span>}
+      {/* {count !== undefined && <span className="od-section-count">{count}</span>} */}
     </div>
   )
 }

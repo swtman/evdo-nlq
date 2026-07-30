@@ -186,10 +186,10 @@ export function SparqlPanel({ sparql, streaming, executing, onRerun }: Props) {
       )}
 
       {/* ── Footer meta line ── */}
-      {!collapsed && !streaming && !editing && sparql && (
+      {!collapsed && !streaming && sparql && (
         <div className="sparql-terminal-footer">
-          <span style={{ color: 'var(--accent)' }}>// </span>
-          {t.sparqlComplete} · έγκυρο ✓
+          <span style={{ color: 'var(--accent)' }}> </span>
+          <span style={{ color: 'var(--ink-faint)' }}></span>
         </div>
       )}
 

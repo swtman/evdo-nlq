@@ -209,7 +209,7 @@ export default function App() {
           aria-current={view === 'ontology' ? 'page' : undefined}
         >
           {/* ontology icon */}
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600 }}>◈</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600 }}>🕮</span>
         </button>
         <button
           className={`rail-btn${historyOpen ? ' active' : ''}`}
@@ -219,7 +219,7 @@ export default function App() {
           aria-expanded={historyOpen}
         >
           {/* history icon */}
-          <span style={{ fontSize: 16 }}>⊙</span>
+          <span style={{ fontSize: 16 }}>⟳</span>
         </button>
         {/* Theme toggle at the bottom */}
         <button
@@ -259,7 +259,7 @@ export default function App() {
           <div className="header-left">
             <div className="header-brand">
               <span className="header-title">evdograph</span>
-              <span className="header-version">v0.1.0</span>
+              <span className="header-version"></span>
             </div>
             <nav className="header-tabs" aria-label="Κύρια πλοήγηση">
               <button
@@ -290,13 +290,13 @@ export default function App() {
           </div>
 
           <div className="header-meta">
-            {activeProvider && (
+            {/* {activeProvider && (
               <span className="header-provider">{activeProvider}</span>
-            )}
-            <div className="header-graphdb">
+            )} */}
+            {/* <div className="header-graphdb">
               <span className="live-dot" aria-hidden="true" />
               {t.graphdbConnected}
-            </div>
+            </div> */}
             <button
               className="theme-toggle"
               onClick={toggleTheme}
@@ -325,7 +325,7 @@ export default function App() {
                 prefillQuestion={prefillQuestion}
                 showClear={queryIsActive}
                 onClear={handleClear}
-                gitSha={GIT_SHA}
+                // gitSha={GIT_SHA}
               />
 
               <div className="hero-chips" role="list" aria-label={t.heroTryLabel}>

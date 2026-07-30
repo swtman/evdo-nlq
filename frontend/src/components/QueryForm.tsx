@@ -126,11 +126,11 @@ export function QueryForm({ providers, disabled, onSubmit, prefillQuestion, show
           />
         </div>
 
-        {gitSha && (
+        {/* {gitSha && (
           <span className="query-select-label" style={{ color: 'var(--ink-faint)' }}>
             build {gitSha}
           </span>
-        )}
+        )} */}
 
         {showClear && (
           <button

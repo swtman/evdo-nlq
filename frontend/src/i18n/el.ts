@@ -33,7 +33,6 @@ export const t = {
     'Πανεπιστήμια στην Ελλάδα',
     'Βιβλία στο ΑΠΘ',
     'Μαθήματα Πληροφορικής',
-    'Συγγραφείς Φυσικής',
   ],
 
   /* ── Question echo (above SPARQL panel) ──────────────────────────────── */
@@ -61,7 +60,7 @@ export const t = {
   /* ── SPARQL panel ────────────────────────────────────────────────────── */
   sparqlLabel:      'SPARQL',
   sparqlGenerating: '// generating…',
-  sparqlComplete:   '// ready',
+  sparqlComplete:   'ready',
   sparqlCopy:       '⧉ αντιγραφή',
   sparqlCopied:     '✓ αντιγράφηκε',
   sparqlEdit:       '✎ επεξεργασία',
@@ -114,9 +113,9 @@ export const t = {
   ],
 
   /* ── Ontology page ──────────────────────────────────────────────────── */
-  ontologyEyebrow:     'ΓΝΩΣΙΑΚΟΣ ΓΡΑΦΟΣ',
+  ontologyEyebrow:     'ΓΡΑΦΟΣ ΟΝΤΟΛΟΓΙΑΣ',
   ontologyTitle:       'Η δομή του EvdoGraph',
-  ontologyLead:        'Πώς οργανώνονται τα δεδομένα των ελληνικών πανεπιστημιακών συγγραμμάτων — οι κλάσεις, οι ιδιότητες και οι σχέσεις που συνδέουν πανεπιστήμια, μαθήματα και βιβλία.',
+  ontologyLead:        'Πώς οργανώνονται τα δεδομένα του Ευδόξου. Οι κλάσεις, οι ιδιότητες και οι σχέσεις που συνδέουν πανεπιστήμια, μαθήματα και βιβλία.',
   ontologyStatClasses: (n: number): string => `${n} κλάσεις`,
   ontologyStatRels:    (n: number): string => `${n} σχέσεις`,
   ontologyStatEntities:(n: string): string => `${n} οντότητες`,
@@ -150,7 +149,7 @@ export const t = {
 
   ontologySearchPlaceholder: 'φιλτράρισμα…',
   ontologyShowMore: (n: number): string => `+ ${n} ακόμη`,
-  ontologySeeAll: (n: number): string => `δείτε όλα (${n})`,
+  ontologySeeAll: (n: number): string => `δείτε τα όλα (${n})`,
   ontologyModalClose: 'κλείσιμο',
   ontologyModalResults: (n: number): string => `${n} αποτελέσματα`,
   ontologyBookModalTitle: 'Βιβλία — δείγματα',

@@ -473,7 +473,7 @@ body {
   font-size: 16px;
   line-height: 1.5;
   outline: none;
-  padding: 2px 0;
+  padding: auto;
   min-width: 0;
   resize: none;          /* JS handles height via scrollHeight */
   overflow-y: auto;
@@ -501,12 +501,13 @@ body {
 
 .query-controls {
   max-width: 720px;
-  margin: 0 auto;
+  margin: 18px auto 0px;
   width: 100%;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  justify-content: center;
 }
 
 .query-select-group {
@@ -521,19 +522,21 @@ body {
   color: var(--ink-soft);
   letter-spacing: 0.05em;
   flex-shrink: 0;
+  
 }
 
 .query-clear {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--ink-soft);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--ink);
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 6px 12px;
   border-radius: var(--r-sm);
   transition: background 0.15s, color 0.15s;
-  margin-left: auto;
+  margin-left: 0px;
+  justify-content: center;
 }
 .query-clear:hover { background: var(--hover); color: var(--ink); }
 .query-clear:disabled { cursor: not-allowed; opacity: 0.5; }

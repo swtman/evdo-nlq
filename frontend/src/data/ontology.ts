@@ -134,7 +134,7 @@ export const classes: OntologyClass[] = [
     countFormatted: '743',
     superclass: 'AcademicEntity',
     description:
-      'Τμήμα πανεπιστημίου. Το ίδιο όνομα εμφανίζεται σε πολλά ιδρύματα — απαιτείται ομαδοποίηση ανά πανεπιστήμιο.',
+      'Τμήμα πανεπιστημίου. Το ίδιο όνομα τμήματος μπορεί να εμφανίζεται σε πολλά ιδρύματα.',
     properties: ['evdx:ID', 'evdx:name', 'evdx:hasCourse →', 'evdx:hasSchool', 'evdx:belongsToUniversity ←'],
     example: 'Τμήμα Πληροφορικής',
   },
@@ -177,7 +177,7 @@ export const classes: OntologyClass[] = [
     countFormatted: '1.698',
     superclass: 'EvdoxusEntity',
     description:
-      'Εκδοτικός οίκος που δημοσιεύει ένα ή περισσότερα βιβλία του γράφου.',
+      'Εκδοτικός οίκος που δημοσιεύει ένα ή περισσότερα βιβλία.',
     properties: ['evdx:ID', 'evdx:publisherName', 'evdx:publishes →'],
     example: 'Κλειδάριθμος',
   },
