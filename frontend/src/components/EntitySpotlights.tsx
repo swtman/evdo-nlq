@@ -1,333 +1,250 @@
 /**
- * EntitySpotlights — side-by-side entity spotlight cards.
+ * EntitySpotlights — four entity spotlight cards, all backed by live search.
  *
- * Cards:
- *   1. Universities — compact preview + "δείτε τα όλα" opens a searchable modal.
- *      Data: bundled entities.json (46 records — small enough to ship in the bundle).
- *   2. Departments  — same pattern; de-duped names annotated with sharing-uni count.
- *      Data: bundled entities.json (799 records).
- *   3. Courses      — live debounced search against GET /entities/search, the
- *      same endpoint the SPARQL grounding pipeline resolves course mentions
- *      through (see backend/app/api/entities.py). Not bundled: ~73k distinct
- *      titles would be an 8 MB import for a feature that only needs the top
- *      few ranked matches per keystroke — see ADR-018.
- *   4. Books        — same live-search pattern as Courses, against the same
- *      endpoint with class=book (~37k distinct titles). Mirrors CourseCard
- *      exactly rather than the old (pre-ADR-018, dead-code) record-browser
- *      design — that would need the endpoint to return full metadata per
- *      keystroke instead of just {title, score}; see ADR-019.
+ * All four classes (University, Department, Course, Book) now go through
+ * the exact same pattern: a debounced live search against
+ * GET /entities/search (see backend/app/api/entities.py, ADR-018/ADR-020) —
+ * each keystroke ranks the real corpus server-side and returns only the top
+ * matches. This used to be true only for Course/Book; University/Department
+ * shipped their entire list inside the JS bundle (data/entities.json, 46 +
+ * 799 records) and filtered it client-side. That bundle is gone — see
+ * ADR-020 for why: it duplicated data already served live, and meant a
+ * university a user could find by browsing here was not provably one
+ * Stage-1 grounding could resolve from a question (the whole guarantee
+ * ADR-018 established for Course/Book).
+ *
+ * University and Department additionally get a "δείτε τα όλα" browse
+ * modal — genuinely different from search (there's no ranking to "browse
+ * everything", so it can't reuse the search results) — fed by a SEPARATE
+ * endpoint, GET /entities/list, and a separate hook, useEntityList. Course
+ * and Book don't: at ~73k/~37k distinct titles, listing "everything" isn't
+ * a coherent UI action the way it is for 46 universities.
+ *
+ * The four cards share one component, LiveSearchCard, parameterized by
+ * which useXSearch hook to call and (for University/Department) the browse
+ * config — see that component for the shared layout.
  */
 
-import { useState, useMemo } from 'react'
-import entitiesRaw from '../data/entities.json'
-import { courseSearchStats, bookSearchStats, classes } from '../data/ontology'
-import { useCourseSearch, useBookSearch } from '../hooks/useEntitySearch'
+import { useMemo, useState } from 'react'
+import { courseSearchStats, bookSearchStats, universitySearchStats, departmentSearchStats, classes } from '../data/ontology'
+import {
+  useCourseSearch,
+  useBookSearch,
+  useUniversitySearch,
+  useDepartmentSearch,
+  foldGreek,
+  ENTITY_SEARCH_LIMIT,
+  type EntitySearchResult,
+} from '../hooks/useEntitySearch'
+import { useEntityList, type ListableEntityClass } from '../hooks/useEntityList'
 import { EntityModal } from './EntityModal'
 import { t } from '../i18n/el'
 
-/** Shape of entities.json */
-interface EntitiesData {
-  snapshot: string
-  universities: string[]
-  departments: { university: string; department: string }[]
+// ── Shared live-search card ─────────────────────────────────────────────────
+
+interface BrowseConfig {
+  entityClass: ListableEntityClass
+  /** Total shown on the "δείτε τα όλα (N)" button — known synchronously
+   * (from data/ontology.ts's *SearchStats), no need to wait for the fetch. */
+  total: number
+  /** How to render one row inside the browse modal. Defaults to plain title. */
+  renderModalItem?: (r: EntitySearchResult) => React.ReactNode
 }
 
-const entities = entitiesRaw as EntitiesData
-
-/** Max items shown inline before the "see all" modal button */
-const LIST_MAX = 8
-
-// ── University card ───────────────────────────────────────────────────────────
-
-function UniversityCard() {
-  const [query, setQuery]       = useState('')
-  const [modalOpen, setModalOpen] = useState(false)
-
-  const totalInstances = classes.find(c => c.id === 'University')?.count ?? 46
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return entities.universities
-    return entities.universities.filter(u => u.toLowerCase().includes(q))
-  }, [query])
-
-  return (
-    <div className="od-spotlight-card">
-      <h3 className="od-spotlight-title">{t.ontologySpotUniTitle}</h3>
-      <p className="od-spotlight-sub">
-        {t.ontologySpotUniSub(entities.universities.length, totalInstances)}
-      </p>
-
-      <div className="od-search">
-        <span className="od-search-icon" aria-hidden="true">⌕</span>
-        <input
-          className="od-search-input"
-          type="search"
-          placeholder={t.ontologyUniSearchPlaceholder}
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          aria-label={`${t.ontologyUniSearchPlaceholder} ${t.ontologySpotUniTitle}`}
-        />
-      </div>
-
-      <ul className="od-list" aria-label={`Λίστα ${t.ontologySpotUniTitle}`}>
-        {filtered.slice(0, LIST_MAX).map(u => (
-          <li key={u} className="od-list-item">{u}</li>
-        ))}
-        {filtered.length === 0 && <li className="od-list-empty">κανένα αποτέλεσμα</li>}
-      </ul>
-
-      <button
-        className="od-show-more"
-        type="button"
-        onClick={() => setModalOpen(true)}
-      >
-        {t.ontologySeeAll(entities.universities.length)}
-      </button>
-
-      {modalOpen && (
-        <EntityModal
-          title={t.ontologySpotUniTitle}
-          count={filtered.length}
-          onClose={() => setModalOpen(false)}
-        >
-          <div className="od-search">
-            <span className="od-search-icon" aria-hidden="true">⌕</span>
-            <input
-              className="od-search-input"
-              type="search"
-              placeholder={t.ontologyUniSearchPlaceholder}
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              aria-label={`${t.ontologyUniSearchPlaceholder} ${t.ontologySpotUniTitle}`}
-            />
-          </div>
-          <ul className="od-list" aria-label={`Λίστα ${t.ontologySpotUniTitle}`}>
-            {filtered.map(u => (
-              <li key={u} className="od-list-item">{u}</li>
-            ))}
-            {filtered.length === 0 && <li className="od-list-empty">κανένα αποτέλεσμα</li>}
-          </ul>
-        </EntityModal>
-      )}
-    </div>
-  )
+interface LiveSearchCardProps {
+  titleText: string
+  subLine: string
+  placeholder: string
+  useSearch: (query: string) => { results: EntitySearchResult[]; loading: boolean; offline: boolean }
+  /** How to render one row inline. Defaults to plain title. */
+  renderItem?: (r: EntitySearchResult) => React.ReactNode
+  browse?: BrowseConfig
 }
 
-// ── Department card ───────────────────────────────────────────────────────────
-
-/** Grouped dept info: how many universities share this department name */
-interface DeptGroup {
-  name: string
-  uniCount: number
-}
-
-function buildDeptGroups(): DeptGroup[] {
-  const map = new Map<string, Set<string>>()
-  for (const { university, department } of entities.departments) {
-    if (!map.has(department)) map.set(department, new Set())
-    map.get(department)!.add(university)
-  }
-  return Array.from(map.entries())
-    .map(([name, unis]) => ({ name, uniCount: unis.size }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'el'))
-}
-
-const deptGroups = buildDeptGroups()
-
-function DepartmentCard() {
-  const [query, setQuery]       = useState('')
-  const [modalOpen, setModalOpen] = useState(false)
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return deptGroups
-    return deptGroups.filter(d => d.name.toLowerCase().includes(q))
-  }, [query])
-
-  function DeptList({ items }: { items: DeptGroup[] }) {
-    return (
-      <ul className="od-list" aria-label={`Λίστα ${t.ontologySpotDeptTitle}`}>
-        {items.map(d => (
-          <li key={d.name} className="od-list-item od-list-item--dept">
-            <span className="od-list-item-name">{d.name}</span>
-            {d.uniCount > 1 && (
-              <span className="od-list-item-badge">
-                {t.ontologyDeptSharedNote(d.uniCount)}
-              </span>
-            )}
-          </li>
-        ))}
-        {items.length === 0 && <li className="od-list-empty">κανένα αποτέλεσμα</li>}
-      </ul>
-    )
-  }
-
-  return (
-    <div className="od-spotlight-card">
-      <h3 className="od-spotlight-title">{t.ontologySpotDeptTitle}</h3>
-      <p className="od-spotlight-sub">
-        {t.ontologySpotDeptSub(deptGroups.length)}
-      </p>
-
-      <div className="od-search">
-        <span className="od-search-icon" aria-hidden="true">⌕</span>
-        <input
-          className="od-search-input"
-          type="search"
-          placeholder={t.ontologyDeptSearchPlaceholder}
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          aria-label={`${t.ontologyDeptSearchPlaceholder} ${t.ontologySpotDeptTitle}`}
-        />
-      </div>
-
-      <DeptList items={filtered.slice(0, LIST_MAX)} />
-
-      <button
-        className="od-show-more"
-        type="button"
-        onClick={() => setModalOpen(true)}
-      >
-        {t.ontologySeeAll(deptGroups.length)}
-      </button>
-
-      {modalOpen && (
-        <EntityModal
-          title={t.ontologySpotDeptTitle}
-          count={filtered.length}
-          onClose={() => setModalOpen(false)}
-        >
-          <div className="od-search">
-            <span className="od-search-icon" aria-hidden="true">⌕</span>
-            <input
-              className="od-search-input"
-              type="search"
-              placeholder={t.ontologyDeptSearchPlaceholder}
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              aria-label={`${t.ontologyDeptSearchPlaceholder} ${t.ontologySpotDeptTitle}`}
-            />
-          </div>
-          <DeptList items={filtered} />
-        </EntityModal>
-      )}
-    </div>
-  )
-}
-
-// ── Course / Book cards ─────────────────────────────────────────────────────
-//
-// Unlike University/Department (bundled list, client-side filter), course
-// and book search are live: each keystroke (debounced) queries
-// GET /entities/search, which ranks the corpus server-side (~73k course /
-// ~37k book titles) and returns only the top matches. There is no separate
-// "preview 8 / see all N" tier here — the results ARE already the top-ranked
-// matches, so a "see all" modal would misleadingly imply a larger exhaustive
-// list exists behind it. Instead the full result list (up to the endpoint's
-// limit) renders inline, with a loading state during the debounce window and
-// an explicit offline label when falling back to the local sample (see
-// useEntitySearch).
-
-const RESULTS_SHOWN = 100
-
-function CourseCard() {
+function LiveSearchCard({
+  titleText,
+  subLine,
+  placeholder,
+  useSearch,
+  renderItem = r => r.title,
+  browse,
+}: LiveSearchCardProps) {
   const [query, setQuery] = useState('')
-  const { results, loading, offline } = useCourseSearch(query)
-  const shown = results.slice(0, RESULTS_SHOWN)
+  const { results, loading, offline } = useSearch(query)
+  const shown = results.slice(0, ENTITY_SEARCH_LIMIT)
+  const [modalOpen, setModalOpen] = useState(false)
 
   return (
     <div className="od-spotlight-card">
-      <h3 className="od-spotlight-title">{t.ontologySpotCourseTitle}</h3>
-      <p className="od-spotlight-sub">
-        {t.ontologySpotCourseSub(
-          courseSearchStats.distinctTitlesFormatted,
-          classes.find(c => c.id === 'Course')?.countFormatted ?? '',
-        )}
-      </p>
-      {offline && <p className="od-spotlight-offline-note">{t.ontologyCourseOffline}</p>}
+      <h3 className="od-spotlight-title">{titleText}</h3>
+      <p className="od-spotlight-sub">{subLine}</p>
+      {offline && <p className="od-spotlight-offline-note">{t.ontologyOffline}</p>}
 
       <div className="od-search">
         <span className="od-search-icon" aria-hidden="true">⌕</span>
         <input
           className="od-search-input"
           type="search"
-          placeholder={t.ontologyCourseSearchPlaceholder}
+          placeholder={placeholder}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          aria-label={`${t.ontologyCourseSearchPlaceholder} ${t.ontologySpotCourseTitle}`}
+          aria-label={`${placeholder} ${titleText}`}
         />
       </div>
 
-      <ul className="od-list" aria-label={`Λίστα ${t.ontologySpotCourseTitle}`}>
+      <ul className="od-list" aria-label={`Λίστα ${titleText}`}>
         {loading && <li className="od-list-empty">{t.ontologySearching}</li>}
         {!loading && shown.map(r => (
-          <li key={r.title} className="od-list-item">{r.title}</li>
+          <li key={r.title} className="od-list-item">{renderItem(r)}</li>
         ))}
         {!loading && shown.length === 0 && query.trim() === '' && (
           <li className="od-list-empty">{t.ontologySearchPrompt}</li>
         )}
         {!loading && shown.length === 0 && query.trim() !== '' && (
-          <li className="od-list-empty">{t.ontologyCourseNoResults}</li>
+          <li className="od-list-empty">{t.ontologyNoResults}</li>
         )}
       </ul>
+
+      {browse && (
+        <>
+          <button className="od-show-more" type="button" onClick={() => setModalOpen(true)}>
+            {t.ontologySeeAll(browse.total)}
+          </button>
+          {modalOpen && (
+            <BrowseModal
+              title={titleText}
+              entityClass={browse.entityClass}
+              onClose={() => setModalOpen(false)}
+              renderItem={browse.renderModalItem ?? (r => r.title)}
+            />
+          )}
+        </>
+      )}
     </div>
   )
 }
 
-function BookCard() {
+// ── Browse modal — "δείτε τα όλα", backed by GET /entities/list ───────────
+
+function BrowseModal({
+  title,
+  entityClass,
+  onClose,
+  renderItem,
+}: {
+  title: string
+  entityClass: ListableEntityClass
+  onClose: () => void
+  renderItem: (r: EntitySearchResult) => React.ReactNode
+}) {
+  const { results, loading, offline } = useEntityList(entityClass)
   const [query, setQuery] = useState('')
-  const { results, loading, offline } = useBookSearch(query)
-  const shown = results.slice(0, RESULTS_SHOWN)
+
+  const filtered = useMemo(() => {
+    const q = foldGreek(query.trim())
+    if (!q) return results
+    return results.filter(r => foldGreek(r.title).includes(q))
+  }, [results, query])
 
   return (
-    <div className="od-spotlight-card">
-      <h3 className="od-spotlight-title">{t.ontologySpotBookTitle}</h3>
-      <p className="od-spotlight-sub">
-        {t.ontologySpotBookSub(
-          bookSearchStats.distinctTitlesFormatted,
-          classes.find(c => c.id === 'Book')?.countFormatted ?? '',
-        )}
-      </p>
-      {offline && <p className="od-spotlight-offline-note">{t.ontologyBookOffline}</p>}
-
+    <EntityModal title={title} count={filtered.length} onClose={onClose}>
+      {offline && <p className="od-spotlight-offline-note">{t.ontologyOffline}</p>}
       <div className="od-search">
         <span className="od-search-icon" aria-hidden="true">⌕</span>
         <input
           className="od-search-input"
           type="search"
-          placeholder={t.ontologyBookSearchPlaceholder}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          aria-label={`${t.ontologyBookSearchPlaceholder} ${t.ontologySpotBookTitle}`}
+          aria-label={`αναζήτηση ${title}`}
         />
       </div>
-
-      <ul className="od-list" aria-label={`Λίστα ${t.ontologySpotBookTitle}`}>
+      <ul className="od-list" aria-label={`Λίστα ${title}`}>
         {loading && <li className="od-list-empty">{t.ontologySearching}</li>}
-        {!loading && shown.map(r => (
-          <li key={r.title} className="od-list-item">{r.title}</li>
+        {!loading && filtered.map(r => (
+          <li key={r.title} className="od-list-item">{renderItem(r)}</li>
         ))}
-        {!loading && shown.length === 0 && query.trim() === '' && (
-          <li className="od-list-empty">{t.ontologySearchPrompt}</li>
-        )}
-        {!loading && shown.length === 0 && query.trim() !== '' && (
-          <li className="od-list-empty">{t.ontologyBookNoResults}</li>
+        {!loading && filtered.length === 0 && (
+          <li className="od-list-empty">{t.ontologyNoResults}</li>
         )}
       </ul>
-    </div>
+    </EntityModal>
+  )
+}
+
+// ── Department row rendering — badge inline, full parent names in the modal ─
+
+function DeptInlineItem(r: EntitySearchResult) {
+  const parents = r.parents ?? []
+  return (
+    <span className="od-list-item--dept">
+      <span className="od-list-item-name">{r.title}</span>
+      {parents.length > 1 && (
+        <span className="od-list-item-badge">{t.ontologyDeptSharedNote(parents.length)}</span>
+      )}
+    </span>
+  )
+}
+
+function DeptModalItem(r: EntitySearchResult) {
+  const parents = r.parents ?? []
+  return (
+    <span className="od-list-item-detail">
+      <span className="od-list-item-name">{r.title}</span>
+      {parents.length > 0 && (
+        <span className="od-list-item-parents">
+          {t.ontologyDeptParentsLabel}: {parents.join(', ')}
+        </span>
+      )}
+    </span>
   )
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export function EntitySpotlights() {
+  const universityTotal = classes.find(c => c.id === 'University')?.count ?? universitySearchStats.distinctNames
+  const departmentTotal = classes.find(c => c.id === 'Department')?.count ?? departmentSearchStats.distinctNames
+
   return (
     <div className="od-spotlights">
-      <UniversityCard />
-      <DepartmentCard />
-      <CourseCard />
-      <BookCard />
+      <LiveSearchCard
+        titleText={t.ontologySpotUniTitle}
+        subLine={t.ontologySpotUniSub(universitySearchStats.distinctNames, universityTotal)}
+        placeholder={t.ontologyUniSearchPlaceholder}
+        useSearch={useUniversitySearch}
+        browse={{ entityClass: 'university', total: universitySearchStats.distinctNames }}
+      />
+      <LiveSearchCard
+        titleText={t.ontologySpotDeptTitle}
+        subLine={t.ontologySpotDeptSub(departmentTotal, departmentSearchStats.distinctNames)}
+        placeholder={t.ontologyDeptSearchPlaceholder}
+        useSearch={useDepartmentSearch}
+        renderItem={DeptInlineItem}
+        browse={{
+          entityClass: 'department',
+          total: departmentSearchStats.distinctNames,
+          renderModalItem: DeptModalItem,
+        }}
+      />
+      <LiveSearchCard
+        titleText={t.ontologySpotCourseTitle}
+        subLine={t.ontologySpotCourseSub(
+          courseSearchStats.distinctTitlesFormatted,
+          classes.find(c => c.id === 'Course')?.countFormatted ?? '',
+        )}
+        placeholder={t.ontologyCourseSearchPlaceholder}
+        useSearch={useCourseSearch}
+      />
+      <LiveSearchCard
+        titleText={t.ontologySpotBookTitle}
+        subLine={t.ontologySpotBookSub(
+          bookSearchStats.distinctTitlesFormatted,
+          classes.find(c => c.id === 'Book')?.countFormatted ?? '',
+        )}
+        placeholder={t.ontologyBookSearchPlaceholder}
+        useSearch={useBookSearch}
+      />
     </div>
   )
 }

@@ -6,10 +6,14 @@
  *   2. SchemaDiagram — hero merged figure (AcademicEntity/LearningEntity frames)
  *   3. Class reference cards — responsive auto-fit grid, one card per class
  *   4. Relationships table — 4 object properties with inverses
- *   5. EntitySpotlights — searchable universities + departments + sample books
+ *   5. EntitySpotlights — live search over university/department/course/book
  *
- * Data: entirely static from src/data/ontology.ts and src/data/entities.json.
- * No backend calls, no SPARQL construction (display-only per CLAUDE.md).
+ * This page's own content is static, from src/data/ontology.ts — but
+ * EntitySpotlights (section 5) is NOT: all four of its cards call the live
+ * GET /entities/search (and, for university/department, GET /entities/list)
+ * backend endpoints (ADR-018/ADR-020). "Display-only per CLAUDE.md" still
+ * holds — the frontend never constructs SPARQL, it only shows what the
+ * backend's ranker returns.
  */
 
 import { useState } from 'react'

@@ -2129,6 +2129,26 @@ table.results-table tbody tr:nth-child(n+11) {
   flex-shrink: 0;
 }
 
+/* Department row inside the "δείτε τα όλα" browse modal (EntitySpotlights'
+   DeptModalItem) — stacked layout: name on its own line, then the full list
+   of parent universities on a smaller, fainter line below. Distinct from
+   .od-list-item--dept above, which is the compact inline-card row (name +
+   a "N ιδρύματα" count badge, side by side) — the modal has room to name
+   them instead of just counting them. */
+.od-list-item-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.od-list-item-parents {
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  white-space: normal;
+  line-height: 1.35;
+}
+
 .od-list-empty {
   font-family: var(--font-mono);
   font-size: 11px;

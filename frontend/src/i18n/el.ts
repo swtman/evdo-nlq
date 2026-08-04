@@ -145,24 +145,33 @@ export const t = {
   ontologySpotUniSub:   (n: number, total: number): string =>
     `${n} με καταχωρημένο όνομα · ${total} συνολικά`,
   ontologySpotDeptTitle: 'Τμήματα',
-  ontologySpotDeptSub:   (n: number): string => `743 διαφορετικά τμήματα · ${n} μοναδικά ονόματα τμημάτων`,
+  // total = RDF Department instance count (classes[].count); n = distinct
+  // department NAMES after deduplicating across universities (both passed
+  // in by the caller — see departmentSearchStats in data/ontology.ts —
+  // rather than one of them being baked into this template).
+  ontologySpotDeptSub:   (total: number, n: number): string =>
+    `${total} διαφορετικά τμήματα · ${n} μοναδικά ονόματα τμημάτων`,
   ontologySpotBookTitle: 'Βιβλία',
   ontologySpotBookSub:   (distinctTitles: string, totalInstances: string): string =>
     `${distinctTitles} μοναδικοί τίτλοι · ${totalInstances} συνολικά βιβλία`,
   ontologyBookSearchPlaceholder: 'αναζήτηση βιβλίου… π.χ. τεχνητή νοημοσύνη',
-  ontologyBookOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
-  ontologyBookNoResults: 'κανένα αποτέλεσμα',
   // Shown before any query is typed — distinct from "no results", which only
   // applies once a search has actually run and come back empty. Shared by
-  // the course and book cards (see ontologySearching, reused the same way).
+  // all four live-search cards (course/book/university/department), and by
+  // ontologyOffline/ontologyNoResults below — see ontologySearching, reused
+  // the same way.
   ontologySearchPrompt: 'πληκτρολογήστε για αναζήτηση…',
+  // Shared "no live backend" and "search ran, found nothing" labels — used
+  // to be four near-duplicate pairs (ontologyCourseOffline/BookOffline/...),
+  // byte-identical strings per class. One pair, since the message never
+  // actually depended on which class was being searched.
+  ontologyOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
+  ontologyNoResults: 'κανένα αποτέλεσμα',
   ontologySpotCourseTitle: 'Μαθήματα',
   ontologySpotCourseSub:   (distinctTitles: string, totalInstances: string): string =>
     `${distinctTitles} μοναδικοί τίτλοι · ${totalInstances} συνολικές προσφορές μαθημάτων`,
   ontologyCourseSearchPlaceholder: 'αναζήτηση μαθήματος… π.χ. αρχιτεκτονική υπολογιστών',
   ontologySearching:   'αναζήτηση…',
-  ontologyCourseOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
-  ontologyCourseNoResults: 'κανένα αποτέλεσμα',
 
   ontologyUniSearchPlaceholder: 'αναζήτηση πανεπιστημίου… π.χ. ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ',
   ontologyDeptSearchPlaceholder: 'αναζήτηση τμήματος… π.χ. ΠΛΗΡΟΦΟΡΙΚΗΣ',
@@ -173,6 +182,11 @@ export const t = {
   ontologyBookExampleBtn: 'δείτε παράδειγμα',
   ontologyExampleTitle: (cls: string): string => `Παράδειγμα οντότητας ${cls}`,
   ontologyDeptSharedNote: (n: number): string => `${n} ιδρύματα`,
+  // Label prefixing the parent-university list on a department row inside
+  // the "δείτε τα όλα" browse modal (e.g. "Ιδρύματα: ΑΠΘ, ΠΑΝΕΠΙΣΤΗΜΙΟ
+  // ΠΕΙΡΑΙΩΣ") — the inline search card only shows the ontologyDeptSharedNote
+  // count badge; the modal has room to name them.
+  ontologyDeptParentsLabel: 'Ιδρύματα',
   ontologyBookCode: 'κωδικός',
   ontologyBookAuthors: 'συγγραφείς',
   ontologyBookIsbn: 'isbn',
