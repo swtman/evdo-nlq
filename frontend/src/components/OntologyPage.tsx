@@ -34,6 +34,12 @@ function SectionLabel({ label, count: _count }: { label: string; count?: number 
   )
 }
 
+function SectionDescription({ text }: { text: string }) {
+  return (
+    <p className="od-section-desc" aria-hidden="true">{text}</p>
+  )
+}
+
 // ── Generic example-node modal content ───────────────────────────────────────
 
 /** Renders a refs array as accent chips; shows first N real refs + '…' overflow marker. */
@@ -217,6 +223,7 @@ export function OntologyPage() {
       {/* ── Schema diagram ── */}
       <section className="od-section" aria-labelledby="od-sec-diagram">
         <SectionLabel label={t.ontologySectionDiagram} />
+        <SectionDescription text={t.ontologySectionDiagramDesc} />
         <div id="od-sec-diagram" className="sr-only">{t.ontologySectionDiagram}</div>
         <SchemaDiagram />
       </section>
@@ -224,6 +231,7 @@ export function OntologyPage() {
       {/* ── Class cards ── */}
       <section className="od-section" aria-labelledby="od-sec-classes">
         <SectionLabel label={t.ontologySectionClasses} count={totals.classes} />
+        <SectionDescription text={t.ontologySectionClassesDesc} />
         <div id="od-sec-classes" className="sr-only">{t.ontologySectionClasses}</div>
         <div className="od-class-grid">
           {classes.map(c => (
@@ -235,6 +243,7 @@ export function OntologyPage() {
       {/* ── Relationships table ── */}
       <section className="od-section" aria-labelledby="od-sec-rels">
         <SectionLabel label={t.ontologySectionRels} count={totals.relationships} />
+        <SectionDescription text={t.ontologySectionRelsDesc} />
         <div id="od-sec-rels" className="sr-only">{t.ontologySectionRels}</div>
         <RelationshipsTable />
       </section>
@@ -242,6 +251,7 @@ export function OntologyPage() {
       {/* ── Entity spotlights ── */}
       <section className="od-section" aria-labelledby="od-sec-entities">
         <SectionLabel label={t.ontologySectionEntities} />
+        <SectionDescription text={t.ontologySectionEntitiesDesc} />
         <div id="od-sec-entities" className="sr-only">{t.ontologySectionEntities}</div>
         <EntitySpotlights />
       </section>

@@ -31,8 +31,8 @@ export const t = {
   heroTryLabel: 'δοκιμάστε',
   heroChips: [
     'Πανεπιστήμια στην Ελλάδα',
-    'Βιβλία στο ΑΠΘ',
-    'Μαθήματα Πληροφορικής',
+    'Μαθήματα Πληροφορικής στο ΑΠΘ',
+    'Βιβλία στο μάθημα "Τεχνητή Νοημοσύνη" στο τμήμα Πληροφορικής του ΑΠΘ',
   ],
 
   /* ── Question echo (above SPARQL panel) ──────────────────────────────── */
@@ -41,6 +41,7 @@ export const t = {
   /* ── SPARQL terminal chrome ──────────────────────────────────────────── */
   sparqlFilename: 'query.sparql',
   sparqlReady:    'έτοιμο',
+  sparqlFailed:   'απέτυχε',
 
   /* ── Status bar ──────────────────────────────────────────────────────── */
   graphdbConnected: 'graphdb συνδεδεμένο',
@@ -105,7 +106,7 @@ export const t = {
   /* ── Empty state ─────────────────────────────────────────────────────── */
   noResults:       'Δεν βρέθηκαν αποτελέσματα.',
   noResultsTitle:  '// 0 αποτελέσματα',
-  noResultsBody:   'καμία αντιστοίχιση. δοκίμασε να αναδιατυπώσεις:',
+  noResultsBody:   'κανένα αποτέλεσμα · δοκίμασε να αναδιατυπώσεις την ερώτησή σου',
   noResultsExamples: [
     'Ποια πανεπιστήμια υπάρχουν στην Ελλάδα;',
     'Βιβλία που χρησιμοποιούνται στο ΑΠΘ',
@@ -122,9 +123,13 @@ export const t = {
   ontologyStatBooks:   (n: string): string => `${n} βιβλία`,
 
   ontologySectionDiagram:  'Διάγραμμα σχήματος',
+  ontologySectionDiagramDesc: 'Πώς οργανώνονται τα δεδομένα του Ευδόξου',
   ontologySectionClasses:  'Κλάσεις',
+  ontologySectionClassesDesc: 'Οι κλάσεις που αντιπροσωπεύουν τις κατηγορίες των οντοτήτων',
   ontologySectionRels:     'Σχέσεις',
+  ontologySectionRelsDesc: 'Οι σχέσεις που συνδέουν τις οντότητες μεταξύ τους',
   ontologySectionEntities: 'Οντότητες',
+  ontologySectionEntitiesDesc: 'Οι οντότητες που αντιπροσωπεύουν τα στοιχεία του γράφου',
 
   ontologyDiagramCaption: (snapshot: string): string => `στιγμιότυπο ${snapshot}`,
   ontologyDiagramLegend1: 'σχέση (με αντίστροφη)',
@@ -159,7 +164,8 @@ export const t = {
   ontologyCourseOffline: 'χωρίς σύνδεση με τον διακομιστή — δείγμα τίτλων',
   ontologyCourseNoResults: 'κανένα αποτέλεσμα',
 
-  ontologySearchPlaceholder: 'φιλτράρισμα…',
+  ontologyUniSearchPlaceholder: 'αναζήτηση πανεπιστημίου… π.χ. ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ',
+  ontologyDeptSearchPlaceholder: 'αναζήτηση τμήματος… π.χ. ΠΛΗΡΟΦΟΡΙΚΗΣ',
   ontologyShowMore: (n: number): string => `+ ${n} ακόμη`,
   ontologySeeAll: (n: number): string => `δείτε τα όλα (${n})`,
   ontologyModalClose: 'κλείσιμο',

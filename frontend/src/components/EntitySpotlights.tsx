@@ -63,10 +63,10 @@ function UniversityCard() {
         <input
           className="od-search-input"
           type="search"
-          placeholder={t.ontologySearchPlaceholder}
+          placeholder={t.ontologyUniSearchPlaceholder}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          aria-label={`${t.ontologySearchPlaceholder} ${t.ontologySpotUniTitle}`}
+          aria-label={`${t.ontologyUniSearchPlaceholder} ${t.ontologySpotUniTitle}`}
         />
       </div>
 
@@ -96,10 +96,10 @@ function UniversityCard() {
             <input
               className="od-search-input"
               type="search"
-              placeholder={t.ontologySearchPlaceholder}
+              placeholder={t.ontologyUniSearchPlaceholder}
               value={query}
               onChange={e => setQuery(e.target.value)}
-              aria-label={`${t.ontologySearchPlaceholder} ${t.ontologySpotUniTitle}`}
+              aria-label={`${t.ontologyUniSearchPlaceholder} ${t.ontologySpotUniTitle}`}
             />
           </div>
           <ul className="od-list" aria-label={`Λίστα ${t.ontologySpotUniTitle}`}>
@@ -175,10 +175,10 @@ function DepartmentCard() {
         <input
           className="od-search-input"
           type="search"
-          placeholder={t.ontologySearchPlaceholder}
+          placeholder={t.ontologyDeptSearchPlaceholder}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          aria-label={`${t.ontologySearchPlaceholder} ${t.ontologySpotDeptTitle}`}
+          aria-label={`${t.ontologyDeptSearchPlaceholder} ${t.ontologySpotDeptTitle}`}
         />
       </div>
 
@@ -203,10 +203,10 @@ function DepartmentCard() {
             <input
               className="od-search-input"
               type="search"
-              placeholder={t.ontologySearchPlaceholder}
+              placeholder={t.ontologyDeptSearchPlaceholder}
               value={query}
               onChange={e => setQuery(e.target.value)}
-              aria-label={`${t.ontologySearchPlaceholder} ${t.ontologySpotDeptTitle}`}
+              aria-label={`${t.ontologyDeptSearchPlaceholder} ${t.ontologySpotDeptTitle}`}
             />
           </div>
           <DeptList items={filtered} />

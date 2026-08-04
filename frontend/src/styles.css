@@ -378,7 +378,8 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--ink-faint);
-  margin-right: 2px;
+  margin-right: 1px;
+  margin-left: -50px;
 }
 
 .hero-chip {
@@ -1529,9 +1530,9 @@ table.results-table tbody tr:nth-child(n+11) {
   justify-content: space-between;
   border-top: 1px solid var(--border);
   padding-top: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 5px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--accent);
@@ -1540,6 +1541,13 @@ table.results-table tbody tr:nth-child(n+11) {
 .od-section-count {
   color: var(--ink-faint);
   font-size: 10px;
+}
+
+.od-section-desc {
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 10px;
 }
 
 /* Screen-reader only helper */
@@ -1724,8 +1732,8 @@ table.results-table tbody tr:nth-child(n+11) {
   gap: 22px;
   flex-wrap: wrap;
   margin-top: 16px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
+  /* border-top: 1px solid var(--border);  */
+  padding-top: 5px;
 }
 
 .od-legend-item {
