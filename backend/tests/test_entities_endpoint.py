@@ -1,9 +1,7 @@
-"""Tests for GET /entities/search (app.api.entities).
+"""Tests for GET /entities/search and GET /entities/list (app.api.entities).
 
-This endpoint had zero test coverage before book search was added — worth
-fixing now since its behavior is changing (the class=book stub is gone).
-``rank_titles`` is monkeypatched throughout so these tests never touch
-``entities.db``.
+``rank_titles`` / ``list_titles`` are monkeypatched throughout so these tests
+never touch ``entities.db``.
 
 Run from backend/:
     uv run pytest tests/test_entities_endpoint.py -v
@@ -65,6 +63,59 @@ def test_unknown_class_returns_400(client):
     assert "publisher" in response.json()["detail"]
     assert "course" in response.json()["detail"]
     assert "book" in response.json()["detail"]
+
+
+def test_university_search_reaches_ranker_with_university_class(client):
+    with patch("app.api.entities.rank_titles") as mock_rank:
+        mock_rank.return_value = [
+            TitleMatch(
+                normalized_title="αριστοτελειο πανεπιστημιο θεσ/νικης",
+                score=1.0,
+                surface_forms=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"],
+                entity_class="university",
+            )
+        ]
+        response = client.get("/entities/search", params={"q": "ΑΠΘ", "class": "university"})
+
+    assert response.status_code == 200
+    mock_rank.assert_called_once_with("ΑΠΘ", k=50, entity_class="university")
+    body = response.json()
+    assert body["results"][0]["title"] == "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"
+    assert body["results"][0]["parents"] == []
+
+
+def test_department_search_returns_parents(client):
+    with patch("app.api.entities.rank_titles") as mock_rank:
+        mock_rank.return_value = [
+            TitleMatch(
+                normalized_title="πληροφορικησ",
+                score=0.95,
+                surface_forms=["ΠΛΗΡΟΦΟΡΙΚΗΣ"],
+                entity_class="department",
+                parents=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ", "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ"],
+            )
+        ]
+        response = client.get(
+            "/entities/search", params={"q": "πληροφορικης", "class": "department"}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"][0]["parents"] == [
+        "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ",
+        "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ",
+    ]
+
+
+def test_course_search_parents_is_empty_list(client):
+    """Course/book never carry parents — the field defaults to []."""
+    with patch("app.api.entities.rank_titles") as mock_rank:
+        mock_rank.return_value = [
+            TitleMatch(normalized_title="x", score=1.0, surface_forms=["X"], entity_class="course")
+        ]
+        response = client.get("/entities/search", params={"q": "X"})
+
+    assert response.json()["results"][0]["parents"] == []
 
 
 def test_limit_is_passed_through_as_k(client):
@@ -139,3 +190,93 @@ def test_display_collapses_whitespace_but_matching_stays_on_raw_data(client):
         response = client.get("/entities/search", params={"q": "x"})
 
     assert response.json()["results"][0]["title"] == "Οικονομετρία ΙΙ"
+
+
+# ---------------------------------------------------------------------------
+# GET /entities/list — exhaustive alphabetical browse (university, department)
+# ---------------------------------------------------------------------------
+
+
+def test_list_universities_happy_path(client):
+    with patch("app.api.entities.list_titles") as mock_list:
+        mock_list.return_value = [
+            TitleMatch(
+                normalized_title="αριστοτελειο πανεπιστημιο θεσ/νικης",
+                score=1.0,
+                surface_forms=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"],
+                entity_class="university",
+            )
+        ]
+        response = client.get("/entities/list", params={"class": "university"})
+
+    assert response.status_code == 200
+    mock_list.assert_called_once_with(entity_class="university", limit=1000)
+    body = response.json()
+    assert body["total"] == 1
+    assert body["results"][0]["title"] == "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"
+    assert body["results"][0]["score"] == 1.0
+    assert body["query"] == ""
+
+
+def test_list_departments_returns_parents(client):
+    with patch("app.api.entities.list_titles") as mock_list:
+        mock_list.return_value = [
+            TitleMatch(
+                normalized_title="πληροφορικησ",
+                score=1.0,
+                surface_forms=["ΠΛΗΡΟΦΟΡΙΚΗΣ"],
+                entity_class="department",
+                parents=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ", "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ"],
+            )
+        ]
+        response = client.get("/entities/list", params={"class": "department"})
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["parents"] == [
+        "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ",
+        "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ",
+    ]
+
+
+def test_list_course_returns_400(client):
+    """course is searchable but not listable — /entities/list rejects it and
+    points the caller at /entities/search."""
+    response = client.get("/entities/list", params={"class": "course"})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "course" in detail
+    assert "university" in detail
+    assert "department" in detail
+    assert "/entities/search" in detail
+
+
+def test_list_book_returns_400(client):
+    response = client.get("/entities/list", params={"class": "book"})
+    assert response.status_code == 400
+
+
+def test_list_requires_class_param(client):
+    response = client.get("/entities/list")
+    assert response.status_code == 422
+
+
+def test_list_limit_passed_through(client):
+    with patch("app.api.entities.list_titles") as mock_list:
+        mock_list.return_value = []
+        client.get("/entities/list", params={"class": "university", "limit": 10})
+
+    mock_list.assert_called_once_with(entity_class="university", limit=10)
+
+
+def test_list_limit_out_of_bounds_rejected(client):
+    assert client.get("/entities/list", params={"class": "university", "limit": 0}).status_code == 422
+    assert client.get("/entities/list", params={"class": "university", "limit": 1001}).status_code == 422
+
+
+def test_list_default_limit_is_1000(client):
+    with patch("app.api.entities.list_titles") as mock_list:
+        mock_list.return_value = []
+        client.get("/entities/list", params={"class": "department"})
+
+    mock_list.assert_called_once_with(entity_class="department", limit=1000)
