@@ -4,14 +4,14 @@
  * Source of truth for all structural blocks in OntologyPage and
  * EntitySpotlights: SchemaDiagram, class reference cards, relationships
  * table, example nodes (exampleNodes), and the small offline fallback
- * samples for the live course/book search cards (courseSearchStats /
- * SAMPLE_COURSE_TITLES, bookSearchStats / SAMPLE_BOOK_TITLES — the real,
- * ~73k/~37k title corpora live in backend/app/data/entities.db, not here;
- * see ADR-018/ADR-019).
+ * samples for all four live search cards (course/book/university/department
+ * — *SearchStats / SAMPLE_*_TITLES below). The real corpora — ~73k course,
+ * ~37k book, 46 university, 379 department distinct names — live in
+ * backend/app/data/entities.db, not here; see ADR-018/ADR-019/ADR-020.
  *
  * Instance counts from: notes/ONTOLOGY-NOTES.md (confirmed via live probe 2026-06-12).
  * Property info from: prompts/ontology-summary.md.
- * Snapshot date: 2026-06 (course search stats), 2026-07-31 (book search stats).
+ * Snapshot date: 2026-06 (course search stats), 2026-07-31 (book/university/department search stats).
  */
 
 export interface OntologyClass {
@@ -271,6 +271,68 @@ export const SAMPLE_BOOK_TITLES: string[] = [
   'Γραμμική Άλγεβρα',
   'Αλγόριθμοι',
   'Ψηφιακή επεξεργασία σημάτων',
+]
+
+// ── University / Department search stats (ΟΝΤΟΛΟΓΙΑ university/dept cards) ────
+//
+// Unlike Course/Book, University and Department are matched by a full-scan
+// + WRatio institution policy (ADR-020), not FTS5 — but they go through the
+// exact same rank_titles() function and the exact same live GET
+// /entities/search endpoint, so distinctNames below is real, measured data
+// from backend/app/data/entities.db, not an estimate.
+//
+// distinctNames (university): 46 distinct evdx:name labels — one search hit
+//   per label, so this is also the maximum the "δείτε τα όλα" list can ever
+//   show.
+// distinctNames (department): 379 distinct department NAMES after
+//   deduplicating across universities (e.g. "ΠΛΗΡΟΦΟΡΙΚΗΣ" exists at several
+//   institutions but counts once here — see `parents` on a search result for
+//   which ones). distinctPairs is the larger, pre-dedup number: 799 distinct
+//   (university, department) rows in entities.db — the source `parents` is
+//   built from.
+
+export const universitySearchStats = {
+  distinctNames: 46,
+  distinctNamesFormatted: '46',
+  snapshot: '2026-07-31',
+}
+
+// Real university names (2026-07-31 snapshot), offline fallback for the
+// university search card — same pattern as SAMPLE_COURSE_TITLES. Shown
+// ALL-CAPS accent-free because that's how the KG actually stores these (see
+// gazetteer.py's "EvdoGraph KG stores names in ALL-CAPS" note) — unlike
+// course/book titles, a mixed-case accented variant essentially never
+// exists for universities/departments, so live search results will look
+// the same way.
+export const SAMPLE_UNIVERSITY_TITLES: string[] = [
+  'ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ',
+  'ΕΘΝΙΚΟ & ΚΑΠΟΔΙΣΤΡΙΑΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ',
+  'ΕΘΝΙΚΟ ΜΕΤΣΟΒΙΟ ΠΟΛΥΤΕΧΝΕΙΟ',
+  'ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ',
+  'ΟΙΚΟΝΟΜΙΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ',
+  'ΠΑΝΕΠΙΣΤΗΜΙΟ ΚΡΗΤΗΣ',
+  'ΧΑΡΟΚΟΠΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ',
+]
+
+export const departmentSearchStats = {
+  distinctNames: 379,
+  distinctNamesFormatted: '379',
+  distinctPairs: 799,
+  distinctPairsFormatted: '799',
+  snapshot: '2026-07-31',
+}
+
+// Real department names (2026-07-31 snapshot), offline fallback for the
+// department search card — see SAMPLE_UNIVERSITY_TITLES above for the
+// ALL-CAPS rationale.
+export const SAMPLE_DEPARTMENT_TITLES: string[] = [
+  'ΠΛΗΡΟΦΟΡΙΚΗΣ',
+  'ΗΛΕΚΤΡΟΛΟΓΩΝ ΜΗΧΑΝΙΚΩΝ ΚΑΙ ΜΗΧΑΝΙΚΩΝ ΥΠΟΛΟΓΙΣΤΩΝ',
+  'ΟΙΚΟΝΟΜΙΚΩΝ ΕΠΙΣΤΗΜΩΝ',
+  'ΝΟΜΙΚΗΣ',
+  'ΙΑΤΡΙΚΗΣ',
+  'ΜΑΘΗΜΑΤΙΚΩΝ',
+  'ΦΥΣΙΚΗΣ',
 ]
 
 // ── Example nodes — one real KG node per class ───────────────────────────────

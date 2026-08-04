@@ -1,14 +1,15 @@
 /**
- * useEntitySearch — debounced entity-title search against GET /entities/search.
+ * useEntitySearch — debounced entity search against GET /entities/search.
  *
  * Calls the SAME backend function the SPARQL grounding pipeline uses to
- * resolve a course or book named inside a question (see
- * backend/app/api/entities.py) — so an entity found here is exactly one the
- * pipeline is capable of matching from natural language. Shared by
- * `useCourseSearch` and `useBookSearch` below rather than duplicated,
- * because the debounce, the stale-response race guard, and the offline
- * fallback are three subtle behaviors that would otherwise drift between
- * two copies.
+ * resolve an entity named inside a question (see backend/app/api/entities.py)
+ * — so an entity found here is exactly one the pipeline is capable of
+ * matching from natural language (course/book via hints.py's title
+ * resolution; university/department via linker.py's Stage 3, which shares
+ * the same score threshold — see ADR-020). Shared by the four `use*Search`
+ * wrappers below rather than duplicated, because the debounce, the
+ * stale-response race guard, and the offline fallback are three subtle
+ * behaviors that would otherwise drift between four copies.
  *
  * Falls back to a small offline sample when:
  *   - VITE_USE_MOCK_API=1 (frontend UI dev without a backend), or
@@ -18,15 +19,28 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { SAMPLE_COURSE_TITLES, SAMPLE_BOOK_TITLES } from '../data/ontology'
+import {
+  SAMPLE_COURSE_TITLES,
+  SAMPLE_BOOK_TITLES,
+  SAMPLE_UNIVERSITY_TITLES,
+  SAMPLE_DEPARTMENT_TITLES,
+} from '../data/ontology'
 
 const DEBOUNCE_MS = 250
 
-export type EntityClass = 'course' | 'book'
+// Single source of truth for the search result cap, shared by the fetch
+// call below and by EntitySpotlights' display slice — previously two
+// separate constants (limit: '50' here, RESULTS_SHOWN = 100 there) where
+// the second one was a silent no-op because the API already caps at 50.
+export const ENTITY_SEARCH_LIMIT = 50
+
+export type EntityClass = 'course' | 'book' | 'university' | 'department'
 
 export interface EntitySearchResult {
   title: string
   score: number
+  /** Parent university name(s) — populated only for class='department'. */
+  parents?: string[]
 }
 
 interface EntitySearchState {
@@ -39,6 +53,8 @@ interface EntitySearchState {
 const SAMPLE_TITLES: Record<EntityClass, string[]> = {
   course: SAMPLE_COURSE_TITLES,
   book: SAMPLE_BOOK_TITLES,
+  university: SAMPLE_UNIVERSITY_TITLES,
+  department: SAMPLE_DEPARTMENT_TITLES,
 }
 
 /**
@@ -48,7 +64,7 @@ const SAMPLE_TITLES: Record<EntityClass, string[]> = {
  * this offline fallback behaves the same way the real search does — an
  * unaccented query like "δικτυα" must still match "Δίκτυα Υπολογιστών".
  */
-function foldGreek(s: string): string {
+export function foldGreek(s: string): string {
   // \p{M} = Unicode general category "Mark" — every combining diacritic
   // (Greek tone marks included) in one property escape, no raw glyphs
   // needed in source. Requires the /u flag.
@@ -85,7 +101,11 @@ function useEntitySearch(query: string, entityClass: EntityClass): EntitySearchS
     setState(prev => ({ ...prev, loading: true }))
 
     const handle = setTimeout(() => {
-      const params = new URLSearchParams({ q: query || ' ', class: entityClass, limit: '50' })
+      const params = new URLSearchParams({
+        q: query || ' ',
+        class: entityClass,
+        limit: String(ENTITY_SEARCH_LIMIT),
+      })
       fetch(`/entities/search?${params}`)
         .then(res => {
           if (!res.ok) throw new Error(`search failed: ${res.status}`)
@@ -113,4 +133,12 @@ export function useCourseSearch(query: string): EntitySearchState {
 
 export function useBookSearch(query: string): EntitySearchState {
   return useEntitySearch(query, 'book')
+}
+
+export function useUniversitySearch(query: string): EntitySearchState {
+  return useEntitySearch(query, 'university')
+}
+
+export function useDepartmentSearch(query: string): EntitySearchState {
+  return useEntitySearch(query, 'department')
 }
