@@ -5,9 +5,10 @@ WHAT THIS SCRIPT DOES
 Produces the single SQLite database the grounding module reads at runtime
 (``app/grounding/db.py``): university names, department names, course titles,
 and book titles, each keyed by their ``normalize_greek()`` form for fast
-lookup, plus an FTS5 full-text index per title corpus for the
-candidate-generation stage of ``app/grounding/title_index.py`` (see ADR-018,
-ADR-019).
+lookup. Course and book additionally get an FTS5 full-text index for the
+candidate-generation stage of ``app/grounding/title_index.py`` — university
+and department deliberately do NOT (at 46 / 379 rows a full table scan beats
+FTS on both speed and recall; see ADR-020) — (see ADR-018, ADR-019, ADR-020).
 
 This replaces two things at once:
   1. The old ``scripts/dump_labels.py`` + ``scripts/grounding_labels.json``
@@ -78,7 +79,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.grounding.clean import DropCounts, clean_titles  # noqa: E402
 from app.grounding.normalize import normalize_greek  # noqa: E402
-from app.grounding.schema import create_schema, sync_title_fts  # noqa: E402
+from app.grounding.schema import FTS_CLASSES, create_schema, sync_title_fts  # noqa: E402
 
 try:
     from SPARQLWrapper import JSON, SPARQLWrapper
@@ -212,15 +213,29 @@ def clean_departments(raw_departments: list[dict[str, str]]) -> list[dict[str, s
 # ---------------------------------------------------------------------------
 
 
+def _insert_rows(
+    conn: sqlite3.Connection, table: str, rows: list[tuple[str, str, str | None]]
+) -> None:
+    """Insert ``(norm, surface, parent)`` rows into ``table``.
+
+    Syncs the table's FTS5 index afterwards — but only for classes that have
+    one (``schema.FTS_CLASSES`` — course, book). university/department have
+    no FTS table to sync (ADR-020; see ``schema.py``'s module docstring "FTS5
+    — SELECTIVELY, NOT UNIFORMLY").
+    """
+    conn.executemany(f"INSERT INTO {table}(norm, surface, parent) VALUES (?, ?, ?)", rows)
+    if table in FTS_CLASSES:
+        sync_title_fts(conn, table)
+
+
 def _insert_title_rows(conn: sqlite3.Connection, table: str, surface_map: dict[str, set[str]]) -> None:
-    """Insert ``(norm, surface)`` rows for one title table and sync its FTS index."""
+    """Insert ``(norm, surface, NULL)`` rows for one title corpus (course/book)."""
     rows = [
-        (norm, surface)
+        (norm, surface, None)
         for norm, surfaces in surface_map.items()
         for surface in sorted(surfaces)
     ]
-    conn.executemany(f"INSERT INTO {table}(norm, surface) VALUES (?, ?)", rows)
-    sync_title_fts(conn, table)
+    _insert_rows(conn, table, rows)
 
 
 def build_database(
@@ -242,18 +257,18 @@ def build_database(
 
         conn.execute("INSERT INTO meta(key, value) VALUES ('snapshot', ?)", (snapshot,))
 
-        conn.executemany(
-            "INSERT INTO university(name, norm) VALUES (?, ?)",
-            [(name, normalize_greek(name)) for name in universities],
-        )
+        # University: no parent (it IS the top of the hierarchy).
+        uni_rows = [(normalize_greek(name), name, None) for name in universities]
+        _insert_rows(conn, "university", uni_rows)
 
-        conn.executemany(
-            "INSERT INTO department(university, department, norm) VALUES (?, ?, ?)",
-            [
-                (d["university"], d["department"], normalize_greek(d["department"]))
-                for d in departments
-            ],
-        )
+        # Department: parent is the owning university's canonical name. A
+        # department name shared by several universities becomes several
+        # rows under the same `norm` — see title_index.TitleMatch.parents.
+        dept_rows = [
+            (normalize_greek(d["department"]), d["department"], d["university"])
+            for d in departments
+        ]
+        _insert_rows(conn, "department", dept_rows)
 
         _insert_title_rows(conn, "course", course_map)
         _insert_title_rows(conn, "book", book_map)
