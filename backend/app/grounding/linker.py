@@ -52,24 +52,38 @@ from rapidfuzz import fuzz, process
 from app.grounding.gazetteer import (
     ACRONYM_MAP,
     get_department_index,
-    get_departments,
-    get_universities,
+    get_normalized_departments,
+    get_normalized_universities,
     get_university_index,
 )
 from app.grounding.normalize import normalize_greek
+from app.grounding.title_index import INSTITUTION_MATCH_THRESHOLD
 
 # ---------------------------------------------------------------------------
 # Public constant
 # ---------------------------------------------------------------------------
 
-FUZZY_THRESHOLD: float = 90.0
+FUZZY_THRESHOLD: float = INSTITUTION_MATCH_THRESHOLD
 """Minimum rapidfuzz WRatio score (0–100) required to accept a fuzzy match.
 
-80 is chosen as a practical threshold:
-  - Most inflectional variants of a correct university name score 85–95.
-  - Completely unrelated Greek words rarely score above 75.
-  - Lowering below 75 produces too many false positives; raising above 90
-    misses common inflected forms like the genitive case.
+An alias for ``title_index.INSTITUTION_MATCH_THRESHOLD`` rather than its own
+constant (ADR-020) — ``title_index.rank_titles(entity_class="university")``
+(what the ΟΝΤΟΛΟΓΙΑ page's search card calls) and this module's Stage 3 (what
+Stage-1 grounding calls) must agree on the same cutoff, or a university a
+user can find by browsing could fail to resolve from natural language, and
+vice versa.
+
+90.0 is not a round-number guess — it's the measured floor (ADR-020 M4).
+Scored against the real 46 university labels:
+  - Genuine partial mentions (one real word from the label) score 90.0 at
+    the median, with a p25 also at 90.0 — the "correct" distribution sits
+    right on this boundary, which is why the floor must be INCLUSIVE
+    (``score >= 90``, not ``score > 90``; see ``title_index._clears_floor``).
+  - Mismatched words (from an unrelated department name) score 84.7 at the
+    highest observed — so 90 leaves a clear margin, not a knife's edge.
+  - Sweeping the floor from 85 to 90 keeps the same 129/132 correct matches
+    while rejecting the same 100% of mismatches — 90 has no precision cost
+    over 85, and is the more conservative choice.
 """
 
 
@@ -274,13 +288,11 @@ def _stage3_fuzzy(normalized_mention: str) -> list[ResolvedEntity]:
     results: list[ResolvedEntity] = []
 
     # --- University fuzzy search -------------------------------------------
-    # Build a list of normalized university labels paired with their canonical forms.
-    universities = get_universities()
-    # Mapping: normalized label → canonical label (1-to-1 in practice, but the
-    # KG has no real collisions here).
-    normalized_unis: list[tuple[str, str]] = [
-        (normalize_greek(uni), uni) for uni in universities
-    ]
+    # Normalized (label, canonical) pairs, precomputed once by gazetteer._load()
+    # rather than rebuilt here on every call — see gazetteer.py's module
+    # docstring "NORMALIZED LABEL LISTS" for the cost this avoids (~17,000
+    # redundant normalize_greek calls per question, before this cache existed).
+    normalized_unis = get_normalized_universities()
     norm_uni_labels = [pair[0] for pair in normalized_unis]
 
     best_uni = process.extractOne(
@@ -303,14 +315,8 @@ def _stage3_fuzzy(normalized_mention: str) -> list[ResolvedEntity]:
         )
 
     # --- Department fuzzy search -------------------------------------------
-    departments = get_departments()
-    # Mapping: normalized dept name → (canonical dept label, canonical uni label).
-    # We normalize each department name once here to avoid re-normalizing on
-    # every rapidfuzz internal comparison.
-    normalized_depts: list[tuple[str, str, str]] = [
-        (normalize_greek(d["department"]), d["department"], d["university"])
-        for d in departments
-    ]
+    # Same precomputed-cache pattern as universities above.
+    normalized_depts = get_normalized_departments()
     norm_dept_labels = [triple[0] for triple in normalized_depts]
 
     best_dept = process.extractOne(

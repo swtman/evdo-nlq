@@ -20,7 +20,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.grounding.title_index import TitleMatch, rank_titles_from_corpus
+from app.grounding.normalize import normalize_greek
+from app.grounding.title_index import (
+    INSTITUTION_MATCH_THRESHOLD,
+    TitleMatch,
+    list_titles,
+    rank_titles_from_corpus,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture corpus
@@ -303,3 +309,222 @@ def test_cross_class_isolation() -> None:
 def test_unknown_entity_class_raises_value_error() -> None:
     with pytest.raises(ValueError, match="unknown title class"):
         rank_titles_from_corpus(_BOOK_FIXTURE_CORPUS, "βασεισ δεδομενων", k=3, entity_class="publisher")
+
+
+# ---------------------------------------------------------------------------
+# Regression pin — course ranking must be BYTE-IDENTICAL after the ADR-020
+# _MatchPolicy refactor. These exact float scores were captured from the
+# implementation right after the refactor landed (verified at the time
+# against the pre-refactor code via `git stash`, which showed the ORIGINAL
+# 20 tests above all pass unchanged) — if this test ever goes red, the
+# refactor broke the "course/book behaviour is untouched" guarantee ADR-020
+# depends on, even if every other test still passes.
+# ---------------------------------------------------------------------------
+
+
+def test_course_scores_pinned_to_pre_refactor_values() -> None:
+    results = rank_titles_from_corpus(FIXTURE_CORPUS, "αρχιτεκτονικη υπολογιστων", k=5)
+    scores = {r.normalized_title: r.score for r in results}
+    assert scores["αρχιτεκτονικη υπολογιστων"] == pytest.approx(1.0)
+    assert scores["αρχιτεκτονικη τοπιου"] == pytest.approx(0.7111111111111111)
+    # course/book never carry parents — that field is department-only.
+    assert all(r.parents == [] for r in results)
+
+
+# ---------------------------------------------------------------------------
+# University / department — institution _MatchPolicy (ADR-020)
+#
+# Institutions use fuzz.WRatio (not token_sort_ratio), a full-table scan (not
+# FTS), a direct acronym-map lookup, and an inclusive score floor at
+# INSTITUTION_MATCH_THRESHOLD (90.0) instead of course/book's "any nonzero
+# overlap" floor — see title_index._POLICY and its module docstring for the
+# measurements behind each choice.
+# ---------------------------------------------------------------------------
+
+# Keys are derived via normalize_greek() rather than hand-typed — Greek has
+# two lowercase sigma glyphs (regular "σ" and word-final "ς") that look
+# identical at a glance but are different code points, and normalize_greek's
+# plain .lower() always produces the regular "σ" (never "ς"). Hand-typing a
+# normalized key risks a silent mismatch; deriving it from the same function
+# under test cannot.
+_UNI_CANONICAL = [
+    "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ",
+    "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ",
+    "ΕΘΝΙΚΟ ΜΕΤΣΟΒΙΟ ΠΟΛΥΤΕΧΝΕΙΟ",
+]
+_UNI_FIXTURE_CORPUS: dict[str, list[str]] = {
+    normalize_greek(label): [label] for label in _UNI_CANONICAL
+}
+_APTH_NORM = normalize_greek("ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ")
+_PIRAEUS_NORM = normalize_greek("ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ")
+
+# One department name ("ΠΛΗΡΟΦΟΡΙΚΗΣ") shared by two universities — mirrors
+# the real KG, where department names routinely repeat across institutions.
+_INFORMATICS_NORM = normalize_greek("ΠΛΗΡΟΦΟΡΙΚΗΣ")
+_MECHANICAL_NORM = normalize_greek("ΜΗΧΑΝΟΛΟΓΩΝ ΜΗΧΑΝΙΚΩΝ")
+_DEPT_FIXTURE_CORPUS: dict[str, list[str]] = {
+    _INFORMATICS_NORM: ["ΠΛΗΡΟΦΟΡΙΚΗΣ"],
+    _MECHANICAL_NORM: ["ΜΗΧΑΝΟΛΟΓΩΝ ΜΗΧΑΝΙΚΩΝ"],
+}
+_DEPT_FIXTURE_PARENTS: dict[str, list[str]] = {
+    _INFORMATICS_NORM: ["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ", "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ"],
+    _MECHANICAL_NORM: ["ΕΘΝΙΚΟ ΜΕΤΣΟΒΙΟ ΠΟΛΥΤΕΧΝΕΙΟ"],
+}
+
+
+def test_university_partial_mention_resolves_via_wratio() -> None:
+    """A single word from a multi-word label resolves — this is exactly the
+    case token_sort_ratio (the course/book scorer) would reject (ADR-020 M1:
+    measured 0/45 vs 44/45 on the real gazetteer)."""
+    results = rank_titles_from_corpus(
+        _UNI_FIXTURE_CORPUS, "πειραιωσ", k=3, entity_class="university"
+    )
+    assert len(results) >= 1
+    assert results[0].normalized_title == _PIRAEUS_NORM
+    assert results[0].score >= INSTITUTION_MATCH_THRESHOLD / 100.0
+
+
+def test_university_below_floor_is_rejected() -> None:
+    """An unrelated phrase does not clear the institution score floor."""
+    results = rank_titles_from_corpus(
+        _UNI_FIXTURE_CORPUS, "ζζζζζζζζ", k=3, entity_class="university"
+    )
+    assert results == []
+
+
+def test_university_results_have_no_parents() -> None:
+    results = rank_titles_from_corpus(
+        _UNI_FIXTURE_CORPUS, "πειραιωσ", k=3, entity_class="university"
+    )
+    assert all(r.parents == [] for r in results)
+
+
+def test_department_partial_mention_resolves_via_wratio() -> None:
+    results = rank_titles_from_corpus(
+        _DEPT_FIXTURE_CORPUS,
+        "πληροφορικησ",
+        k=3,
+        entity_class="department",
+        parent_map=_DEPT_FIXTURE_PARENTS,
+    )
+    assert len(results) >= 1
+    assert results[0].normalized_title == _INFORMATICS_NORM
+
+
+def test_department_parents_populated_and_sorted() -> None:
+    """A department shared by two universities carries both, sorted."""
+    results = rank_titles_from_corpus(
+        _DEPT_FIXTURE_CORPUS,
+        "πληροφορικησ",
+        k=3,
+        entity_class="department",
+        parent_map=_DEPT_FIXTURE_PARENTS,
+    )
+    match = next(r for r in results if r.normalized_title == _INFORMATICS_NORM)
+    assert match.parents == sorted(_DEPT_FIXTURE_PARENTS[_INFORMATICS_NORM])
+    assert match.entity_class == "department"
+
+
+def test_department_single_parent() -> None:
+    results = rank_titles_from_corpus(
+        _DEPT_FIXTURE_CORPUS,
+        "μηχανολογων μηχανικων",
+        k=3,
+        entity_class="department",
+        parent_map=_DEPT_FIXTURE_PARENTS,
+    )
+    match = next(r for r in results if r.normalized_title == _MECHANICAL_NORM)
+    assert match.parents == ["ΕΘΝΙΚΟ ΜΕΤΣΟΒΙΟ ΠΟΛΥΤΕΧΝΕΙΟ"]
+
+
+def test_university_acronym_short_circuits_ranking() -> None:
+    """A known acronym resolves even though it shares no stem/substring with
+    the canonical label at all — the ranker alone could never find it
+    (ADR-020 M3: only 2/15 real acronyms are retrievable by any scorer)."""
+    results = rank_titles_from_corpus(
+        _UNI_FIXTURE_CORPUS, "ΑΠΘ", k=3, entity_class="university"
+    )
+    assert len(results) >= 1
+    assert results[0].normalized_title == _APTH_NORM
+    assert results[0].score == pytest.approx(1.0)
+
+
+def test_university_acronym_for_label_not_in_corpus_is_ignored() -> None:
+    """A real ACRONYM_MAP entry whose canonical label isn't in THIS fixture
+    corpus must not surface a match — the acronym is not an unconditional
+    override, it is validated against the actual database."""
+    results = rank_titles_from_corpus(
+        _UNI_FIXTURE_CORPUS, "ΕΚΠΑ", k=3, entity_class="university"
+    )
+    # ΕΚΠΑ's canonical label ("ΕΘΝΙΚΟ & ΚΑΠΟΔΙΣΤΡΙΑΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ") is not
+    # in _UNI_FIXTURE_CORPUS, so no acronym hit — and the raw string "ΕΚΠΑ"
+    # itself doesn't fuzzy-match any of the three fixture labels either.
+    assert results == []
+
+
+def test_department_has_no_acronym_short_circuit() -> None:
+    """ACRONYM_MAP is university-only (linker.py) — department search must
+    not consult it."""
+    results = rank_titles_from_corpus(
+        _DEPT_FIXTURE_CORPUS,
+        "ΑΠΘ",
+        k=3,
+        entity_class="department",
+        parent_map=_DEPT_FIXTURE_PARENTS,
+    )
+    assert results == []
+
+
+# ---------------------------------------------------------------------------
+# list_titles — exhaustive alphabetical browse (university, department)
+# ---------------------------------------------------------------------------
+
+
+def test_list_titles_rejects_non_listable_class() -> None:
+    with pytest.raises(ValueError, match="unknown listable class"):
+        list_titles(entity_class="course")
+
+
+def test_list_titles_rejects_book() -> None:
+    with pytest.raises(ValueError, match="unknown listable class"):
+        list_titles(entity_class="book")
+
+
+# ---------------------------------------------------------------------------
+# list_titles happy path — against the live entities.db (committed to the
+# repo; not @pytest.mark.live, same convention test_grounding_gazetteer.py
+# uses — reading the committed SQLite file touches no network).
+# ---------------------------------------------------------------------------
+
+
+def test_list_titles_university_matches_gazetteer_count() -> None:
+    from app.grounding.gazetteer import get_universities
+
+    results = list_titles(entity_class="university")
+    assert len(results) == len(get_universities())
+
+
+def test_list_titles_department_count_matches_distinct_names() -> None:
+    from app.grounding.gazetteer import get_departments
+    from app.grounding.normalize import normalize_greek
+
+    results = list_titles(entity_class="department")
+    distinct_dept_names = {normalize_greek(d["department"]) for d in get_departments()}
+    assert len(results) == len(distinct_dept_names)
+
+
+def test_list_titles_university_alphabetically_sorted() -> None:
+    results = list_titles(entity_class="university")
+    surfaces = [r.surface_forms[0] for r in results]
+    assert surfaces == sorted(surfaces)
+
+
+def test_list_titles_respects_limit() -> None:
+    results = list_titles(entity_class="university", limit=5)
+    assert len(results) == 5
+
+
+def test_list_titles_university_scores_are_one() -> None:
+    """Listing implies no similarity judgement — every score is exactly 1.0."""
+    results = list_titles(entity_class="university")
+    assert all(r.score == 1.0 for r in results)

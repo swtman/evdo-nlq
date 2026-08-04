@@ -7,18 +7,36 @@ never drift apart.
 
 TABLES
 ------
-``university`` / ``department`` — plain tables, looked up by exact
-``normalize_greek()`` key (an ordinary B-tree index is enough; there are only
-46 universities and 799 departments, so even a full scan would be instant).
+One table per entry in ``TITLE_CLASSES`` — today: ``course``, ``book``,
+``university``, ``department``. "Title" here means *the searchable display
+label*: ``evdx:title`` for course/book, ``evdx:name`` for university/
+department (they used to be separate, hand-written tables named ``name`` /
+``university``+``department``; ADR-020 unified them onto the same
+``surface``/``norm``/``parent`` shape so all four classes go through one
+ranking function, ``title_index.rank_titles``).
 
-One pair of tables per entry in ``TITLE_CLASSES`` (today: ``course`` and
-``book``) — the base table holds one row per raw KG title string ("surface
-form"); the matching ``<name>_fts`` is an FTS5 *external content* table that
-indexes the ``norm`` column for full-text search without storing the text a
-second time (see https://sqlite.org/fts5.html#external_content_tables).
-Word-prefix search (``"αρχιτεκτ"*``) is what makes candidate lookup fast: it
-narrows tens of thousands of titles down to a few hundred candidates *before*
-the more expensive ``rapidfuzz`` reranking step runs (see ``title_index.py``).
+``parent`` is ``NULL`` for every class except ``department``, where it holds
+the parent university's canonical name — the one piece of data that doesn't
+fit the plain ``surface``/``norm`` shape (a department can be shared by
+several universities, so this is one parent per *row*, not per normalized
+title; see ``title_index.TitleMatch.parents``).
+
+FTS5 — SELECTIVELY, NOT UNIFORMLY
+-----------------------------------
+``course`` and ``book`` also get a ``<name>_fts`` FTS5 *external content*
+table indexing the ``norm`` column, used for full-text candidate generation
+before the rapidfuzz reranking step (see ``title_index.py``). Word-prefix
+search (``"αρχιτεκτ"*``) narrows tens of thousands of titles down to a few
+hundred candidates before the more expensive fuzzy-scoring step runs.
+
+``university`` and ``department`` deliberately get NO FTS table.  There are
+only 46 / 379 distinct names — small enough that a full table scan is both
+cheap and, measured empirically (ADR-020), *more accurate* than FTS prefix
+retrieval would be: worst-case candidate coverage from stem-prefix matching
+was 89% recall for a department name, vs. 100% for a full scan.  Building an
+FTS index nobody benefits from is worse than not building it — it's a trap
+for the next reader who assumes every class in ``TITLE_CLASSES`` is FTS-
+backed.  See ``title_index._POLICY`` for how each class is actually matched.
 
 WHY SEPARATE TABLES PER CLASS, NOT ONE GENERIC ``title(class, ...)`` TABLE?
 ----------------------------------------------------------------------------
@@ -34,63 +52,71 @@ Filtering ``WHERE class = 'book'`` after ``MATCH`` doesn't help — ``bm25``
 has already ranked the merged set, so recovering a per-class budget would
 mean two queries anyway, making the "one table" simplification illusory.
 
-Separate explicit tables also match the existing pattern: ``university`` and
-``department`` are already separate tables, not a polymorphic ``entity(type,
-...)`` design. The DDL is still generated from one template (``_title_ddl``)
-so adding a third title-bearing class is a one-word change to
-``TITLE_CLASSES``, not a copy-pasted table definition.
+The DDL is still generated from one template (``_title_ddl``) so adding a
+fifth class is a one-word change to ``TITLE_CLASSES`` (plus, if it's large
+enough to need FTS, adding it to ``_FTS_CLASSES``), not a copy-pasted table
+definition.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-# Every entity class that gets its own title-search table (base + FTS5 pair).
-# The single source of truth for which classes exist — imported by
-# title_index.py (to validate entity_class) and api/entities.py (to validate
-# the ?class= query param) instead of each hardcoding its own set.
-TITLE_CLASSES: tuple[str, ...] = ("course", "book")
+# Every entity class searchable via title_index.rank_titles() — one base
+# table each. The single source of truth for which classes exist — imported
+# by title_index.py (to validate entity_class) and api/entities.py (to
+# validate the ?class= query param) instead of each hardcoding its own set.
+TITLE_CLASSES: tuple[str, ...] = ("course", "book", "university", "department")
+
+# Classes small enough to enumerate exhaustively via GET /entities/list —
+# ranked search over 46 / 379 rows is the wrong tool for "show me
+# everything"; see api/entities.py and title_index.list_titles().
+LISTABLE_CLASSES: tuple[str, ...] = ("university", "department")
+
+# Classes that get an FTS5 candidate-generation index — see the module
+# docstring "FTS5 — SELECTIVELY, NOT UNIFORMLY" for why university/department
+# are deliberately excluded. Public (not `_FTS_CLASSES`) because
+# title_index.py's per-class ``_MatchPolicy`` table derives its ``use_fts``
+# field from this same constant — one source of truth for "which classes are
+# FTS-backed" shared by the DDL generator and the ranker.
+FTS_CLASSES: frozenset[str] = frozenset({"course", "book"})
 
 _BASE_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL   -- e.g. meta['snapshot'] = '2026-07-30' (KG dump date)
 );
-
-CREATE TABLE IF NOT EXISTS university (
-    id   INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,   -- canonical evdx:name label, exact KG string
-    norm TEXT NOT NULL    -- normalize_greek(name), used for lookup
-);
-CREATE INDEX IF NOT EXISTS university_norm_idx ON university(norm);
-
-CREATE TABLE IF NOT EXISTS department (
-    id         INTEGER PRIMARY KEY,
-    university TEXT NOT NULL,   -- parent university's canonical name
-    department TEXT NOT NULL,   -- canonical department name (may include a
-                                 -- "(ΚΑΤΑΡΓΗΘΗΚΕ)"-style status suffix)
-    norm       TEXT NOT NULL    -- normalize_greek(department), status suffix stripped
-);
-CREATE INDEX IF NOT EXISTS department_norm_idx ON department(norm);
 """
 
 
-def _title_ddl(name: str) -> str:
-    """DDL for one title corpus: base table + norm index + FTS5 index.
+def _title_ddl(name: str, *, fts: bool) -> str:
+    """DDL for one entity corpus: base table + norm index, optionally + FTS5 index.
 
-    ``name`` becomes the table name and the FTS5 table name (``{name}_fts``).
-    Only ever called with values from ``TITLE_CLASSES`` — never user input.
+    Args:
+        name: Becomes the table name and (if ``fts``) the FTS5 table name
+              (``{name}_fts``). Only ever called with values from
+              ``TITLE_CLASSES`` — never user input.
+        fts: Whether to also emit the FTS5 candidate-generation table.
+             ``True`` for ``course``/``book``, ``False`` for
+             ``university``/``department`` — see module docstring.
     """
-    return f"""
+    base = f"""
 CREATE TABLE IF NOT EXISTS {name} (
     id      INTEGER PRIMARY KEY,
-    surface TEXT NOT NULL,   -- exact KG evdx:title literal (for SPARQL VALUES)
-    norm    TEXT NOT NULL    -- normalize_greek(surface), what we search against
+    surface TEXT NOT NULL,   -- exact KG literal (evdx:title or evdx:name), for SPARQL VALUES
+    norm    TEXT NOT NULL,   -- normalize_greek(surface), what we search against
+    parent  TEXT              -- NULL except department: parent university's canonical name
 );
 CREATE INDEX IF NOT EXISTS {name}_norm_idx ON {name}(norm);
+"""
+    if not fts:
+        return base
 
--- External-content FTS5 table: 'content' points back at `{name}` so the title
--- text is stored once, not duplicated inside the FTS index.
+    # External-content FTS5 table: 'content' points back at `{name}` so the
+    # title text is stored once, not duplicated inside the FTS index.
+    return (
+        base
+        + f"""
 CREATE VIRTUAL TABLE IF NOT EXISTS {name}_fts USING fts5(
     norm,
     content='{name}',
@@ -98,11 +124,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS {name}_fts USING fts5(
     tokenize='unicode61'
 );
 """
+    )
 
 
 # Data Definition Language for the whole database. Executed as one script via
 # ``sqlite3.Connection.executescript`` so all statements share one transaction.
-_SCHEMA_SQL = _BASE_SQL + "".join(_title_ddl(name) for name in TITLE_CLASSES)
+_SCHEMA_SQL = _BASE_SQL + "".join(
+    _title_ddl(name, fts=name in FTS_CLASSES) for name in TITLE_CLASSES
+)
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -124,9 +153,16 @@ def sync_title_fts(conn: sqlite3.Connection, table: str) -> None:
 
     Args:
         conn: An open SQLite connection.
-        table: One of ``TITLE_CLASSES`` (e.g. ``"course"`` or ``"book"``).
-               Not validated here — callers are internal and always pass a
-               constant; ``title_index.py`` validates values that trace back
-               to external input (an HTTP query param) before they reach SQL.
+        table: One of ``FTS_CLASSES`` (``"course"`` or ``"book"``) — the only
+               classes that have an ``<table>_fts`` table to populate.
+
+    Raises:
+        ValueError: If ``table`` is not an FTS-backed class (``university``
+                    and ``department`` have no FTS table — see module
+                    docstring "FTS5 — SELECTIVELY, NOT UNIFORMLY").
     """
+    if table not in FTS_CLASSES:
+        raise ValueError(
+            f"{table!r} has no FTS table to sync; only {sorted(FTS_CLASSES)} do"
+        )
     conn.execute(f"INSERT INTO {table}_fts(rowid, norm) SELECT id, norm FROM {table}")

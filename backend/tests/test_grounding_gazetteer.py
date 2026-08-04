@@ -16,6 +16,8 @@ from app.grounding.gazetteer import (
     ACRONYM_MAP,
     get_departments,
     get_department_index,
+    get_normalized_departments,
+    get_normalized_universities,
     get_universities,
     get_university_index,
 )
@@ -223,3 +225,39 @@ def test_cache_works_department_index() -> None:
     first = get_department_index()
     second = get_department_index()
     assert first is second
+
+
+# ---------------------------------------------------------------------------
+# Normalized label lists (linker._stage3_fuzzy's precomputed cache)
+# ---------------------------------------------------------------------------
+
+
+def test_normalized_universities_shape_and_content() -> None:
+    """One (normalized_label, canonical_label) tuple per university, agreeing
+    with normalize_greek(canonical_label)."""
+    pairs = get_normalized_universities()
+    assert len(pairs) == len(get_universities())
+    for norm, canonical in pairs:
+        assert norm == normalize_greek(canonical)
+    apth = "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"
+    assert (normalize_greek(apth), apth) in pairs
+
+
+def test_normalized_departments_shape_and_content() -> None:
+    """One (normalized_dept, canonical_dept, canonical_uni) triple per
+    department, agreeing with normalize_greek(canonical_dept)."""
+    triples = get_normalized_departments()
+    assert len(triples) == len(get_departments())
+    for norm, dept, uni in triples:
+        assert norm == normalize_greek(dept)
+        assert uni in set(get_universities())
+
+
+def test_cache_works_normalized_universities() -> None:
+    """Two consecutive calls return the SAME object (precomputed once, not
+    rebuilt per call — see gazetteer.py's module docstring)."""
+    assert get_normalized_universities() is get_normalized_universities()
+
+
+def test_cache_works_normalized_departments() -> None:
+    assert get_normalized_departments() is get_normalized_departments()

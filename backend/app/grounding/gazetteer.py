@@ -38,6 +38,20 @@ lookups without re-normalizing on every query.  Department labels include
 parenthetical status suffixes in the raw data (e.g. "(ΚΑΤΑΡΓΗΘΗΚΕ)"); the index
 key is built after ``normalize_greek`` has stripped those suffixes, so abolished
 departments are still reachable.
+
+NORMALIZED LABEL LISTS (for fuzzy matching)
+---------------------------------------------
+``get_normalized_universities()`` / ``get_normalized_departments()`` return
+``(normalized_label, canonical_label[, parent_university])`` tuples, precomputed
+once here rather than by every caller.  This exists specifically for
+``linker._stage3_fuzzy``, which runs ``rapidfuzz.process.extractOne`` against
+these lists on every call to ``resolve_mention`` — and ``hints.py`` calls
+``resolve_mention`` roughly 20 times per question (every 1/2/3-token sliding
+window, plus once more per token in ``_tokens_used_by_entity``).  Before this
+cache existed, ``_stage3_fuzzy`` re-ran ``normalize_greek`` over all 46 + 379
+labels on every one of those calls — ~17,000 redundant normalizations per
+question.  Precomputing here is the same fix ADR-018 applied to course-title
+ranking, applied to the (much smaller, but non-zero) institution-matching cost.
 """
 
 from __future__ import annotations
@@ -55,6 +69,8 @@ class _GazetteerData(TypedDict):
     departments: list[dict[str, str]]
     university_index: dict[str, list[str]]
     department_index: dict[str, list[dict[str, str]]]
+    normalized_universities: list[tuple[str, str]]
+    normalized_departments: list[tuple[str, str, str]]
 
 # ---------------------------------------------------------------------------
 # ACRONYM_MAP — hand-curated abbreviation → canonical evdx:name mapping
@@ -131,19 +147,21 @@ def _load() -> _GazetteerData:
         # --- 1. Read + dedup universities --------------------------------------
         # Defensive dedup: the builder script already writes distinct rows, but
         # this module should not assume that if entities.db was ever produced
-        # some other way.
+        # some other way. `surface`/`parent` are the unified column names
+        # schema.py uses for every entity class (ADR-020) — `university` has
+        # no `parent` (it IS the top of the hierarchy).
         universities: list[str] = sorted(
-            {row["name"] for row in conn.execute("SELECT name FROM university")}
+            {row["surface"] for row in conn.execute("SELECT surface FROM university")}
         )
 
         # --- 2. Read + dedup department pairs -----------------------------------
         seen_pairs: set[tuple[str, str]] = set()
         departments: list[dict[str, str]] = []
-        for row in conn.execute("SELECT university, department FROM department"):
-            pair = (row["university"], row["department"])
+        for row in conn.execute("SELECT parent, surface FROM department"):
+            pair = (row["parent"], row["surface"])
             if pair not in seen_pairs:
                 seen_pairs.add(pair)
-                departments.append({"university": row["university"], "department": row["department"]})
+                departments.append({"university": row["parent"], "department": row["surface"]})
         departments.sort(key=lambda d: (d["university"], d["department"]))
     finally:
         conn.close()
@@ -167,12 +185,26 @@ def _load() -> _GazetteerData:
         key = normalize_greek(dept["department"])
         department_index.setdefault(key, []).append(dept)
 
-    # --- 5. Populate cache and return ---------------------------------------------
+    # --- 5. Build normalized label lists (for linker._stage3_fuzzy) --------------
+    # Precomputed here, once, so the fuzzy-matching stage never re-runs
+    # normalize_greek over the whole gazetteer on every call — see module
+    # docstring "NORMALIZED LABEL LISTS".
+    normalized_universities: list[tuple[str, str]] = [
+        (normalize_greek(uni), uni) for uni in universities
+    ]
+    normalized_departments: list[tuple[str, str, str]] = [
+        (normalize_greek(dept["department"]), dept["department"], dept["university"])
+        for dept in departments
+    ]
+
+    # --- 6. Populate cache and return ---------------------------------------------
     _cache = {
         "universities": universities,
         "departments": departments,
         "university_index": university_index,
         "department_index": department_index,
+        "normalized_universities": normalized_universities,
+        "normalized_departments": normalized_departments,
     }
     return _cache
 
@@ -247,3 +279,33 @@ def get_department_index() -> dict[str, list[dict[str, str]]]:
         ``{"university": str, "department": str}`` dicts.
     """
     return _load()["department_index"]
+
+
+def get_normalized_universities() -> list[tuple[str, str]]:
+    """Return precomputed ``(normalized_label, canonical_label)`` pairs.
+
+    For ``linker._stage3_fuzzy``'s ``rapidfuzz.process.extractOne`` call —
+    see module docstring "NORMALIZED LABEL LISTS" for why this exists as a
+    cache rather than being rebuilt per call.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        One tuple per university, in the same order as ``get_universities()``.
+    """
+    return _load()["normalized_universities"]
+
+
+def get_normalized_departments() -> list[tuple[str, str, str]]:
+    """Return precomputed ``(normalized_label, canonical_dept, canonical_uni)`` triples.
+
+    For ``linker._stage3_fuzzy``'s ``rapidfuzz.process.extractOne`` call —
+    see module docstring "NORMALIZED LABEL LISTS" for why this exists as a
+    cache rather than being rebuilt per call.
+
+    Returns
+    -------
+    list[tuple[str, str, str]]
+        One tuple per department, in the same order as ``get_departments()``.
+    """
+    return _load()["normalized_departments"]

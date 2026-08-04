@@ -123,6 +123,17 @@ _ENTITY_STOPWORDS: frozenset[str] = _GREEK_STOPWORDS - _INSTITUTION_WORDS
 # university.  Windows whose tokens are ALL glue words are skipped.
 # Multi-word windows that merely *contain* a glue word ("πανεπιστημιο πειραια")
 # are kept — they have a discriminating non-glue token ("πειραια").
+#
+# THIS GUARD IS LOAD-BEARING SPECIFICALLY FOR ``fuzz.WRatio`` (linker.py's
+# Stage 3 scorer, also used by title_index.rank_titles(entity_class=
+# "university"/"department") — see ADR-020).  WRatio's partial-matching
+# behaviour is exactly what makes a bare glue word dangerous: measured
+# against the real 46 university labels, a bare "πανεπιστημιο" scores >=90
+# against 13 of them under WRatio, vs. 0 of them under token_sort_ratio (the
+# scorer course/book titles use, which does NOT reward partial matches).  If
+# a future refactor ever swaps the institution scorer to something
+# order/whole-string-based, this guard becomes unnecessary — but as long as
+# WRatio is in play here, deleting it reintroduces the random-university bug.
 _INSTITUTION_GLUE: frozenset[str] = _INSTITUTION_WORDS | frozenset({
     "πολυτεχνειο", "τει", "ανωτατο", "ανωτατη",
 })
