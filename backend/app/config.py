@@ -4,46 +4,22 @@ Application settings — all configuration values the backend needs to run.
 HOW CONFIGURATION WORKS IN THIS PROJECT
 ----------------------------------------
 All settings are read from environment variables (or from the `.env` file in
-the `backend/` folder). You never hard-code secrets like API keys directly in
-Python, instead you put them in `.env`, and this file reads them
+the `backend/` folder). You never hard-code secrets like API keys directly,
+instead you put them in `.env`, and this file reads them
 automatically at startup.
 
 Example `.env` (see `.env.example` for the full template):
 
-    ANTHROPIC_API_KEY=sk-ant-...
+    API_KEY=<your API key here>
     LLM_PROVIDER=claude
     LLM_MODEL=claude-haiku-4-5
 
-WHAT IS Pydantic / BaseSettings?
----------------------------------
-Pydantic is a library that validates data. `BaseSettings` is a special
-Pydantic class designed specifically for configuration: it reads values from
-environment variables, validates their types (e.g. ensures a bool really is
-True/False), and exposes them as a plain Python object.
-
-WHAT IS `Field(..., alias=...)`?
----------------------------------
-Each setting has a Python-friendly name (e.g. `llm_provider`, lower_snake_case)
-and an environment-variable alias (e.g. `LLM_PROVIDER`, UPPER_SNAKE_CASE).
-The alias is what you write in `.env`; the Python name is what you use in code.
-`Field(default=...)` sets the fallback value when the variable is not set.
 
 HOW TO USE SETTINGS ELSEWHERE IN THE CODE
 ------------------------------------------
     from app.config import settings   # import the single shared instance
 
-    print(settings.llm_provider)                         # "claude" (or whatever is in .env)
-    print(settings.anthropic_api_key)                    # SecretStr → prints as '**********'
-    print(settings.anthropic_api_key.get_secret_value()) # the real key, when truly needed
 
-WHY API KEYS ARE `SecretStr`
------------------------------
-`anthropic_api_key` and `gemini_api_key` are typed as `SecretStr`, not plain
-`str`. A `SecretStr` masks its value in logs, tracebacks, and `repr()` — so if
-the whole `settings` object is ever printed or logged, the keys show as
-`**********` instead of leaking in cleartext. Code that genuinely needs the raw
-string (only the provider factory, when constructing an SDK client) calls
-`.get_secret_value()` at that single point.
 """
 
 from pydantic import Field, SecretStr
@@ -57,8 +33,7 @@ class Settings(BaseSettings):
     ------
     llm_provider : str
         Which LLM service to use. Accepted values: "claude", "gemini",
-        "ollama", "fake". "fake" runs without any network calls — useful for
-        tests and UI work.
+        "ollama", "fake". "fake" runs without any network calls.
     llm_model : str
         The specific model name within the chosen provider, e.g. "claude-haiku-4-5".
         Passed verbatim to the provider SDK.
@@ -86,7 +61,7 @@ class Settings(BaseSettings):
         calls, ignoring any cached responses. Useful when you change a prompt
         and want to see the real model output.
     frontend_origin : str
-        The URL of the React frontend. The backend uses this for CORS — it
+        The URL of the frontend. The backend uses this for CORS, it
         tells the browser "yes, requests from this origin are allowed."
     log_level : str
         Controls how verbose the server's log output is. Common values:
@@ -95,7 +70,6 @@ class Settings(BaseSettings):
         When True (default), the grounding module runs before each LLM call:
         it resolves entity aliases (e.g. "ΑΠΘ" → canonical evdx:name) and
         computes Greek word stems, then injects the hints into the system prompt.
-        Set to False (GROUNDING_ENABLED=0) for A/B baseline comparisons.
     course_linking_enabled : bool
         When True (default), the FTS5 + rapidfuzz (token_sort_ratio) title
         ranker tries to resolve multi-word course names from the question to
@@ -147,5 +121,5 @@ class Settings(BaseSettings):
 
 # A single shared instance created once when this module is first imported.
 # Every other module does `from app.config import settings` and reads from
-# this same object — there is no need to create a new Settings() anywhere else.
+# this same object
 settings = Settings()

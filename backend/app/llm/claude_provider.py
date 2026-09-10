@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Iterator
 
-import anthropic  # the official Anthropic Python SDK
+import anthropic
 
 from app.llm.base import LLMResponse, StreamResult
 from app.llm.cache import DiskCache
@@ -32,11 +32,6 @@ class ClaudeProvider:
     the model name, API key, and a DiskCache instance. The pipeline then calls
     `generate()` or `stream()` without knowing anything about Claude internals.
 
-    WHAT THE ANTHROPIC CLIENT IS
-    ----------------------------
-    `anthropic.Anthropic(api_key=...)` creates an HTTP client that knows how
-    to talk to Anthropic's servers. Think of it like opening a connection to
-    a web service — you create it once and reuse it for all calls.
     """
 
     def __init__(self, model: str, api_key: str, cache: DiskCache) -> None:
@@ -77,7 +72,7 @@ class ClaudeProvider:
            before, return the saved response immediately (0 API cost).
         2. If not cached: send the prompt to Claude, wait for the full reply.
         3. Save the reply to cache for next time.
-        4. Log token usage so you can spot prompt bloat early.
+        4. Log token usage.
         5. Return an LLMResponse with the text and token counts.
 
         Parameters
@@ -110,9 +105,9 @@ class ClaudeProvider:
         # `system` is passed as a list of content blocks so we can attach
         # `cache_control` to the stable prefix (template + ontology + few-shot).
         # Anthropic reuses the compiled prefix on subsequent requests, saving
-        # ~90% of input-token cost after the first write.  Caching only
-        # activates when the prefix exceeds the per-model minimum (4 096 tokens
-        # for Haiku 4.5, 2 048 for Sonnet 4.6); if the prefix is too short the
+        # ~90% of input-token cost after the first write. Caching only
+        # activates when the prefix exceeds the per-model minimum; 
+        # if the prefix is too short the
         # API silently skips it — `cache_creation_input_tokens` will be 0.
         message = self._client.messages.create(
             model=self._model,
@@ -222,7 +217,7 @@ class ClaudeProvider:
                 # Yield the entire cached string as one chunk and stop.
                 # No usage data is available for cached responses.
                 yield cached
-                return  # `return` inside a generator just stops iteration
+                return
 
             # 2b — live streaming from Claude
             full_text = ""

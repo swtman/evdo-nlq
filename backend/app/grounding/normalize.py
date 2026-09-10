@@ -1,8 +1,9 @@
 """Greek text normalization for the grounding module.
 
 The grounding pipeline must compare user-typed Greek against KG labels that are
-stored as ALL-CAPS, accent-free strings — often with trailing status annotations
-like "(ΚΑΤΑΡΓΗΘΗΚΕ/ΜΕΤΑΦΕΡΘΗΚΕ)" that users never type.  ``normalize_greek``
+sometimes (e.g for University and Department labels) stored as ALL-CAPS, 
+accent-free strings — often with trailing status annotations
+like "(ΚΑΤΑΡΓΗΘΗΚΕ/ΜΕΤΑΦΕΡΘΗΚΕ)".  This normalization function
 reduces both sides to the same canonical form so that string-equality and
 fuzzy-match comparisons work correctly regardless of how the input was typed or
 how the KG stored it.
@@ -25,7 +26,7 @@ import re
 import unicodedata
 
 # Matches a single space followed by a parenthesised annotation at end-of-string.
-# The content between the parens can be any non-empty sequence of characters
+# The content between the parentheses can be any non-empty sequence of characters
 # (typically Greek words and slashes), so the pattern is intentionally broad:
 # we only care that it is at the very end of the string.
 _STATUS_SUFFIX_RE = re.compile(r" \([^)]+\)$")
@@ -34,9 +35,7 @@ _STATUS_SUFFIX_RE = re.compile(r" \([^)]+\)$")
 def normalize_greek(text: str) -> str:
     """Normalize a Greek string to an accent-free, lowercase, whitespace-collapsed form.
 
-    Applies the five-step pipeline described in the module docstring.  The function
-    is pure — it has no side effects, performs no I/O, and returns an empty string
-    unchanged.
+    Applies the five-step pipeline described in the module docstring.
 
     Args:
         text: A Greek (or mixed Greek/ASCII) string — may be user input or a KG label.

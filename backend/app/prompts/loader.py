@@ -1,17 +1,6 @@
 """
 Loads and fills versioned prompt templates from the top-level prompts/ directory.
 
-WHY PROMPTS LIVE IN FILES, NOT IN CODE
----------------------------------------
-Prompt text changes frequently during development (tweaking wording, adding
-examples, adjusting instructions). If prompts were inlined as Python strings,
-every change would show up as a code diff, mixed together with real logic
-changes. Keeping them in Markdown files means:
-  - Prompt history is readable in git without sifting through code.
-  - You can edit prompts without touching Python.
-  - The `name-v{N}.md` naming convention makes versions explicit and
-    lets you compare v1 vs v2 side-by-side.
-
 HOW A PROMPT FILE IS STRUCTURED
 ---------------------------------
 Each `.md` file can have three sections:
@@ -40,23 +29,6 @@ subsequent call returns that stored value directly — no disk read, no regex.
 This is the same idea as in `ontology/loader.py`, but using a dict instead of
 a single variable so multiple different prompts can be cached at once.
 
-WHAT IS A REGULAR EXPRESSION (regex)?
---------------------------------------
-A regular expression is a pattern that describes text. Python's `re` module
-uses them to search, extract, and replace text. Two regexes are used here:
-
-  1. To strip YAML frontmatter:  r"\A---\n.*?\n---\n*"
-     \A  = start of the whole string
-     --- = literal three dashes
-     .*? = any characters (non-greedy — stops at the first match)
-     This removes the opening --- ... --- block.
-
-  2. To extract the # System section:  r"^# System\n(.*?)(?=^# |\Z)"
-     ^# System  = a line starting with "# System"
-     (.*?)      = capture everything after it (non-greedy)
-     (?=^# |\Z) = stop when the next top-level heading or end of file is found
-     re.MULTILINE makes ^ match the start of any line, not just the whole string.
-     re.DOTALL   makes . also match newlines (so .*? spans multiple lines).
 """
 
 from __future__ import annotations
@@ -88,7 +60,7 @@ def load(name: str, version: int) -> str:
         The prompt's base name, e.g. "nl-to-sparql" or "nl-to-sparql-retry".
         This becomes part of the filename: `nl-to-sparql-v1.md`.
     version : int
-        The version number. Allows multiple versions to coexist in prompts/.
+        The version number.
 
     Returns
     -------
@@ -153,7 +125,7 @@ def fill(template: str, **kwargs: str) -> str:
     This depends on which template was loaded. The two templates in use:
 
     `nl-to-sparql-v4.md` (active main prompt, first attempt):
-        System section contains: {ontology_summary} and {few_shot_block}.
+        System section contains: {ontology_summary}, {grounding_hints}, {few_shot_block}.
         The user's question is NOT a placeholder here — it is passed
         directly as the `user` argument to the LLM (provider.stream /
         provider.generate). The `# User (template)` section in the .md
@@ -161,9 +133,14 @@ def fill(template: str, **kwargs: str) -> str:
         extracts it, so {question} never appears in the filled string.
 
         Typical call:
-            fill(template,
-                 ontology_summary=load_summary(),
-                 few_shot_block=select_few_shot(k=6))
+                grounding_hints = 
+                (build_grounding_hints(question) if settings.grounding_enabled else "")
+                system = fill(
+                            load("nl-to-sparql", 5),
+                             ontology_summary=load_summary(),
+                            few_shot_block=select_few_shot(k=8),
+                            grounding_hints=grounding_hints,
+                            few_shot_block=select_few_shot(k=6))
 
     `nl-to-sparql-retry-v1.md` (retry prompt, after SPARQL validation fails):
         System section contains: {ontology_summary}, {failed_sparql},

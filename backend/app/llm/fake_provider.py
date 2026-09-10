@@ -1,17 +1,6 @@
 """
 FakeProvider — a pretend LLM that needs no internet connection.
 
-WHY THIS EXISTS
----------------
-Running tests or iterating on the UI while hitting a real LLM is slow and
-costs money. FakeProvider solves both problems: it always returns the same
-hard-coded SPARQL query instantly, with zero network calls and zero API cost.
-
-It satisfies the `LLMProvider` Protocol from `base.py` — meaning it has the
-same `generate` and `stream` methods with the same signatures — so the rest
-of the codebase cannot tell the difference between FakeProvider and a real
-provider. This is exactly the point of using a Protocol.
-
 WHEN TO USE IT
 --------------
 - All unit tests (pytest) use FakeProvider by default.
@@ -22,23 +11,6 @@ WHEN TO USE IT
 - Any time you want to test the pipeline logic without caring about the SPARQL
   content itself.
 
-HOW IT DIFFERS FROM REAL PROVIDERS
------------------------------------
-Real providers (Claude, Gemini):
-  - Make an HTTP request to an external API.
-  - Token counts reflect actual usage.
-  - Streaming: the `tokens` iterator is backed by a live network response;
-    `input_tokens` / `output_tokens` are set to 0 and only updated *after*
-    the last token arrives (deferred population — see base.py).
-
-FakeProvider:
-  - No network call — returns immediately.
-  - Token counts are made up (input=42, output=word count of the canned text).
-  - Streaming: `input_tokens` and `output_tokens` are set *upfront* (not
-    deferred), because there is no real generator closure. This is a minor
-    inconsistency: code that reads those fields before exhausting `tokens`
-    will get non-zero values from Fake but 0 from real providers. It does not
-    matter in practice because the pipeline always exhausts `tokens` first.
 """
 
 from __future__ import annotations

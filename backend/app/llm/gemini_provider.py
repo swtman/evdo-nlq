@@ -4,29 +4,16 @@ Google Gemini implementation of LLMProvider.
 BOUNDARY RULE
 -------------
 Only this file may import `google.genai`. All other modules must interact with
-LLMs through the `LLMProvider` Protocol in `base.py`. This mirrors the same
-rule in `claude_provider.py` — each provider's SDK is strictly contained.
+LLMs through the `LLMProvider` Protocol in `base.py`.
 
 HOW THIS FILE RELATES TO claude_provider.py
 --------------------------------------------
-The structure here is *identical* to ClaudeProvider:
-  - Same `__init__` shape (model, api_key, cache).
-  - Same `generate()` flow: cache check → API call → cache write → log → return.
-  - Same `stream()` pattern: empty StreamResult → closure `_gen()` → deferred
-    population of usage fields → return.
-
-The only differences are Gemini-SDK-specific:
-  1. The API call signatures differ (different parameter names, different
-     response object shape).
-  2. Gemini sends usage metadata on individual stream *chunks* (not just at
-     the end like Claude), so `_gen()` keeps track of the last chunk that
-     contained usage data.
-  3. Some Gemini fields can be `None` even on success, so there are extra
-     guards and a fallback warning.
+The structure here is identical to ClaudeProvider,
+the only differences are Gemini-SDK-specific.
 
 Read the `claude_provider.py` documentation first — the concepts (generator,
 closure, deferred population) are explained in detail there and are not
-repeated here. This file only highlights what is *different*.
+repeated here.
 """
 
 from __future__ import annotations
@@ -34,8 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Iterator
 
-import google.genai as genai          # the official Google Generative AI SDK
-from google.genai import types        # helper types for configuring requests
+import google.genai as genai
+from google.genai import types 
 
 from app.llm.base import LLMResponse, StreamResult
 from app.llm.cache import DiskCache
@@ -65,8 +52,6 @@ class GeminiProvider:
             real API call.
         """
         self._model = model
-        # `genai.Client` is the Gemini equivalent of `anthropic.Anthropic()`.
-        # It is an authenticated HTTP client for Google's Generative AI service.
         self._client = genai.Client(api_key=api_key)
         self._cache = cache
 
@@ -172,7 +157,7 @@ class GeminiProvider:
         Claude's SDK provides a clean `.get_final_message()` call that returns
         usage only after the stream is fully consumed.
 
-        Gemini's SDK includes usage metadata on individual *chunks* throughout
+        Gemini's SDK includes usage metadata on individual chunks throughout
         the stream — but not every chunk carries it, and the counts accumulate
         as the stream progresses. The last chunk that contains `usage_metadata`
         has the final totals. So `_gen()` tracks the most recently seen

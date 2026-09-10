@@ -1,19 +1,16 @@
 """Greek word stemming for SPARQL CONTAINS query hints.
 
-The EvdoGraph KG stores book and course titles as ALL-CAPS, accent-free strings,
-e.g. "ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΔΟΜΕΣ ΔΕΔΟΜΕΝΩΝ".  Users type inflected Greek words with
-accents, e.g. "αλγοριθμους" (accusative plural).  Because Greek inflects heavily,
-the exact user form almost never appears verbatim in the title.
+The EvdoGraph KG stores book and course titles in different formats 
+(sometimes ALL-CAPS and accent-free strings and sometimes mixed-case with accents),
+but always in their canonical, uninflected form e.g. 
+Users type inflected Greek words e.g. "αλγοριθμους" (accusative plural).  
+Because Greek inflects heavily, the exact user form almost never appears 
+verbatim in the title.
 
 ``greek_stem`` reduces a user-typed word to a short invariant root that appears
 across all its inflectional forms.  The root is injected into a SPARQL filter:
 
     FILTER(CONTAINS(LCASE(?title), "αλγορ"))
-
-This sidesteps two problems at once:
-  - Inflectional suffixes: nominative/accusative/genitive all share the root.
-  - Accent mismatch: SPARQL 1.1 has no built-in accent-normalizer, but after
-    ``normalize_greek`` both sides are accent-free, so LCASE + CONTAINS works.
 
 Algorithm (three steps):
   1. Normalize — call ``normalize_greek`` to strip accents, casefold ς→σ,
@@ -114,7 +111,7 @@ def greek_stem(word: str) -> str:
                 break  # longest-first guarantees this is the best match
 
     # Step 3 — consonant-cluster trimming.
-    # Find how many trailing characters are consonants (= not in _GREEK_VOWELS).
+    # Find how many trailing characters are consonants ( not in _GREEK_VOWELS).
     # If there are ≥ 2 trailing consonants, the cluster obscures the readable
     # root; trim back to the vowel that precedes the cluster.
     trailing_consonants = 0

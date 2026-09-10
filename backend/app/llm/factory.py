@@ -4,36 +4,10 @@ Factory for creating LLMProvider instances.
 WHAT A FACTORY IS
 -----------------
 A factory is simply a function (or class) whose only job is to create and
-return objects. Instead of every caller knowing how to build a ClaudeProvider
+return objects. Instead of every caller knowing how to build for e.g a ClaudeProvider
 (which API key to pass, how to set up the cache, etc.), they call this one
 function and get back a ready-to-use provider.
 
-This keeps construction logic in one place. If ClaudeProvider ever needs a new
-argument, you change it here — not in every route or pipeline that uses it.
-
-WHY IMPORTS ARE INSIDE THE FUNCTION (lazy imports)
----------------------------------------------------
-Normally, imports sit at the top of the file and run as soon as the module is
-loaded. Here, the imports for ClaudeProvider, GeminiProvider, and their SDKs
-are placed *inside* each `case` branch instead.
-
-This means:
-- When `name="fake"`, the `anthropic` and `google.genai` packages are never
-  imported at all — not even loaded into memory.
-- This matters for unit tests: they run with `LLM_PROVIDER=fake` and should
-  not need the Anthropic or Google SDKs installed. Lazy imports enforce that.
-
-WHAT IS `match` / `case`?
---------------------------
-`match` is Python 3.10+'s pattern matching — a cleaner alternative to a chain
-of `if name == "claude": ... elif name == "gemini": ...` statements.
-
-    match name:
-        case "claude":   ...   # runs if name == "claude"
-        case "gemini":   ...   # runs if name == "gemini"
-        case _:          ...   # `_` is the wildcard — runs for anything else
-
-It reads like a switch statement if you have seen those in other languages.
 """
 
 from __future__ import annotations
@@ -88,15 +62,11 @@ def get_provider(name: str, model: str) -> LLMProvider:
         )
     match name:
         case "fake":
-            # Imported here (not at top of file) so that running with
-            # LLM_PROVIDER=fake never touches the anthropic or google packages.
             from app.llm.fake_provider import FakeProvider
-
-            # FakeProvider needs no API key or cache — it has no network calls.
+            # FakeProvider needs no API key or cache
             return FakeProvider()
 
         case "claude":
-            # These imports only run when name == "claude".
             from app.config import settings
             from app.llm.cache import DiskCache
             from app.llm.claude_provider import ClaudeProvider
@@ -118,7 +88,6 @@ def get_provider(name: str, model: str) -> LLMProvider:
             )
 
         case "gemini":
-            # Same pattern as "claude" — lazy imports, fresh cache, inject key.
             from app.config import settings
             from app.llm.cache import DiskCache
             from app.llm.gemini_provider import GeminiProvider
@@ -127,7 +96,6 @@ def get_provider(name: str, model: str) -> LLMProvider:
                 cache_dir=settings.llm_cache_dir,
                 disabled=settings.llm_cache_disabled,
             )
-            # SecretStr → plain str only at the point of SDK construction.
             return GeminiProvider(
                 model=model,
                 api_key=settings.gemini_api_key.get_secret_value(),

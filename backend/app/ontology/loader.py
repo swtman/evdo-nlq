@@ -1,22 +1,13 @@
 """
 Loads the static EvdoGraph ontology summary from prompts/ontology-summary.md.
 
-WHAT IS THE ONTOLOGY SUMMARY?
-------------------------------
-The ontology summary is a hand-written Markdown file that
+The ontology summary is a Markdown file that
 describes the structure of the EvdoGraph knowledge graph: what classes exist
-(e.g. University, Departmentyes, Course), what properties connect them, and example values.
+(e.g. University, Department, Course), what properties connect them, and example values.
 
 This summary is injected into the system prompt of every LLM call. It gives
-Claude or Gemini the vocabulary and structure it needs to write correct SPARQL
+the LLM the vocabulary and structure it needs to write correct SPARQL
 queries against EvdoGraph, without needing to query the database at runtime.
-
-WHY LOAD IT FROM A FILE INSTEAD OF INLINING IT IN CODE?
----------------------------------------------------------
-Prompt content changes independently of code. Keeping it in a versioned
-Markdown file means you can tune the ontology description without touching
-any Python — and you can see the history of prompt changes in git separately
-from code changes.
 
 HOW THE MODULE-LEVEL CACHE WORKS
 ---------------------------------
@@ -29,17 +20,6 @@ This is the simplest possible cache: a single variable. It persists for the
 entire lifetime of the running server process. Since the ontology summary never
 changes while the server is running, this is perfectly safe.
 
-HOW THE FILE PATH IS RESOLVED
-------------------------------
-`Path(__file__)` is the absolute path to *this* Python file.
-`.parent` steps up one folder.  Four `.parent` calls walk up from:
-    backend/app/ontology/loader.py
-    → backend/app/ontology/
-    → backend/app/
-    → backend/
-    → (project root)
-Then `/ "prompts" / "ontology-summary.md"` navigates back down to the file.
-This makes the path work regardless of what directory you run the server from.
 """
 
 from __future__ import annotations
@@ -60,15 +40,7 @@ def load_summary() -> str:
     """Return the ontology summary text, reading from disk only on the first call.
 
     After the first call the text is kept in `_cached` and returned instantly
-    on every subsequent call — no disk I/O, no repeated file reads.
-
-    WHAT IS `global _cached`?
-    -------------------------
-    Normally, assigning to a variable inside a function creates a *local*
-    variable that disappears when the function returns. `global _cached` tells
-    Python: "when I write `_cached = ...` here, I mean the module-level
-    `_cached`, not a new local one." Without this line, the assignment would
-    not persist between calls.
+    on every subsequent call.
 
     Returns
     -------

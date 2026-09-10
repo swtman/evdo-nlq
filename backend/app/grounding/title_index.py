@@ -56,7 +56,7 @@ Course and book titles live in separate tables (``course``/``course_fts`` and
 inside ``_fts_candidates``, which explains why that budget has to be ordered
 at all). A merged FTS index would split that budget across both corpora and
 reintroduce the same truncation bug in a subtler form — one that only bites
-when both corpora are dense in the same stem (ADR-019).
+when both corpora are dense in the same stem.
 
 RANKER SEAM
 -----------
@@ -365,12 +365,14 @@ def _fts_candidates(state: _IndexState, stems: list[str]) -> list[str]:
     # SELECT * FROM ? is not valid SQL in any database, because the query
     # planner must know which table it's reading before it can plan anything.
     # A dynamic table name is therefore string interpolation by necessity;
-    # what makes it safe here is that `state.table` is checked against the
-    # closed TITLE_CLASSES tuple in `_rank` before this function is ever
-    # called, and this function is only reached for classes in FTS_CLASSES.
+    # `state.table` is checked against the closed TITLE_CLASSES tuple in `_rank` 
+    # before this function is ever called, and this function is only reached for 
+    # classes in FTS_CLASSES.
     # (`state.table` ultimately traces back to the `?class=` query param on
     # GET /entities/search — that guard is where the safety property has to
     # be enforced, in addition to the API layer's own validation.)
+    if state.table not in TITLE_CLASSES:
+            raise ValueError(f"unknown title class {state.table!r}; expected one of {TITLE_CLASSES}")
     table = state.table
     fts_table = f"{table}_fts"
 

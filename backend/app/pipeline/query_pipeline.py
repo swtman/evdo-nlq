@@ -9,7 +9,7 @@ lives exclusively here.
 
 THE PIPELINE IN ONE PICTURE
 -----------------------------
-User question (Greek/English)
+User question (Greek)
   │
   ▼
 [1] Build system prompt
@@ -72,7 +72,7 @@ logger = logging.getLogger(__name__)
 
 # Maximum number of corrective LLM calls after the first generation fails
 # SPARQL validation. Total LLM calls per request: 1 (initial) + up to 2
-# (retries) = up to 3. See ADR-004 for the rationale.
+# (retries) = up to 3.
 _MAX_RETRIES = 2
 
 
@@ -95,7 +95,7 @@ class TokenEvent:
 
     Yielded repeatedly during Phase 1 of stream_events(), once per token.
     The `token` field is whatever the provider's generator emits — for
-    Claude/Gemini it is one or a few characters; for FakeProvider it is
+    Claude/Gemini (or any actual provider) it is one or a few characters; for FakeProvider it is
     exactly one character (it calls iter() on the full string).
 
     The route handler maps this to SSE event name: `sparql_token`.
@@ -195,8 +195,6 @@ PipelineEvent = TokenEvent | RetryEvent | CompleteEvent | ResultsEvent | DoneEve
 # ---------------------------------------------------------------------------
 # Result type for the synchronous path
 # ---------------------------------------------------------------------------
-
-
 @dataclass
 class PipelineResult:
     """Structured return value from run() — the synchronous pipeline path.
@@ -215,17 +213,12 @@ class PipelineResult:
     output_tokens: int
     retries: int
 
-
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
-
-
 class QueryPipeline:
     """Orchestrates the full NLQ pipeline for one request.
 
-    DEPENDENCY INJECTION
-    --------------------
     The pipeline never creates its own LLM provider or SPARQL client. It
     receives them as constructor arguments — (dependency injection). 
     The caller (`_make_pipeline()` in `app/api/query.py`) is
@@ -237,8 +230,7 @@ class QueryPipeline:
       user via the UI dropdown).
     - No hidden global state inside this class.
 
-    A new QueryPipeline is created for every HTTP request. Since __init__
-    only stores references (no network calls, no file reads), this is free.
+    A new QueryPipeline is created for every HTTP request.
     """
 
     def __init__(
@@ -275,11 +267,6 @@ class QueryPipeline:
     def _build_system(self, question: str) -> str:
         """Build the filled system prompt for a given question.
 
-        Centralises the prompt construction that was previously duplicated
-        in run() and stream_events(). Uses prompt v5 (adds {grounding_hints}).
-
-        When GROUNDING_ENABLED is False (env var), grounding_hints is set to ""
-        so the prompt behaves identically to v4 — useful for A/B comparisons.
 
         Args:
             question: Raw user question, used by the grounding module to
@@ -291,12 +278,18 @@ class QueryPipeline:
         grounding_hints = (
             build_grounding_hints(question) if settings.grounding_enabled else ""
         )
-        return fill(
+        system = fill(
             load("nl-to-sparql", 5),
             ontology_summary=load_summary(),
             few_shot_block=select_few_shot(k=8),
             grounding_hints=grounding_hints,
         )
+        # Centralised here (not duplicated in run() and stream_events()) so
+        # both pipeline paths log the same thing — previously only the
+        # streaming path logged the system prompt, so `POST /query` (the
+        # sync path) was silent until a failure.
+        logger.info("System prompt (question=%r):\n%s", question, system)
+        return system
 
     # ------------------------------------------------------------------
     # Public: synchronous path
@@ -311,11 +304,9 @@ class QueryPipeline:
         -------------------
         1. load_summary() — reads prompts/ontology-summary.md (cached after
            first call; subsequent calls are instant memory reads).
-        2. load("nl-to-sparql", 4) — extracts the # System section from
-           prompts/nl-to-sparql-v4.md (also cached). This is the ACTIVE
-           prompt template. v1-v3 are archived; v4 targets the post-2026-06-11
-           EvdoGraph schema (evdx:Course = course offering, no programme layer).
-        3. select_few_shot(k=6) — selects up to 6 representative
+        2. load("nl-to-sparql", <version>) — extracts the # System section from
+           prompts/nl-to-sparql-v<version>.md (also cached).
+        3. select_few_shot(k) — selects up to k representative
            (question, SPARQL) example pairs from prompts/examples.yaml,
            one per distinct query shape, formatted as a text block.
         4. fill(...) — substitutes {ontology_summary} and {few_shot_block}
@@ -437,13 +428,12 @@ class QueryPipeline:
         the last token is yielded (see StreamResult in base.py). Reading them
         inside the loop would always give 0.
 
-        PHASE 2 — Validate + Retry (synchronous, acceptable at demo scale)
+        PHASE 2 — Validate + Retry (synchronous)
         -------------------------------------------------------------------
-        validate_sparql() runs the rdflib parser offline (no network).
+        validate_sparql() runs the rdflib parser offline.
         If invalid, a retry prompt is built and provider.generate() is called.
         generate() is a blocking synchronous call — it will hold the event
-        loop while waiting for the LLM response. This is acceptable at
-        thesis-demo concurrency (typically one user at a time). In a
+        loop while waiting for the LLM response (typically one user at a time). In a
         production system it would need run_in_executor treatment too.
 
         The retry template (nl-to-sparql-retry-v1.md) is loaded lazily —
@@ -472,7 +462,6 @@ class QueryPipeline:
         # Build the system prompt (same as run()).
         system = self._build_system(question)
         ontology = load_summary()
-        logger.info("Starting pipeline with system prompt:\n%s", system)
 
         # ── Phase 1: stream SPARQL tokens without blocking the event loop ──
         # next() is called in a thread pool so the event loop stays responsive.
@@ -514,6 +503,7 @@ class QueryPipeline:
         retry_template = None  # loaded lazily on first failure
         error = validate_sparql(full_sparql) or ""
         # `or ""` converts None (valid) to "" so `while error` works cleanly
+        logger.info("Validation: %s", "OK" if not error else f"INVALID — {error}")
 
         while error and retries < _MAX_RETRIES:
             retries += 1
@@ -533,11 +523,15 @@ class QueryPipeline:
             )
             response_obj = self._provider.generate(retry_system, question)
             full_sparql = _clean_sparql(response_obj.text)
+            logger.info("Retry %d LLM output:\n%s", retries, full_sparql)
 
             # Accumulate tokens — generate() returns counts immediately (not deferred)
             total_input += response_obj.input_tokens
             total_output += response_obj.output_tokens
             error = validate_sparql(full_sparql) or ""
+            logger.info(
+                "Retry %d validation: %s", retries, "OK" if not error else f"INVALID — {error}"
+            )
 
         logger.info("Final SPARQL after %d retries: %s", retries, full_sparql)
 
@@ -630,14 +624,17 @@ class QueryPipeline:
             total_input += response.input_tokens
             total_output += response.output_tokens
             sparql = _clean_sparql(response.text)
+            logger.info("Attempt %d LLM output:\n%s", attempt, sparql)
 
             if _is_not_answerable(sparql):
                 # Early exit — not a SPARQL error, just an unanswerable question
+                logger.info("Attempt %d: NOT_ANSWERABLE", attempt)
                 return sparql, total_input, total_output, attempt
 
             error = validate_sparql(sparql) or ""
             if not error:
                 # Valid SPARQL — return immediately with attempt as retry count
+                logger.info("Attempt %d validation: OK", attempt)
                 return sparql, total_input, total_output, attempt
 
             logger.warning("Invalid SPARQL on attempt %d: %s", attempt + 1, error[:120])

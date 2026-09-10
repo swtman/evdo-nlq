@@ -12,19 +12,17 @@ matching the fact that course and book titles get identical treatment.
 THE BUG THIS MODULE FIXES
 ---------------------------
 Course titles used to be cleaned by ``" ".join(raw_title.split())`` and the
-*result* was stored as the ``surface`` value later emitted into SPARQL
-``VALUES`` clauses. Python's argument-less ``str.split()`` treats *any*
+result was stored as the ``surface`` value later emitted into SPARQL
+``VALUES`` clauses. Python's argument-less ``str.split()`` treats any
 Unicode whitespace as a separator, not just spaces and tabs — including
 U+00A0 (NO-BREAK SPACE) and U+2008 (PUNCTUATION SPACE), both of which occur
-*inside* real KG titles (e.g. copy-pasted from Word or a PDF). RDF matches
+inside real KG titles (e.g. copy-pasted from Word or a PDF). RDF matches
 plain literals by exact code-point equality, so a title stored in the KG as
 ``"ΟΙΚΟΝΟΜΕΤΡΙΑ\xa0 ΙΙ"`` and rewritten by cleaning to
 ``"ΟΙΚΟΝΟΜΕΤΡΙΑ ΙΙ"`` before being bound in a ``VALUES`` clause matches ZERO
 triples — silently. The search step reports a confident match, the LLM
 writes syntactically valid SPARQL, and the query returns nothing. Measured
-on the book corpus: 52 titles affected this way. The same bug almost
-certainly affects some already-shipped course titles too (not separately
-measured before this fix).
+on the book corpus: 52 titles affected this way.
 
 THE FIX
 -------
@@ -67,7 +65,7 @@ class DropCounts:
     """Itemized count of raw titles discarded by ``clean_titles``.
 
     Kept itemized (not a bare total) so the builder script's report can show
-    *why* records were dropped — the module docstring of
+    why records were dropped — the module docstring of
     ``build_entity_db.py`` commits to reporting every drop; a single opaque
     count would not let a reader tell "9 mojibake records" apart from
     "9 titles that were somehow entirely whitespace".
@@ -85,13 +83,10 @@ class DropCounts:
 def clean_titles(raw_titles: list[str]) -> tuple[dict[str, set[str]], DropCounts]:
     """Clean and group raw KG titles (course or book) by their normalized key.
 
-    Pure function — no I/O, no side effects. Used both by the offline builder
-    script (real GraphDB/JSON data) and by tests (small fixture lists).
-
     Args:
         raw_titles: Raw ``evdx:title`` strings as returned by SPARQL, for
-                    either ``evdx:Course`` or ``evdx:Book`` nodes — the
-                    cleaning rules are identical for both classes.
+                    either ``evdx:Course`` or ``evdx:Book`` nodes
+                    the cleaning rules are identical for both classes.
 
     Returns:
         A tuple of:

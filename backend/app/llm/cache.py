@@ -1,16 +1,9 @@
 """
 Disk cache for LLM responses.
 
-WHY THIS EXISTS
----------------
-Every call to a real LLM (Claude, Gemini) costs money and takes time. During
-development you often send the *exact same question* over and over while
-tweaking unrelated parts of the code. Without a cache, you'd pay for the same
-API call hundreds of times.
-
 This cache stores each LLM response as a plain text file on disk. The next
 time the exact same inputs arrive, it returns the saved file instead of
-calling the API again. Free and instant.
+calling the API again.
 
 HOW THE CACHE KEY WORKS
 ------------------------
@@ -19,18 +12,6 @@ way — different question, different model, different system prompt, etc. It
 does this by hashing all three inputs together into a single 64-character
 fingerprint (a SHA-256 hash). Each cached response is saved as a file whose
 name is that fingerprint.
-
-WHAT IS A HASH?
----------------
-A hash function takes any input (text, numbers, files…) and produces a fixed-
-length string that looks like random characters, e.g.:
-
-    "What is Python?" + system prompt + "claude-haiku-4-5"
-    → "a3f92bc1d8e047..."  (64 hex characters)
-
-Two different inputs will (in practice, always) produce two different hashes.
-The same inputs always produce the same hash. This makes hashes perfect as
-unique file names.
 
 HOW TO DISABLE THE CACHE
 -------------------------
@@ -83,14 +64,10 @@ class DiskCache:
             When True, all cache operations become no-ops. The folder is not
             even created. Controlled by the `LLM_CACHE_DISABLED` env var.
         """
-        # `Path` is Python's object-oriented way of working with file paths.
-        # It handles differences between operating systems (/ vs \) for you.
         self._dir = Path(cache_dir)
         self._disabled = disabled
 
         if not disabled:
-            # `mkdir(parents=True, exist_ok=True)` creates the folder and any
-            # missing parent folders. Does nothing if the folder already exists.
             self._dir.mkdir(parents=True, exist_ok=True)
 
     def _key(self, system: str, user: str, model: str) -> str:
@@ -101,7 +78,6 @@ class DiskCache:
         different inputs), then hashes that string with SHA-256.
 
         The result is a 64-character hex string used as the cache file name.
-        This method is private (leading underscore) — only used internally.
         """
         # `json.dumps` turns the dict into a stable, predictable string.
         # `ensure_ascii=False` keeps Greek characters as-is rather than

@@ -2,8 +2,6 @@
 POST /query       — synchronous JSON endpoint (full pipeline, wait for completion).
 POST /query/stream — SSE streaming endpoint (live token-by-token output).
 
-DESIGN PRINCIPLE: THIN ROUTE HANDLERS
---------------------------------------
 These route functions are deliberately kept as short as possible. They handle
 only HTTP concerns: deserializing the request body, calling the pipeline,
 serializing the response, and mapping exceptions to HTTP status codes.
@@ -47,25 +45,17 @@ class QueryRequest(BaseModel):
     Fields
     ------
     question : str
-        The user's natural-language question (Greek or English). Required —
-        no default. FastAPI returns HTTP 422 Unprocessable Entity if missing.
+        The user's natural-language question. Required —no default. 
+        FastAPI returns HTTP 422 Unprocessable Entity if missing.
     provider : str
         Which LLM provider to use. Defaults to the value of `LLM_PROVIDER`
-        in .env (e.g. "claude"). Can be overridden per request to compare
+        in .env . Can be overridden per request to compare
         providers side-by-side without restarting the server.
     model : str
         Which model within the chosen provider to use. Defaults to
-        `LLM_MODEL` in .env (e.g. "claude-haiku-4-5").
+        `LLM_MODEL` in .env.
 
-    IMPORTANT — defaults are frozen at server startup:
-    `settings.llm_provider` and `settings.llm_model` are read from the
-    `settings` object once, when Python evaluates this class definition
-    (at module import time, i.e. when the server starts). Changing .env
-    while the server is running does NOT update these defaults — a restart
-    is required. Sending explicit values in the request body always works,
-    regardless of server state.
     """
-
     question: str
     provider: str = settings.llm_provider
     model: str = settings.llm_model
@@ -143,12 +133,9 @@ def _make_pipeline(request: QueryRequest) -> QueryPipeline:
     """Construct a fully wired QueryPipeline for a single request.
 
     This function exists to avoid duplicating the construction logic in both
-    the sync and streaming route handlers. It also makes both routes easy to
-    test: tests can patch `get_provider` and `SparqlClient` here without
-    touching the route functions themselves.
+    the sync and streaming route handlers.
 
-    A fresh QueryPipeline is created for every request — its __init__ only
-    stores references (no I/O), so this is free.
+    A fresh QueryPipeline is created for every request.
 
     Construction steps:
     1. get_provider(name, model) — factory.py picks the right provider class
@@ -156,8 +143,7 @@ def _make_pipeline(request: QueryRequest) -> QueryPipeline:
        the API key from settings and a fresh DiskCache, and returns it as an
        LLMProvider. Raises ValueError for unknown provider names.
     2. SparqlClient(endpoint) — pointed at settings.graphdb_endpoint. The
-       endpoint cannot be overridden per-request (security: callers must not
-       redirect the backend to arbitrary SPARQL endpoints).
+       endpoint cannot be overridden per-request.
     3. provider_name and model_name are the raw strings from the request,
        stored for inclusion in DoneEvent / PipelineResult metadata.
     """
@@ -181,7 +167,7 @@ def query(request: QueryRequest) -> QueryResponse:
     1. FastAPI deserializes the JSON body into QueryRequest, applying defaults
        for `provider` and `model` if not provided.
     2. _make_pipeline() constructs the pipeline (provider + SPARQL client).
-    3. pipeline.run(question) blocks the thread while it: builds the system
+    3. pipeline.run(question) blocks the thread while it builds the system
        prompt, calls provider.generate() (LLM HTTP call), validates SPARQL
        with rdflib (offline), retries up to twice if invalid, then calls
        SparqlClient.execute() (GraphDB HTTP call).
@@ -192,11 +178,6 @@ def query(request: QueryRequest) -> QueryResponse:
     6. Other uncaught exceptions (e.g. ValueError from unknown provider name)
        propagate to FastAPI's default handler → HTTP 500.
 
-    ERROR HANDLING NOTE
-    -------------------
-    Only RuntimeError from SparqlClient.execute() is explicitly caught here.
-    An invalid provider name (ValueError from get_provider) will produce
-    HTTP 500, not HTTP 400 — this is a known limitation.
     """
     try:
         pipeline = _make_pipeline(request)
@@ -217,13 +198,13 @@ def query(request: QueryRequest) -> QueryResponse:
 
 @router.post("/query/stream")
 async def query_stream(request: QueryRequest) -> EventSourceResponse:
-    """SSE streaming endpoint — the primary endpoint used by the frontend.
+    """SSE streaming endpoint, the primary endpoint used by the frontend.
 
     WHAT IS SSE (Server-Sent Events)?
     -----------------------------------
     SSE is an HTTP protocol where the server keeps the connection open and
     pushes text events to the client over time. The browser reads events as
-    they arrive — this is what lets the frontend show the SPARQL query being
+    they arrive. This is what lets the frontend show the SPARQL query being
     written character by character.
 
     Each event has a name and a data payload, formatted as:
@@ -232,7 +213,7 @@ async def query_stream(request: QueryRequest) -> EventSourceResponse:
         \\r\\n
 
     sse_starlette emits \\r\\n line endings. The frontend normalizes them to
-    \\n before parsing (documented in backend/CLAUDE.md).
+    \\n before parsing.
 
     EVENTS EMITTED (in order)
     --------------------------
@@ -260,7 +241,7 @@ async def query_stream(request: QueryRequest) -> EventSourceResponse:
     NOTE: only Phase 1 (token streaming) uses run_in_executor to avoid
     blocking the event loop. Phases 2 (retry generate() calls) and 3
     (SparqlClient.execute()) are blocking synchronous calls inside this async
-    generator — acceptable at thesis-demo concurrency (single user).
+    generator.
     """
 
     async def event_generator():
@@ -280,7 +261,7 @@ async def query_stream(request: QueryRequest) -> EventSourceResponse:
             async for event in pipeline.stream_events(request.question):
                 yield _event_to_sse(event)
         except Exception as exc:
-            # Log the full exception for operator diagnostics; return a generic
+            # Log the full exception for operator diagnostics, return a generic
             # message to the client so no internal detail is disclosed.
             logger.error("Stream error: %s", exc, exc_info=True)
             yield {"event": "error", "data": json.dumps({"message": "An error occurred while processing your query."})}
@@ -309,14 +290,7 @@ def execute_raw_sparql(request: RawSparqlRequest) -> RawSparqlResponse:
     4. On success: columns/rows are returned as JSON.
     5. On validation failure: HTTP 400 with the rdflib parse error.
     6. On execution failure: HTTP 502 with a generic message — the raw exception
-       is logged but never forwarded to the client (see H-2 security note in client.py).
-
-    SECURITY NOTES
-    --------------
-    - The GraphDB endpoint is read from settings — callers cannot redirect the
-      backend to an arbitrary SPARQL endpoint (same policy as the pipeline).
-    - The raw RuntimeError from SparqlClient is never included in the response
-      body; it may contain internal hostnames or port numbers.
+       is logged but never forwarded to the client.
     """
     # Step 1: syntax validation (offline, no network)
     error_msg = validate_sparql(request.sparql)

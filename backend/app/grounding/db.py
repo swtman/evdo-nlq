@@ -2,32 +2,21 @@
 
 WHAT IS entities.db?
 ---------------------
-A single SQLite file (``backend/app/data/entities.db``) holding three tables —
-``university``, ``department``, ``course`` — plus an FTS5 (full-text search)
-index over course titles. It replaces the old ``scripts/grounding_labels.json``
-snapshot (a plain JSON dump) as the on-disk source for grounding data.
-
-WHY SQLITE INSTEAD OF A JSON FILE?
------------------------------------
-The old design read the whole JSON file into memory and, for course titles,
-fit a TF-IDF vectorizer over all ~73,000 titles on first use — a ~5-6 second
-one-time cost inside the request path (see ADR-018). SQLite lets us query
-only the rows we need (via an index) without loading or processing the whole
-corpus, so opening a connection and running a query costs microseconds, not
-seconds.
+A single SQLite file (`backend/app/data/entities.db`) holding four tables —
+`university`, `department`, `course`, `book` — plus an FTS5 (full-text search)
+index over course and book titles.
 
 WHY COMMIT THE .db FILE TO GIT?
 ---------------------------------
-``backend/app/`` is already copied wholesale into the Docker image
-(``backend/Dockerfile``). Putting the database inside it means the grounding
-module works out of the box in Docker, in CI, and on a fresh clone — no
-separate data-fetch step required. See ADR-018 for the alternatives considered.
+`backend/app/` is already copied wholesale into the Docker image
+(`backend/Dockerfile`). Putting the database inside it means the grounding
+module works out of the box in Docker, in CI, and on a fresh clone.
 
 USAGE
 -----
-Both ``gazetteer.py`` (universities/departments) and ``title_index.py``
-(courses) open their own connections via ``get_connection()``. Each call opens
-a fresh, read-only connection — this is deliberate: a single ``sqlite3.Connection``
+Both `gazetteer.py` (universities/departments) and `title_index.py`
+(courses) open their own connections via `get_connection()`. Each call opens
+a fresh, read-only connection — this is deliberate: a single `sqlite3.Connection`
 object is not safe to share across FastAPI's threadpool workers, and opening a
 new one is cheap enough (microseconds) that there is no benefit to pooling it.
 """
@@ -43,22 +32,22 @@ DB_PATH: Path = Path(__file__).parent.parent / "data" / "entities.db"
 
 
 def get_connection() -> sqlite3.Connection:
-    """Open a fresh, read-only connection to ``entities.db``.
+    """Open a fresh, read-only connection to `entities.db`.
 
     Returns
     -------
     sqlite3.Connection
-        A connection with ``row_factory`` set to ``sqlite3.Row`` so query
-        results can be accessed by column name (``row["norm"]``) as well as
+        A connection with `row_factory` set to `sqlite3.Row` so query
+        results can be accessed by column name (`row["norm"]`) as well as
         by position. Callers are responsible for closing the connection
-        (e.g. via ``with get_connection() as conn:`` or a ``try/finally``).
+        (e.g. via `with get_connection() as conn:` or a `try/finally`).
 
     Raises
     ------
     FileNotFoundError
-        If ``entities.db`` is missing. The file is checked into git and
+        If `entities.db` is missing. The file is checked into git and
         should always be present; if it isn't, run
-        ``uv run python scripts/build_entity_db.py`` from ``backend/`` to
+        `uv run python scripts/build_entity_db.py` from `backend/` to
         regenerate it.
     """
     if not DB_PATH.exists():

@@ -4,7 +4,7 @@ Shared types for the LLM layer.
 This file defines the "contract" that every LLM provider in this project must follow.
 Instead of writing code that is tied to a specific AI service (Claude, Gemini, etc.),
 the rest of the codebase talks only to the types defined here. That way, swapping one
-provider for another never requires touching the pipeline or route code — you just
+provider for another never requires touching the pipeline or route code. You just
 point the factory at a different class.
 
 Three things live here:
@@ -18,31 +18,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterator, Protocol, runtime_checkable
 
-
-# ---------------------------------------------------------------------------
-# What is a @dataclass?
-#
-# A dataclass is a shortcut for writing a class that is mostly just a container
-# of named values (fields). Instead of writing __init__, __repr__, etc. by hand,
-# Python generates them automatically from the field declarations.
-#
-# Example: @dataclass
-#          class Point:
-#              x: int
-#              y: int
-#
-# is equivalent to a class with __init__(self, x: int, y: int) already written.
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class LLMResponse:
     """The result of a single, non-streaming LLM call.
 
     Used when the pipeline asks the LLM for a complete answer all at once
     (as opposed to receiving it word-by-word). This happens during the retry
-    loop — after the initial streaming attempt fails SPARQL validation, the
-    pipeline switches to non-streaming for the correction attempts.
+    loop, after the initial streaming attempt fails SPARQL validation, the
+    pipeline switches to non-streaming for the correction attempts or when a user
+    manually edits and/or resubmits a query to be executed against GraphDB.
 
     Fields
     ------
@@ -51,10 +35,10 @@ class LLMResponse:
         query (or the special string "# NOT_ANSWERABLE: ..." if the LLM could
         not answer the question).
     input_tokens : int
-        How many tokens the *prompt* consumed. Tracked for cost awareness.
+        How many tokens the prompt consumed. Tracked for cost awareness.
         This is 0 when the response was served from the disk cache.
     output_tokens : int
-        How many tokens the LLM *generated*. Also 0 on a cache hit.
+        How many tokens the LLM generated. Also 0 on a cache hit.
     """
 
     text: str
@@ -73,14 +57,13 @@ class StreamResult:
     How streaming works here
     ------------------------
     The provider returns a StreamResult immediately. At that point the LLM has
-    *not* finished yet — it is still running. The actual text lives inside
-    `tokens`, which is a lazy iterator (think of it like a queue that keeps
-    producing values until the LLM is done).
+    not finished yet but it is still running. The actual text lives inside
+    `tokens`, which is a lazy iterator.
 
-    IMPORTANT — read `tokens` fully before reading usage counts
+    How 'tokens' are counted
     -----------------------------------------------------------
     `input_tokens` and `output_tokens` start at 0. The provider's internal
-    generator updates them only *after* it yields the last token. So if you
+    generator updates them only after it yields the last token. So if you
     read those fields before draining `tokens` you will always get 0.
 
     The pipeline in query_pipeline.py handles this correctly: it exhausts the
@@ -90,21 +73,13 @@ class StreamResult:
     ------
     tokens : Iterator[str]
         A lazy sequence of text chunks. Iterate over it to receive the
-        generated text piece by piece.
+        llm-generated text piece by piece.
     input_tokens : int
         Prompt token count — populated only after `tokens` is fully consumed.
-        Defaults to 0 (via `field(default=0)` — see note below).
+        Defaults to 0.
     output_tokens : int
         Generated token count — same deferred behaviour as `input_tokens`.
-
-    Note on field(default=0)
-    ------------------------
-    Python dataclasses require that fields *with* a default value come after
-    fields *without* one. `tokens` has no default (the caller must supply it),
-    so it comes first. `input_tokens` and `output_tokens` do have defaults, so
-    they must use `field(default=0)` rather than plain `= 0` — both forms
-    behave identically at runtime; `field()` is just the dataclass-compatible
-    syntax when mixing required and optional fields.
+        Defaults to 0.
     """
 
     tokens: Iterator[str]
@@ -112,36 +87,12 @@ class StreamResult:
     output_tokens: int = field(default=0)
 
 
-# ---------------------------------------------------------------------------
-# What is a Protocol?
-#
-# A Protocol defines an *interface* — a list of methods a class must have —
-# without requiring that class to explicitly inherit from anything.
-#
-# Normally in Python you would write:
-#   class MyProvider(LLMProvider):  ...   # inheritance
-#
-# With a Protocol you instead say: "any class that has these methods, with
-# these exact signatures, automatically counts as an LLMProvider." No
-# inheritance line needed. This style is called *structural subtyping* or
-# "duck typing with type-checker support."
-#
-# What is @runtime_checkable?
-#
-# By default, Protocol checks only happen at *type-check time* (when you run
-# mypy). Adding @runtime_checkable also lets you write `isinstance(x, LLMProvider)`
-# in real running code. The check is shallow — it only confirms the method
-# *names* exist, not their exact signatures — but it is enough for the
-# assertions in the test suite.
-# ---------------------------------------------------------------------------
-
-
 @runtime_checkable
 class LLMProvider(Protocol):
     """The interface every LLM provider class must satisfy.
 
     ClaudeProvider, GeminiProvider, OllamaProvider and FakeProvider all implement this
-    interface without inheriting from it — they just define the same two
+    interface without inheriting from it. They just define the same two
     methods with matching signatures, and Python's type checker accepts them.
 
     Methods
@@ -157,10 +108,11 @@ class LLMProvider(Protocol):
     Parameters shared by both methods
     ----------------------------------
     system : str
-        The *system prompt* — background instructions for the LLM.
-        Contains the ontology summary and the NL-to-SPARQL prompt template.
+        The system prompt, the background instructions for the LLM.
+        Contains the ontology summary and the NL-to-SPARQL prompt template and perhaps other context
+        (e.g. some few-shot examples).
     user : str
-        The *user message* — the natural-language question from the end user.
+        The user message, the natural-language question from the end user.
     max_tokens : int, keyword-only, default 1024
         Hard cap on how many tokens the LLM may generate. Keyword-only means
         callers must write `max_tokens=512`, not just pass `512` positionally.

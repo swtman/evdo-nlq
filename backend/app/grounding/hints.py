@@ -60,6 +60,7 @@ the contract of ``linker._deduplicate``.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -68,6 +69,8 @@ from app.grounding.linker import ResolvedEntity, resolve_mention
 from app.grounding.normalize import normalize_greek
 from app.grounding.stem import greek_stem
 from app.grounding.title_index import TitleMatch, rank_titles
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Greek stopwords (normalized form — accent-free, lowercase, ς→σ)
@@ -475,7 +478,10 @@ def build_grounding_hints(question: str) -> str:
         >>> build_grounding_hints("τι και η")
         ''
     """
+    logger.info("Grounding input: %r", question)
+
     if not question.strip():
+        logger.info("Grounding output: (empty question — no hints)")
         return ""
 
     # Step 1a — entity tokens: keep institution words so multi-word university
@@ -488,6 +494,7 @@ def build_grounding_hints(question: str) -> str:
     topic_tokens = _tokenize(question)
 
     if not entity_tokens and not topic_tokens:
+        logger.info("Grounding output: (no entity/topic tokens — no hints)")
         return ""
 
     # Step 2 — resolve entity mentions using greedy span-disjoint windows.
@@ -535,6 +542,7 @@ def build_grounding_hints(question: str) -> str:
 
     # Step 6 — nothing found → bail out early.
     if not entities and not title_matches and not stems:
+        logger.info("Grounding output: (nothing resolved — no hints)")
         return ""
 
     # Step 7 — format the output block.
@@ -594,4 +602,6 @@ def build_grounding_hints(question: str) -> str:
             else:
                 lines.append(f"- {stem}")
 
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    logger.info("Grounding output:\n%s", result)
+    return result
