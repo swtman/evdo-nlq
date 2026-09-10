@@ -11,12 +11,12 @@ or inflected phrase:
      can bind an exact SPARQL VALUES clause instead of an under-constrained
      CONTAINS filter (see ADR-015, ADR-018, ADR-020).
 
-Both call the SAME ranking function — ``app.grounding.title_index.rank_titles``
+Both call the SAME ranking function — ``app.grounding.title_index.search.rank_titles``
 — so an entity a user can find by browsing here is exactly one the SPARQL
 pipeline is capable of matching from a natural-language mention (course/book
 via ``hints.py``'s title resolution; university/department via
 ``linker.py``'s Stage 3, which shares the same score threshold — see
-``title_index.INSTITUTION_MATCH_THRESHOLD``). This endpoint is that
+``title_index.policy.INSTITUTION_MATCH_THRESHOLD``). This endpoint is that
 function's HTTP-facing twin: grounding calls ``rank_titles`` in-process (no
 network hop); this endpoint calls it for the frontend, which cannot reach
 Python functions directly and needs an HTTP interface.
@@ -26,7 +26,7 @@ SCOPE
 All four classes in ``schema.TITLE_CLASSES`` — ``course``, ``book``,
 ``university``, ``department`` — return real, live-ranked results from
 ``GET /entities/search``. Each is matched by a different policy tuned to how
-that class is actually typed (see ``title_index._POLICY`` and ADR-020): a
+that class is actually typed (see ``title_index.policy._POLICY`` and ADR-020): a
 course/book search is whole-phrase similarity, an institution search
 tolerates a short partial mention and also checks known acronyms directly.
 
@@ -130,7 +130,7 @@ def search_entities(
     Calls the exact same ``rank_titles`` function the SPARQL grounding
     pipeline uses (see module docstring) — no separate search logic to keep
     in sync. Each class is matched by its own policy (see
-    ``title_index._POLICY``); the response shape is identical regardless.
+    ``title_index.policy._POLICY``); the response shape is identical regardless.
 
     Returns 400 if ``class`` is not one of the supported values.
     """

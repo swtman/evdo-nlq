@@ -66,8 +66,8 @@ from app.grounding.title_index import INSTITUTION_MATCH_THRESHOLD
 FUZZY_THRESHOLD: float = INSTITUTION_MATCH_THRESHOLD
 """Minimum rapidfuzz WRatio score (0–100) required to accept a fuzzy match.
 
-An alias for ``title_index.INSTITUTION_MATCH_THRESHOLD`` rather than its own
-constant (ADR-020) — ``title_index.rank_titles(entity_class="university")``
+An alias for ``title_index.policy.INSTITUTION_MATCH_THRESHOLD`` rather than
+its own constant (ADR-020) — ``title_index.search.rank_titles(entity_class="university")``
 (what the ΟΝΤΟΛΟΓΙΑ page's search card calls) and this module's Stage 3 (what
 Stage-1 grounding calls) must agree on the same cutoff, or a university a
 user can find by browsing could fail to resolve from natural language, and
@@ -78,7 +78,7 @@ Scored against the real 46 university labels:
   - Genuine partial mentions (one real word from the label) score 90.0 at
     the median, with a p25 also at 90.0 — the "correct" distribution sits
     right on this boundary, which is why the floor must be INCLUSIVE
-    (``score >= 90``, not ``score > 90``; see ``title_index._clears_floor``).
+    (``score >= 90``, not ``score > 90``; see ``title_index.policy._clears_floor``).
   - Mismatched words (from an unrelated department name) score 84.7 at the
     highest observed — so 90 leaves a clear margin, not a knife's edge.
   - Sweeping the floor from 85 to 90 keeps the same 129/132 correct matches

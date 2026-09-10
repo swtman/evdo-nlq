@@ -9,8 +9,8 @@ grounding module.  Given a raw user question (Greek or English), it:
   2. Resolves entity mentions (single tokens AND 2/3-token windows) via
      ``linker.resolve_mention``.
   3. Resolves a specific course/book title from the residual content words,
-     via ``title_index.rank_titles`` — searching BOTH the course and book
-     corpora (see "COURSE AND BOOK TITLE RESOLUTION" below).
+     via ``title_index.search.rank_titles`` — searching BOTH the course and
+     book corpora (see "COURSE AND BOOK TITLE RESOLUTION" below).
   4. Stems remaining topic words via ``stem.greek_stem``.
   5. Formats the results into a markdown block ready for injection into the
      system prompt that precedes the LLM SPARQL-generation call.
@@ -128,7 +128,7 @@ _ENTITY_STOPWORDS: frozenset[str] = _GREEK_STOPWORDS - _INSTITUTION_WORDS
 # are kept — they have a discriminating non-glue token ("πειραια").
 #
 # THIS GUARD IS LOAD-BEARING SPECIFICALLY FOR ``fuzz.WRatio`` (linker.py's
-# Stage 3 scorer, also used by title_index.rank_titles(entity_class=
+# Stage 3 scorer, also used by title_index.search.rank_titles(entity_class=
 # "university"/"department") — see ADR-020).  WRatio's partial-matching
 # behaviour is exactly what makes a bare glue word dangerous: measured
 # against the real 46 university labels, a bare "πανεπιστημιο" scores >=90

@@ -14,7 +14,7 @@ module works out of the box in Docker, in CI, and on a fresh clone.
 
 USAGE
 -----
-Both `gazetteer.py` (universities/departments) and `title_index.py`
+Both `gazetteer.py` (universities/departments) and `title_index/search.py`
 (courses) open their own connections via `get_connection()`. Each call opens
 a fresh, read-only connection — this is deliberate: a single `sqlite3.Connection`
 object is not safe to share across FastAPI's threadpool workers, and opening a

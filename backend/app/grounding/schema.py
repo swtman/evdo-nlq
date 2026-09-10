@@ -2,8 +2,8 @@
 
 Defining the table layout in exactly one place means the committed database
 (built by `backend/scripts/build_entity_db.py`) and the throwaway in-memory
-databases used by unit tests (`title_index.rank_titles_from_corpus`) can
-never drift apart.
+databases used by unit tests (`title_index.search.rank_titles_from_corpus`)
+can never drift apart.
 
 TABLES
 ------
@@ -14,19 +14,19 @@ label:
 `evdx:name` for university/department
 Unified them onto the same
 `surface`/`norm`/`parent` shape so all four classes go through one
-ranking function, `title_index.rank_titles`).
+ranking function, `title_index.search.rank_titles`).
 
 `parent` is `NULL` for every class except `department`, where it holds
 the parent university's canonical name — the one piece of data that doesn't
 fit the plain `surface`/`norm` shape (a department can be shared by
 several universities, so this is one parent per *row*, not per normalized
-title; see `title_index.TitleMatch.parents`).
+title; see `title_index.policy.TitleMatch.parents`).
 
 FTS5 — SELECTIVELY, NOT UNIFORMLY
 -----------------------------------
 `course` and `book` also get a `<name>_fts` FTS5 external content
 table indexing the `norm` column, used for full-text candidate generation
-before the rapidfuzz reranking step (see `title_index.py`). Word-prefix
+before the rapidfuzz reranking step (see `title_index/corpus.py`). Word-prefix
 search (`"αρχιτεκτ"*`) narrows tens of thousands of titles down to a few
 hundred candidates before the more expensive fuzzy-scoring step runs.
 
@@ -37,13 +37,14 @@ retrieval would be: worst-case candidate coverage from stem-prefix matching
 was 89% recall for a department name, vs. 100% for a full scan.  Building an
 FTS index nobody benefits from is worse than not building it — it's a trap
 for the next reader who assumes every class in `TITLE_CLASSES` is FTS-
-backed.  See `title_index._POLICY` for how each class is actually matched.
+backed.  See `title_index/policy.py`'s `_POLICY` for how each class is
+actually matched.
 
 WHY SEPARATE TABLES PER CLASS, NOT ONE GENERIC `title(class, ...)` TABLE?
 ----------------------------------------------------------------------------
 The candidate-generation query is
 `... WHERE <name>_fts MATCH ? ORDER BY bm25(<name>_fts) LIMIT 500` — the
-`ORDER BY bm25` is load-bearing (see `title_index.py` for the bug it
+`ORDER BY bm25` is load-bearing (see `title_index/corpus.py` for the bug it
 fixes). If course and book titles shared one FTS index, that 500-candidate
 budget would be split across the *combined* corpus instead of each class
 getting its own clean budget, silently reintroducing the same class of
@@ -63,21 +64,21 @@ from __future__ import annotations
 
 import sqlite3
 
-# Every entity class searchable via title_index.rank_titles() — one base
-# table each. The single source of truth for which classes exist — imported
-# by title_index.py (to validate entity_class) and api/entities.py (to
-# validate the ?class= query param) instead of each hardcoding its own set.
+# Every entity class searchable via title_index.search.rank_titles() — one
+# base table each. The single source of truth for which classes exist —
+# imported by title_index/ (to validate entity_class) and api/entities.py
+# (to validate the ?class= query param) instead of each hardcoding its own set.
 TITLE_CLASSES: tuple[str, ...] = ("course", "book", "university", "department")
 
 # Classes small enough to enumerate exhaustively via GET /entities/list —
 # ranked search over 46 / 379 rows is the wrong tool for "show me
-# everything"; see api/entities.py and title_index.list_titles().
+# everything"; see api/entities.py and title_index.search.list_titles().
 LISTABLE_CLASSES: tuple[str, ...] = ("university", "department")
 
 # Classes that get an FTS5 candidate-generation index — see the module
 # docstring "FTS5 — SELECTIVELY, NOT UNIFORMLY" for why university/department
 # are deliberately excluded. Public (not `_FTS_CLASSES`) because
-# title_index.py's per-class `_MatchPolicy` table derives its `use_fts`
+# title_index/policy.py's per-class `_MatchPolicy` table derives its `use_fts`
 # field from this same constant — one source of truth for "which classes are
 # FTS-backed" shared by the DDL generator and the ranker.
 FTS_CLASSES: frozenset[str] = frozenset({"course", "book"})

@@ -3,22 +3,22 @@
 WHAT THIS SCRIPT DOES
 -----------------------
 Produces the single SQLite database the grounding module reads at runtime
-(``app/grounding/db.py``): university names, department names, course titles,
-and book titles, each keyed by their ``normalize_greek()`` form for fast
+(`app/grounding/db.py`): university names, department names, course titles,
+and book titles, each keyed by their `normalize_greek()` form for fast
 lookup. Course and book additionally get an FTS5 full-text index for the
-candidate-generation stage of ``app/grounding/title_index.py`` — university
+candidate-generation stage of `app/grounding/title_index/corpus.py` — university
 and department deliberately do NOT (at 46 / 379 rows a full table scan beats
 FTS on both speed and recall; see ADR-020) — (see ADR-018, ADR-019, ADR-020).
 
 This replaces two things at once:
-  1. The old ``scripts/dump_labels.py`` + ``scripts/grounding_labels.json``
-     pair, which produced a gitignored 7.7 MB JSON file that ``gazetteer.py``
+  1. The old `scripts/dump_labels.py` + `scripts/grounding_labels.json`
+     pair, which produced a gitignored 7.7 MB JSON file that `gazetteer.py`
      read into memory on every process start (and which was never actually
      present in git or in the Docker image — see ADR-018 for the bug this
      caused).
   2. The runtime TF-IDF vectorizer fit that used to happen inside
-     ``title_index.py`` on the first grounded query (a ~5-6 second one-time
-     cost; ADR-015).
+     `title_index/` (then a single `title_index.py`) on the first grounded
+     query (a ~5-6 second one-time cost; ADR-015).
 
 Universities, departments, courses, and books are all cleaned and
 deduplicated here, offline, once — not on every server start.
@@ -26,33 +26,33 @@ deduplicated here, offline, once — not on every server start.
 WHERE THE RAW DATA COMES FROM
 -------------------------------
 Either:
-  (a) live GraphDB, via the same SPARQL queries as the old ``dump_labels.py``
+  (a) live GraphDB, via the same SPARQL queries as the old `dump_labels.py`
       plus a book-title query (default), or
-  (b) an existing ``grounding_labels.json``-shaped dump, via
-      ``--from-json <path>`` — useful for rebuilding without hitting the
+  (b) an existing `grounding_labels.json`-shaped dump, via
+      `--from-json <path>` — useful for rebuilding without hitting the
       network, e.g. while iterating on the cleaning/schema logic. Older dumps
-      (from before books were added) have no ``"books"`` key — read
+      (from before books were added) have no `"books"` key — read
       defensively, warn, and produce an empty (but valid) book corpus rather
       than failing.
 
 CLEANING RULES (courses and books — universities/departments are already clean)
 ---------------------------------------------------------------------------------
-Both title corpora go through the identical ``clean_titles()`` function in
-``app/grounding/clean.py`` — see that module's docstring for the full
+Both title corpora go through the identical `clean_titles()` function in
+`app/grounding/clean.py` — see that module's docstring for the full
 reasoning, in short:
-  - The stored ``surface`` is the RAW KG literal, untouched. SPARQL matches
+  - The stored `surface` is the RAW KG literal, untouched. SPARQL matches
     literals by exact code-point equality, so any whitespace-collapsing
-    applied before storage would silently break ``VALUES`` bindings for
+    applied before storage would silently break `VALUES` bindings for
     titles containing invisible characters like NBSP (found in 52 real book
     titles; the same bug almost certainly affects some course titles too —
     it was never separately measured before this fix).
   - A whitespace-collapsed form is used ONLY to validate non-emptiness and to
-    compute ``norm`` (the search key) — ranking behavior is therefore
+    compute `norm` (the search key) — ranking behavior is therefore
     unchanged by this fix.
   - Titles containing U+FFFD (mojibake) or a literal newline are dropped.
-  - Surface forms are grouped by ``normalize_greek()`` key, so KG variants of
+  - Surface forms are grouped by `normalize_greek()` key, so KG variants of
     the same title (ALL-CAPS accent-free vs. mixed-case accented) end up as
-    multiple ``surface`` rows sharing one ``norm`` value.
+    multiple `surface` rows sharing one `norm` value.
   Every drop is counted and reported, itemized by reason — see "Report what
   was dropped" in CLAUDE.md's cost-awareness section; silent truncation is
   not acceptable for a data artifact this deliberately curated.
@@ -133,10 +133,10 @@ ORDER BY ?btitle
 def fetch_from_graphdb(endpoint: str, timeout: int = 600) -> dict[str, Any]:
     """Run the four label queries against a live GraphDB endpoint.
 
-    Mirrors the queries in the old ``scripts/dump_labels.py`` for
+    Mirrors the queries in the old `scripts/dump_labels.py` for
     universities/departments/courses, plus a book-title query added for
     ADR-019, so the resulting raw shape is a superset of a
-    ``grounding_labels.json`` dump.
+    `grounding_labels.json` dump.
     """
     if SPARQLWrapper is None:
         print("Install SPARQLWrapper first: uv add sparqlwrapper", file=sys.stderr)
@@ -174,10 +174,10 @@ def fetch_from_graphdb(endpoint: str, timeout: int = 600) -> dict[str, Any]:
 
 
 def load_from_json(path: Path) -> dict[str, Any]:
-    """Load a ``grounding_labels.json``-shaped dump from disk (no network).
+    """Load a `grounding_labels.json`-shaped dump from disk (no network).
 
-    Older dumps (from before book titles were added) have no ``"books"``
-    key — that is handled by the caller reading with ``raw.get("books", [])``
+    Older dumps (from before book titles were added) have no `"books"`
+    key — that is handled by the caller reading with `raw.get("books", [])`
     and warning, not here, so this function's contract stays "just read the
     file" regardless of which keys it happens to contain.
     """
@@ -216,11 +216,11 @@ def clean_departments(raw_departments: list[dict[str, str]]) -> list[dict[str, s
 def _insert_rows(
     conn: sqlite3.Connection, table: str, rows: list[tuple[str, str, str | None]]
 ) -> None:
-    """Insert ``(norm, surface, parent)`` rows into ``table``.
+    """Insert `(norm, surface, parent)` rows into `table`.
 
     Syncs the table's FTS5 index afterwards — but only for classes that have
-    one (``schema.FTS_CLASSES`` — course, book). university/department have
-    no FTS table to sync (ADR-020; see ``schema.py``'s module docstring "FTS5
+    one (`schema.FTS_CLASSES` — course, book). university/department have
+    no FTS table to sync (ADR-020; see `schema.py`'s module docstring "FTS5
     — SELECTIVELY, NOT UNIFORMLY").
     """
     conn.executemany(f"INSERT INTO {table}(norm, surface, parent) VALUES (?, ?, ?)", rows)
@@ -229,7 +229,7 @@ def _insert_rows(
 
 
 def _insert_title_rows(conn: sqlite3.Connection, table: str, surface_map: dict[str, set[str]]) -> None:
-    """Insert ``(norm, surface, NULL)`` rows for one title corpus (course/book)."""
+    """Insert `(norm, surface, NULL)` rows for one title corpus (course/book)."""
     rows = [
         (norm, surface, None)
         for norm, surfaces in surface_map.items()
@@ -246,7 +246,7 @@ def build_database(
     output: Path,
     snapshot: str,
 ) -> None:
-    """Write all cleaned data into a fresh SQLite database at ``output``."""
+    """Write all cleaned data into a fresh SQLite database at `output`."""
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         output.unlink()  # start from a clean file — avoids stale leftover rows
@@ -263,7 +263,7 @@ def build_database(
 
         # Department: parent is the owning university's canonical name. A
         # department name shared by several universities becomes several
-        # rows under the same `norm` — see title_index.TitleMatch.parents.
+        # rows under the same `norm` — see title_index.policy.TitleMatch.parents.
         dept_rows = [
             (normalize_greek(d["department"]), d["department"], d["university"])
             for d in departments
