@@ -181,7 +181,10 @@ class SparqlClient:
         try:
             # wrapper.query() sends the HTTP request.
             # .convert() reads the response body and parses the JSON into a dict.
-            raw = wrapper.query().convert()
+            # Cast is defensive only: SPARQLWrapper returns Any, but we know it's
+            # a dict because we requested JSON via wrapper.setReturnFormat(JSON).
+            # Does not affect runtime behavior.
+            raw = cast(dict, wrapper.query().convert())
         except Exception as exc:
             logger.error("SPARQL execution failed: %s", exc)
             # Re-raise as RuntimeError so callers don't need to know about
@@ -190,11 +193,7 @@ class SparqlClient:
             # NOTE: the embedded {exc} detail is intentionally preserved here
             # for operator logs.
             raise RuntimeError(f"SPARQL execution failed: {exc}") from exc
-        
-        # Defensive cast to satisfy type checker: SPARQLWrapper returns Any, but we know it's a dict because we requested JSON.
-        # with ` wrapper.setReturnFormat(JSON)`. Does not affect runtime behavior.
-        raw = cast(dict, wrapper.query().convert())
-        
+
         # Extract column names from "head".vars — defensive .get() in case
         # the response is missing the key (malformed but non-crashing response).
         columns: list[str] = raw.get("head", {}).get("vars", [])
