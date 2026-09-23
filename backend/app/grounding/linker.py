@@ -63,8 +63,7 @@ from app.grounding.title_index import INSTITUTION_MATCH_THRESHOLD
 # Public constant
 # ---------------------------------------------------------------------------
 
-# FUZZY_THRESHOLD: float = INSTITUTION_MATCH_THRESHOLD
-FUZZY_THRESHOLD: float = 50
+FUZZY_THRESHOLD: float = INSTITUTION_MATCH_THRESHOLD
 """Minimum rapidfuzz WRatio score (0–100) required to accept a fuzzy match.
 
 An alias for ``title_index.policy.INSTITUTION_MATCH_THRESHOLD`` rather than
