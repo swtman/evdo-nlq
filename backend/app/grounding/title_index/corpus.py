@@ -56,7 +56,7 @@ class _IndexState:
     """
 
     conn: sqlite3.Connection
-    table: str = "course"
+    table: str = "course" #this is just a default value, it will be set to the correct table when the class is instantiated
 
 
 # Maximum number of candidate titles the FTS5 stage hands to rapidfuzz, PER

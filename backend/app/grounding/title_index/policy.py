@@ -3,9 +3,7 @@
 ONE FUNCTION, FOUR DIFFERENT MATCHING POLICIES (ADR-020)
 ------------------------------------------------------------
 Course/book titles and university/department names are matched by different
-rules, chosen from measurements against the real data (see ``_POLICY``
-below and ADR-020 for the full numbers) — not from a preference for
-uniformity:
+rules, not from a preference for uniformity:
 
   - **Scorer.** Titles are matched by ``token_sort_ratio`` (whole-phrase
     similarity); institutions are matched by ``WRatio`` (tolerant of a short

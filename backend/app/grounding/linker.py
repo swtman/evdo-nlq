@@ -63,11 +63,12 @@ from app.grounding.title_index import INSTITUTION_MATCH_THRESHOLD
 # Public constant
 # ---------------------------------------------------------------------------
 
-FUZZY_THRESHOLD: float = INSTITUTION_MATCH_THRESHOLD
+# FUZZY_THRESHOLD: float = INSTITUTION_MATCH_THRESHOLD
+FUZZY_THRESHOLD: float = 50
 """Minimum rapidfuzz WRatio score (0–100) required to accept a fuzzy match.
 
 An alias for ``title_index.policy.INSTITUTION_MATCH_THRESHOLD`` rather than
-its own constant (ADR-020) — ``title_index.search.rank_titles(entity_class="university")``
+its own constant — ``title_index.search.rank_titles(entity_class="university")``
 (what the ΟΝΤΟΛΟΓΙΑ page's search card calls) and this module's Stage 3 (what
 Stage-1 grounding calls) must agree on the same cutoff, or a university a
 user can find by browsing could fail to resolve from natural language, and

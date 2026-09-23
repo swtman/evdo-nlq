@@ -82,18 +82,18 @@ _GREEK_STOPWORDS: frozenset[str] = frozenset(
         "που",
         "πωσ",
         "γιατι",
-        "ποιουσ",  # acc pl. masc. "ποιους" — e.g. "ποιους καθηγητές ..."
+        "ποιουσ", 
         # Attribute/role nouns (what the user is ASKING for, not part of the title)
         # Filtering these keeps the title-ranking phrase clean.
         "καθηγητεσ",
         "καθηγητη",
         "καθηγητησ",
-        "καθηγητεσ",  # professor (various cases)
+        "καθηγητεσ",  
         "συγγραφεασ",
         "συγγραφεισ",
-        "συγγραφεα",  # author
+        "συγγραφεα", 
         "εκδοτησ",
-        "εκδοτεσ",  # publisher
+        "εκδοτεσ",  
         # Common domain nouns (too generic to be useful stems)
         "βιβλια",
         "βιβλιο",
@@ -160,6 +160,7 @@ _ENTITY_STOPWORDS: frozenset[str] = _GREEK_STOPWORDS - _INSTITUTION_WORDS
 _INSTITUTION_GLUE: frozenset[str] = _INSTITUTION_WORDS | frozenset(
     {
         "πολυτεχνειο",
+        "πανεπιστημιο",
         "τει",
         "ανωτατο",
         "ανωτατη",

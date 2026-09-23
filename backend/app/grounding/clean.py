@@ -1,14 +1,5 @@
 """Title-corpus cleaning shared by ``build_entity_db.py`` and its tests.
 
-WHY THIS IS A SEPARATE MODULE (not left inside ``scripts/build_entity_db.py``)
----------------------------------------------------------------------------------
-Files under ``backend/scripts/`` are not importable from ``backend/tests/``
-without ``sys.path`` manipulation. Moving the cleaning logic here makes it a
-normal importable module, so the regression test in
-``tests/test_grounding_clean.py`` needs no path hacks. ``clean_titles`` is
-class-agnostic (the caller decides whether the titles are courses or books),
-matching the fact that course and book titles get identical treatment.
-
 THE BUG THIS MODULE FIXES
 ---------------------------
 Course titles used to be cleaned by ``" ".join(raw_title.split())`` and the

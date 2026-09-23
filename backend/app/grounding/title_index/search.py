@@ -96,9 +96,7 @@ _NORMALIZED_ACRONYM_MAP: dict[str, str] | None = None
 def _acronym_match(state: _IndexState, q_norm: str) -> TitleMatch | None:
     """Direct lookup against ``gazetteer.ACRONYM_MAP`` (university only).
 
-    Acronyms are unrankable by any scorer — ADR-020 M3 measured only 2/15
-    entries retrievable by FTS stem-prefix and only 2/15 scoring >=90 under
-    WRatio — so ΑΠΘ, ΕΚΠΑ, etc. must be resolved by direct dictionary lookup,
+    Acronyms are unrankable by any scorer, so ΑΠΘ, ΕΚΠΑ, etc. must be resolved by direct dictionary lookup,
     not left to ``_rank``'s candidate generation + scoring pipeline.
 
     Args:
