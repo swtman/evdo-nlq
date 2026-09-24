@@ -48,6 +48,7 @@ For the evaluation chapter of the thesis you will want to answer "did v2 actuall
 
 | Name | Latest version | Status |
 |---|---|---|
+| nl-to-sparql | v7 | **Candidate** (2026-09-25) — not yet active; production stays on v6 until a live A/B on the same golds. Rule 13 rewritten around the answer entity (level of NOT/BOTH conditions, row shape, year inside filters, integer codes) + a worked example that does not overlap the eval set. |
 | nl-to-sparql | v6 | **Active in production** (2026-09-24). Rule 16 treats matched titles as candidates, topic stems always present, `{few_shot_block}` restored (ADR-022). |
 | nl-to-sparql | v5 | Kept loadable for A/B. Added `{grounding_hints}`; note it has **no** `{few_shot_block}` slot, so no few-shot examples reached the model while it was active. |
 | nl-to-sparql | v4 | Archived — schema-v2 rules + few-shot. |
