@@ -48,7 +48,11 @@ For the evaluation chapter of the thesis you will want to answer "did v2 actuall
 
 | Name | Latest version | Status |
 |---|---|---|
-| nl-to-sparql | v2 | **Active in production.** Static few-shot; evaluated 2026-05-04 (v2 English: 26% result-set match vs 0% for v1) |
+| nl-to-sparql | v6 | **Active in production** (2026-09-24). Rule 16 treats matched titles as candidates, topic stems always present, `{few_shot_block}` restored (ADR-022). |
+| nl-to-sparql | v5 | Kept loadable for A/B. Added `{grounding_hints}`; note it has **no** `{few_shot_block}` slot, so no few-shot examples reached the model while it was active. |
+| nl-to-sparql | v4 | Archived — schema-v2 rules + few-shot. |
+| nl-to-sparql | v3 | Archived. |
+| nl-to-sparql | v2 | Archived — static few-shot; evaluated 2026-05-04 (v2 English: 26% result-set match vs 0% for v1). |
 | nl-to-sparql | v1 | Archived — zero-shot baseline. Reachable via `scripts/eval.py --prompt-version 1` only. |
 | nl-to-sparql-retry | v1 | Active — used on SPARQL validation failure (retry path) |
 
@@ -56,7 +60,7 @@ For the evaluation chapter of the thesis you will want to answer "did v2 actuall
 
 Gold example bank used by two consumers:
 
-1. **`backend/app/prompts/examples_loader.py`** — `select_few_shot(k=6)` picks one example per distinct `query_shape`, sorted by `few_shot_priority`, and injects the rendered block into `{few_shot_block}` in `nl-to-sparql-v2.md`.
+1. **`backend/app/prompts/examples_loader.py`** — `select_few_shot(k)` picks one example per distinct `query_shape`, sorted by `few_shot_priority`, and the rendered block fills `{few_shot_block}` (production: k=8 into `nl-to-sparql-v6.md`; the eval harness uses k=6).
 2. **`backend/scripts/eval.py`** — runs every non-`skip_eval` example through the pipeline and reports result-set match accuracy.
 
 Schema fields: `id`, `question_english`, `question_greek`, `gold_sparql`, `query_shape`, `granularity`, `comparison_mode`, `few_shot_priority` (optional, lower = higher priority), `skip_eval` (optional, excludes from eval metrics), `notes`.

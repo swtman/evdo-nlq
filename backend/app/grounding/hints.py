@@ -8,10 +8,12 @@ grounding module.  Given a raw user question (Greek or English), it:
   1. Tokenizes the question into individual word tokens.
   2. Resolves entity mentions (single tokens AND 2/3-token windows) via
      ``linker.resolve_mention``.
-  3. Resolves a specific course/book title from the residual content words,
+  3. Finds course/book title CANDIDATES from the residual content words,
      via ``title_index.search.rank_titles`` — searching BOTH the course and
      book corpora (see "COURSE AND BOOK TITLE RESOLUTION" below).
-  4. Stems remaining topic words via ``stem.greek_stem``.
+  4. Stems every topic word not claimed by an acronym/exact entity, via
+     ``stem.greek_stem`` — ALWAYS, even when a title candidate was found
+     (see "TITLE CANDIDATES, NOT RESOLUTIONS" below).
   5. Formats the results into a markdown block ready for injection into the
      system prompt that precedes the LLM SPARQL-generation call.
 
@@ -44,6 +46,23 @@ output is tagged ``[Course]``/``[Book]`` per resolved title (see
 collision note fires only when the SAME title matched both classes — not
 merely "a course and a book both matched something" (two different titles
 matching is not an ambiguity). See ADR-019.
+
+TITLE CANDIDATES, NOT RESOLUTIONS
+----------------------------------
+A title that scores above the threshold is emitted as a *candidate*, not a
+confirmed binding, and its words still produce topic stems. The ranker only
+measures string similarity; it cannot tell whether the question NAMES a
+title ("μάθημα Ανάλυση Κυκλωμάτων") or DESCRIBES a topic ("βιβλία
+αλγορίθμων", which matches the course ΘΕΩΡΙΑ ΑΛΓΟΡΙΘΜΩΝ). Previously a match
+claimed every residual token, so the stems disappeared and the prompt said
+"do NOT use CONTAINS" — for the topic reading that silently narrowed the
+answer to one course (gold example ex-024). Now both are offered and prompt
+v6's Rule 16 tells the model how to choose. Title-linking plan, decision 1;
+evidence F10 in notes/investigations/title-linking/.
+
+The section headers in the block are plain labels ("**Entities**:",
+"**Title candidates**:", "**Topic stems**:"); the instructions for using
+them live in the versioned prompt, not in this module (finding C1).
 
 WHY INJECT HINTS INTO THE SYSTEM PROMPT?
 -----------------------------------------
@@ -97,10 +116,12 @@ def build_grounding_hints(question: str) -> str:
 
       - **Entities** — canonical KG labels resolved from the question (exact
         strings to use in SPARQL FILTER/VALUES clauses).
-      - **Resolved title(s)** — specific course/book titles resolved from the
-        question, class-tagged ``[Course]``/``[Book]`` (see
-        "COURSE AND BOOK TITLE RESOLUTION" in the module docstring).
-      - **Topic stems** — Greek word stems for CONTAINS filters.
+      - **Title candidates** — course/book titles that closely match words in
+        the question, class-tagged ``[Course]``/``[Book]`` (see
+        "COURSE AND BOOK TITLE RESOLUTION" and "TITLE CANDIDATES, NOT
+        RESOLUTIONS" in the module docstring).
+      - **Topic stems** — Greek word stems for CONTAINS filters; emitted even
+        when title candidates exist.
 
     Returns ``""`` (empty string) when the question yields neither entities nor
     useful stems — the caller should skip injection in that case.
@@ -173,14 +194,12 @@ def build_grounding_hints(question: str) -> str:
             ]
     title_matches: list[TitleMatch] = course_matches + book_matches
 
-    # Step 4b — if any title matched (either class), consume the residual
-    # tokens so they don't also produce stems.  The exact VALUES binding
-    # makes CONTAINS redundant for whichever title(s) were resolved.
-    if title_matches:
-        # All residual topic tokens are now covered by the title resolution.
-        claimed = frozenset(range(len(topic_tokens)))
-
-    # Step 5 — stem remaining unclaimed topic words (fallback when no title fired).
+    # Step 5 — stem every topic word not claimed by an acronym/exact ENTITY.
+    # A matched title does NOT consume its words: it is only a *candidate*
+    # (see "TITLE CANDIDATES, NOT RESOLUTIONS" in the module docstring), so the
+    # stems stay available for the case where the question describes a topic
+    # rather than naming a title (ex-024: "βιβλία αλγορίθμων" matched
+    # ΘΕΩΡΙΑ ΑΛΓΟΡΙΘΜΩΝ and, before this change, lost its `αλγορ` stem).
     stems = _collect_stems(topic_tokens, claimed)
 
     # Step 6 — nothing found → bail out early.
@@ -191,19 +210,19 @@ def build_grounding_hints(question: str) -> str:
     # Step 7 — format the output block.
     lines: list[str] = ["## Resolved entities & terms", ""]
 
+    # Section headers are plain LABELS. How to use each section is explained
+    # in the versioned prompt (Rule 16 of prompts/nl-to-sparql-v6.md), not
+    # here — project rule: prompt text lives in prompts/, never inlined in
+    # code (title-linking plan, finding C1).
     if entities:
-        lines.append("**Entities** (use the exact label in FILTER/VALUES):")
+        lines.append("**Entities**:")
         for entity in entities.values():
             lines.append(_format_entity_line(entity))
 
     if title_matches:
         if entities:
             lines.append("")  # blank line between entities and titles
-        lines.append(
-            "**Resolved title(s)** (the question names one or more specific KG"
-            " titles — bind the tagged class's evdx:title to these exact"
-            " literals with VALUES; do NOT use CONTAINS for them):"
-        )
+        lines.append("**Title candidates**:")
         # Courses first, then books; each group already sorted score-descending
         # by rank_titles. Deterministic order matters: the LLM DiskCache key is
         # a hash of the full prompt, so nondeterministic ordering would halve
@@ -224,20 +243,13 @@ def build_grounding_hints(question: str) -> str:
             representative = next(
                 m.surface_forms[0] for m in course_matches if m.normalized_title == norm
             )
-            lines.append(
-                f'(Note: "{representative}" matched BOTH a Course and a Book.'
-                " Bind only the class the question is about; if it asks for"
-                " the books of a named course, bind the [Course] title and"
-                " reach the books via evdx:hasBook.)"
-            )
+            # A fact only; what to do about it is Rule 16 of prompt v6.
+            lines.append(f'(Note: "{representative}" matched BOTH a Course and a Book.)')
 
     if stems:
         if entities or title_matches:
             lines.append("")  # blank line before stems section
-        lines.append(
-            '**Topic stems** (use in CONTAINS(LCASE(?label), "stem");'
-            " if two variants are shown separated by |, use both with ||):"
-        )
+        lines.append("**Topic stems**:")
         for stem in stems:
             accented = _accent_last_vowel(stem)
             if accented and accented != stem:

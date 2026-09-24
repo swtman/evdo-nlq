@@ -279,7 +279,7 @@ class QueryPipeline:
             build_grounding_hints(question) if settings.grounding_enabled else ""
         )
         system = fill(
-            load("nl-to-sparql", 5),
+            load("nl-to-sparql", 6),
             ontology_summary=load_summary(),
             few_shot_block=select_few_shot(k=8),
             grounding_hints=grounding_hints,

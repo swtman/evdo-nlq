@@ -40,7 +40,7 @@ def _format_entity_line(entity: ResolvedEntity) -> str:
 
 
 def _format_title_line(match: TitleMatch) -> str:
-    """Format a single resolved title as a class-tagged markdown bullet.
+    """Format a single title candidate as a class-tagged markdown bullet.
 
     One line per TITLE, not per surface form — multiple surface forms (e.g.
     the ALL-CAPS accent-free and mixed-case accented KG storage variants of

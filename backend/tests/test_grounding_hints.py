@@ -314,6 +314,58 @@ def test_book_linking_disabled_suppresses_book_search(monkeypatch) -> None:
     assert "[Book]" not in result
 
 
+# ---------------------------------------------------------------------------
+# Branch 1 (fix/title-match-keeps-topic-stems) — decision 1 of the title-linking
+# plan: a matched title is only a CANDIDATE, so the topic stems for the same
+# words must still be emitted, and the hint block carries labels only — the
+# instructions for using them live in prompt v6's Rule 16 (finding C1).
+# ---------------------------------------------------------------------------
+
+
+def test_stems_kept_when_title_candidate_present(monkeypatch) -> None:
+    """A title candidate must NOT swallow the topic stems (ex-024 regression:
+    'βιβλία αλγορίθμων' bound ΘΕΩΡΙΑ ΑΛΓΟΡΙΘΜΩΝ and lost the 'αλγορ' stem)."""
+
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        return [_course_match()] if entity_class == "course" else []
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "[Course]" in result
+    assert "Topic stems" in result
+    assert "ξενοφωνικ" in result  # stem of 'ξενοφωνικης'
+
+
+def test_title_section_is_labelled_candidates(monkeypatch) -> None:
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        return [_course_match()] if entity_class == "course" else []
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "**Title candidates**" in result
+    assert "Resolved title(s)" not in result
+
+
+def test_hint_block_carries_no_usage_instructions(monkeypatch) -> None:
+    """Usage instructions belong to the versioned prompt (Rule 16 of v6), not
+    to text inlined in hints.py — so the old instruction phrases are gone."""
+
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        norm, surface = "ιδια τιτλος", "ΙΔΙΑ ΤΙΤΛΟΣ"
+        if entity_class == "course":
+            return [_course_match(norm=norm, surfaces=[surface])]
+        return [_book_match(norm=norm, surfaces=[surface])]
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    result = build_grounding_hints(_NONSENSE_QUESTION + " ΑΠΘ")
+
+    for phrase in ("do NOT use CONTAINS", "use the exact label in FILTER/VALUES",
+                   "use in CONTAINS(LCASE", "Bind only the class", "evdx:hasBook"):
+        assert phrase not in result, phrase
+
+
 def test_per_class_thresholds_apply_independently(monkeypatch) -> None:
     """A score that clears the book threshold but not the (higher) course
     threshold must be accepted for book and dropped for course."""
