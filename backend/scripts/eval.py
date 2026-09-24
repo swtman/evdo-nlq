@@ -87,9 +87,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import yaml
 
 from app.config import settings
+from app.grounding import db as grounding_db
 from app.llm.factory import get_provider
 from app.ontology.loader import load_summary
 from app.pipeline.query_pipeline import (
+    PROMPT_VERSION,
     PipelineResult,
     QueryPipeline,
     _is_not_answerable,  # shared with production pipeline to guarantee identical detection logic
@@ -681,6 +683,48 @@ def _file_sha256(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _available_prompt_versions() -> list[int]:
+    """Every N with a prompts/nl-to-sparql-v<N>.md on disk, ascending.
+
+    Discovered rather than hard-coded: the old fixed ``choices=[1, 2, 3, 4]``
+    silently made every later prompt (v5, v6) impossible to evaluate (C17).
+    """
+    versions = []
+    for path in (_REPO_ROOT / "prompts").glob("nl-to-sparql-v*.md"):
+        suffix = path.stem.removeprefix("nl-to-sparql-v")
+        if suffix.isdigit():
+            versions.append(int(suffix))
+    return sorted(versions)
+
+
+def _is_grounded(prompt_version: int) -> bool:
+    """Whether this prompt version has a ``{grounding_hints}`` slot (v5 onwards).
+
+    Read from the template itself, not from a version cut-off, so a future
+    prompt is classified correctly without touching this file.
+    """
+    return "{grounding_hints}" in load("nl-to-sparql", prompt_version)
+
+
+def _entities_db_fingerprint() -> str:
+    """sha256[:12] and meta.snapshot of the entities.db grounding reads.
+
+    Grounded prompts depend on this data (the hints are computed from it), so
+    two runs with the same git SHA and prompt hash can still differ if the
+    database was rebuilt — the report must record which one was used (C9).
+    """
+    path = grounding_db.DB_PATH
+    if not path.exists():
+        return "missing"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    conn = grounding_db.get_connection()
+    try:
+        snapshot = dict(conn.execute("SELECT key, value FROM meta").fetchall()).get("snapshot", "?")
+    finally:
+        conn.close()
+    return f"{digest} (snapshot {snapshot})"
+
+
 def _render_report(
     results: list[dict[str, Any]],
     prompt_version: int,
@@ -691,6 +735,9 @@ def _render_report(
     git_sha: str,
     prompt_sha: str,
     examples_sha: str,
+    examples_name: str = "examples.yaml",
+    grounded: bool = False,
+    entities_db: str = "n/a",
 ) -> str:
     """Render the full Markdown eval report from per-example result records.
 
@@ -746,7 +793,11 @@ def _render_report(
         "|---|---|",
         f"| git HEAD | `{git_sha}` |",
         f"| nl-to-sparql-v{prompt_version}.md sha256[:12] | `{prompt_sha}` |",
-        f"| examples.yaml sha256[:12] | `{examples_sha}` |",
+        f"| {examples_name} sha256[:12] | `{examples_sha}` |",
+        "| system prompt | "
+        + ("per-question grounding (production `_build_system`)" if grounded
+           else "fixed, no grounding hints") + " |",
+        f"| entities.db sha256[:12] | `{entities_db}` |",
         "",
         "## Summary",
         "",
@@ -853,20 +904,28 @@ def _build_pipeline(prompt_version: int, provider_name: str, model: str) -> Quer
       3. Keeping it close to where it is used makes the code easier to read
          without jumping to another module.
 
-    WHY IS THE SYSTEM PROMPT BUILT ONCE (not per question)?
-    --------------------------------------------------------
-    The system prompt contains the ontology summary (~400 tokens) and, for
-    prompt v2, the few-shot examples block. Neither changes across examples
-    within the same eval run. Building it once and reusing it:
-      - Saves string formatting and file I/O on every example.
-      - Guarantees every example in the run sees the exact same prompt.
-      - Maximises DiskCache hits: the cache key is sha256(system + user + model).
-        Same system + same question = guaranteed cache hit across reruns.
+    TWO KINDS OF PROMPT: FIXED (v1-v4) AND GROUNDED (v5 onwards)
+    --------------------------------------------------------------
+    v1-v4 have no ``{grounding_hints}`` slot: their system prompt (ontology
+    summary + few-shot block, k=6 as always for these versions) is the same for
+    every question, so it is built ONCE here and reused — cheap, identical for
+    every example, and stable for the DiskCache.
+
+    Grounded prompts (any version whose template has ``{grounding_hints}``,
+    i.e. v5, v6, …) depend on the question: the hints are computed from it.
+    For them the prompt is built PER QUESTION by production's own
+    ``QueryPipeline._build_system`` (same few-shot k, same grounding code),
+    with the requested ``prompt_version``. Before this, the harness only
+    accepted v1-v4 and filled a single prompt without hints, so the production
+    prompt could never be evaluated (title-linking plan, finding C17). Reusing
+    the production builder instead of a second copy is what keeps "eval of v6"
+    and "what the API serves" identical. The DiskCache still hits on reruns:
+    same question → same hints → same system string.
 
     Parameters
     ----------
     prompt_version : int
-        1 or 2 — which prompt template to load from prompts/.
+        Which prompts/nl-to-sparql-v<N>.md to use (see ``_available_prompt_versions``).
     provider_name : str
         "claude", "gemini", or "fake".
     model : str
@@ -880,35 +939,41 @@ def _build_pipeline(prompt_version: int, provider_name: str, model: str) -> Quer
     provider = get_provider(provider_name, model)
     sparql_client = SparqlClient(settings.graphdb_endpoint)
     ontology = load_summary()
+    grounded = _is_grounded(prompt_version)
 
-    if prompt_version == 1:
-        system = fill(load("nl-to-sparql", 1), ontology_summary=ontology)
-    else:
-        # v2 adds static few-shot examples via {few_shot_block}.
-        # select_few_shot(k=6) picks one example per query_shape, sorted by
-        # few_shot_priority, and formats them as a text block for injection.
-        system = fill(
-            load("nl-to-sparql", prompt_version),
-            ontology_summary=ontology,
-            few_shot_block=select_few_shot(k=6),
-        )
+    fixed_system: str | None = None
+    if not grounded:
+        if prompt_version == 1:
+            fixed_system = fill(load("nl-to-sparql", 1), ontology_summary=ontology)
+        else:
+            # v2-v4: static few-shot examples via {few_shot_block}.
+            # select_few_shot(k=6) picks one example per query_shape, sorted by
+            # few_shot_priority, and formats them as a text block for injection.
+            fixed_system = fill(
+                load("nl-to-sparql", prompt_version),
+                ontology_summary=ontology,
+                few_shot_block=select_few_shot(k=6),
+            )
 
-    class _FixedSystemPipeline(QueryPipeline):
-        """QueryPipeline subclass that uses a pre-built system prompt and skips GraphDB.
+    class _GenerateOnlyPipeline(QueryPipeline):
+        """QueryPipeline subclass that generates SPARQL but skips GraphDB.
 
-        The parent class's run() builds the system prompt itself and then calls
+        The parent class's run() builds the system prompt and then calls
         _generate_with_retry() followed by SparqlClient.execute(). This override
-        ONLY calls _generate_with_retry() and returns an empty PipelineResult.
+        builds the prompt (fixed for v1-v4, production's per-question
+        ``_build_system`` for grounded versions), calls only
+        _generate_with_retry(), and returns an empty PipelineResult.
 
         GraphDB execution is intentionally omitted here — the eval harness
         (_eval_example) executes both the gold and generated queries in the
         right order with the right error handling.
 
-        The `system` and `ontology` variables are captured from
-        _build_pipeline's scope via closure — no extra constructor arguments needed.
+        ``fixed_system`` and ``ontology`` are captured from _build_pipeline's
+        scope via closure — no extra constructor arguments needed.
         """
 
         def run(self, question: str) -> PipelineResult:  # type: ignore[override]
+            system = fixed_system if fixed_system is not None else self._build_system(question)
             sparql, ti, to, retries = self._generate_with_retry(
                 system, question, ontology
             )
@@ -924,11 +989,12 @@ def _build_pipeline(prompt_version: int, provider_name: str, model: str) -> Quer
                 retries=retries,
             )
 
-    return _FixedSystemPipeline(
+    return _GenerateOnlyPipeline(
         provider=provider,
         sparql_client=sparql_client,
         provider_name=provider_name,
         model_name=model,
+        prompt_version=prompt_version,
     )
 
 
@@ -991,7 +1057,21 @@ def main() -> None:
     edited version.
     """
     parser = argparse.ArgumentParser(description="Eval harness for NL->SPARQL.")
-    parser.add_argument("--prompt-version", type=int, default=4, choices=[1, 2, 3, 4])
+    parser.add_argument(
+        "--prompt-version",
+        type=int,
+        default=PROMPT_VERSION,
+        choices=_available_prompt_versions(),
+        help=f"Prompt version (default: {PROMPT_VERSION}, the production prompt). "
+        "Versions with a {grounding_hints} slot get per-question grounding.",
+    )
+    parser.add_argument(
+        "--examples-file",
+        type=Path,
+        default=_EXAMPLES_PATH,
+        help="Gold example file (default: prompts/examples.yaml). Same schema, e.g. a "
+        "separate title or department eval set kept out of the few-shot bank.",
+    )
     parser.add_argument("--provider", default="claude", choices=["claude", "gemini", "fake"])
     parser.add_argument("--model", default="claude-haiku-4-5")
     parser.add_argument(
@@ -1033,8 +1113,11 @@ def main() -> None:
     if args.no_cache:
         os.environ["LLM_CACHE_DISABLED"] = "1"
 
-    # Load all examples from the gold bank.
-    raw = yaml.safe_load(_EXAMPLES_PATH.read_text(encoding="utf-8"))
+    # Load all examples from the gold bank (or the file given with --examples-file).
+    examples_path: Path = args.examples_file
+    if not examples_path.exists():
+        sys.exit(f"ERROR: examples file not found: {examples_path}")
+    raw = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
     all_examples: list[dict[str, Any]] = raw.get("examples", [])
 
     # Validate comparison_mode values before spending any tokens.
@@ -1058,7 +1141,7 @@ def main() -> None:
             broken_gold.append(f"  {ex['id']}: {err[:80]}")
     if broken_gold:
         sys.exit(
-            "ERROR: broken gold SPARQL in examples.yaml -- fix before running eval:\n"
+            f"ERROR: broken gold SPARQL in {examples_path.name} -- fix before running eval:\n"
             + "\n".join(broken_gold)
         )
 
@@ -1082,11 +1165,13 @@ def main() -> None:
 
     sparql_client = SparqlClient(settings.graphdb_endpoint)
     pipeline = _build_pipeline(args.prompt_version, args.provider, args.model)
+    grounded = _is_grounded(args.prompt_version)
 
     for lang in languages:
         print(
-            f"\nRunning eval: prompt=v{args.prompt_version} provider={args.provider} "
-            f"model={args.model} lang={lang}"
+            f"\nRunning eval: prompt=v{args.prompt_version} "
+            f"({'grounded, per question' if grounded else 'fixed'}) provider={args.provider} "
+            f"model={args.model} lang={lang} examples={examples_path.name}"
         )
         for ex in examples:
             print(f"  {ex['id']} ({ex['query_shape']}) ...", end="", flush=True)
@@ -1108,13 +1193,18 @@ def main() -> None:
         run_at=run_at,
         git_sha=_git_sha(),
         prompt_sha=_file_sha256(prompt_path),
-        examples_sha=_file_sha256(_EXAMPLES_PATH),
+        examples_sha=_file_sha256(examples_path),
+        examples_name=examples_path.name,
+        grounded=grounded,
+        entities_db=_entities_db_fingerprint(),
     )
 
     if args.output:
         out_path = Path(args.output)
     else:
         slug = f"{run_at[:10]}-v{args.prompt_version}-{args.language}-{args.provider}-{args.model}"
+        if examples_path.resolve() != _EXAMPLES_PATH.resolve():
+            slug += f"-{examples_path.stem}"
         _EVAL_RUNS_DIR.mkdir(parents=True, exist_ok=True)
         out_path = _EVAL_RUNS_DIR / f"{slug}.md"
 

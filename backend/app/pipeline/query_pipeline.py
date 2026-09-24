@@ -75,6 +75,13 @@ logger = logging.getLogger(__name__)
 # (retries) = up to 3.
 _MAX_RETRIES = 2
 
+# The production system prompt: prompts/nl-to-sparql-v<PROMPT_VERSION>.md, with
+# FEW_SHOT_K worked examples from prompts/examples.yaml. Single source of truth —
+# scripts/eval.py imports both, so an eval run of "the production prompt" is
+# guaranteed to build exactly what the API serves (title-linking plan, C17).
+PROMPT_VERSION: int = 6
+FEW_SHOT_K: int = 8
+
 
 # ---------------------------------------------------------------------------
 # Typed event objects — the streaming path yields these; the route handler
@@ -239,6 +246,7 @@ class QueryPipeline:
         sparql_client: SparqlClient,
         provider_name: str,
         model_name: str,
+        prompt_version: int = PROMPT_VERSION,
     ) -> None:
         """Store all injected dependencies. No side effects.
 
@@ -254,11 +262,17 @@ class QueryPipeline:
             only for inclusion in DoneEvent / PipelineResult metadata.
         model_name : str
             Raw model string from the request (e.g. "claude-haiku-4-5"). Same.
+        prompt_version : int
+            Which prompts/nl-to-sparql-v<N>.md to build the system prompt from.
+            Production always uses the default (``PROMPT_VERSION``); the eval
+            harness passes another grounded version (e.g. 5) for A/B runs, so
+            both go through this one builder and cannot drift apart (C17).
         """
         self._provider = provider
         self._sparql_client = sparql_client
         self._provider_name = provider_name
         self._model_name = model_name
+        self._prompt_version = prompt_version
 
     # ------------------------------------------------------------------
     # Internal: system prompt construction
@@ -279,9 +293,9 @@ class QueryPipeline:
             build_grounding_hints(question) if settings.grounding_enabled else ""
         )
         system = fill(
-            load("nl-to-sparql", 6),
+            load("nl-to-sparql", self._prompt_version),
             ontology_summary=load_summary(),
-            few_shot_block=select_few_shot(k=8),
+            few_shot_block=select_few_shot(k=FEW_SHOT_K),
             grounding_hints=grounding_hints,
         )
         # Centralised here (not duplicated in run() and stream_events()) so
