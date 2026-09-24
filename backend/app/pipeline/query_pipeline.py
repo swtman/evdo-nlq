@@ -65,7 +65,7 @@ from app.grounding import build_grounding_hints
 from app.llm.base import LLMProvider
 from app.ontology.loader import load_summary
 from app.prompts.examples_loader import select_few_shot
-from app.prompts.loader import fill, load
+from app.prompts.loader import fill, load, load_user_template
 from app.sparql.client import SparqlClient, validate_sparql
 
 logger = logging.getLogger(__name__)
@@ -278,32 +278,53 @@ class QueryPipeline:
     # Internal: system prompt construction
     # ------------------------------------------------------------------
 
-    def _build_system(self, question: str) -> str:
-        """Build the filled system prompt for a given question.
+    def _build_prompt(self, question: str) -> tuple[str, str]:
+        """Build the (system prompt, user message) pair for a given question.
 
+        WHERE THE GROUNDING HINTS GO (ADR-026)
+        The hints are computed from the question, so they differ per question.
+        Anthropic's prompt cache reuses the system prompt only when it is
+        byte-identical, and v6's system prompt (~6,100 tokens) is above Haiku
+        4.5's 4,096-token cache minimum — with hints inside it, every call paid
+        the cache-write surcharge and none ever read the cache (finding C18).
+        So when the prompt file has a ``# User (template)`` with a
+        ``{question}`` slot (v6 onwards), the hints are placed in the USER
+        message and the system prompt is static. Older grounded prompts (v5)
+        keep their original layout — hints in the system, user = question —
+        so A/B runs of v5 still measure v5 as it was.
 
         Args:
             question: Raw user question, used by the grounding module to
                       resolve entity mentions and compute word stems.
 
         Returns:
-            Filled system prompt string ready to pass to the LLM.
+            ``(system, user)`` — both ready to pass to the LLM provider. The
+            same ``user`` must be sent on retries so they keep the hints.
         """
         grounding_hints = (
             build_grounding_hints(question) if settings.grounding_enabled else ""
         )
+        user_template = load_user_template("nl-to-sparql", self._prompt_version)
+        hints_in_user = user_template is not None and "{question}" in user_template
+
         system = fill(
             load("nl-to-sparql", self._prompt_version),
             ontology_summary=load_summary(),
             few_shot_block=select_few_shot(k=FEW_SHOT_K),
-            grounding_hints=grounding_hints,
+            grounding_hints="" if hints_in_user else grounding_hints,
         )
+        if hints_in_user:
+            user = fill(user_template, grounding_hints=grounding_hints, question=question).strip()
+        else:
+            user = question
+
         # Centralised here (not duplicated in run() and stream_events()) so
         # both pipeline paths log the same thing — previously only the
         # streaming path logged the system prompt, so `POST /query` (the
         # sync path) was silent until a failure.
         logger.info("System prompt (question=%r):\n%s", question, system)
-        return system
+        logger.info("User message:\n%s", user)
+        return system, user
 
     # ------------------------------------------------------------------
     # Public: synchronous path
@@ -349,10 +370,10 @@ class QueryPipeline:
             If SparqlClient.execute() fails (GraphDB unreachable or rejects
             the query). The route handler in query.py maps this to HTTP 502.
         """
-        system = self._build_system(question)
+        system, user = self._build_prompt(question)
         ontology = load_summary()
         sparql, total_input, total_output, retries = self._generate_with_retry(
-            system, question, ontology
+            system, user, ontology
         )
 
         if _is_not_answerable(sparql):
@@ -454,9 +475,10 @@ class QueryPipeline:
         only on the first validation failure, and cached locally for
         subsequent retries. Its # System section contains {ontology_summary},
         {failed_sparql}, and {error}. The {question} placeholder in the file's
-        # User (template) section is NOT extracted by load() and is NOT
-        substituted by fill() — the question still travels as the `user`
-        argument to provider.generate(retry_system, question).
+        # User (template) section is NOT used — the retry sends the same
+        `user` message as the first attempt, provider.generate(retry_system, user),
+        so the question AND (v6+) its grounding hints survive the retry (ADR-026;
+        before, a retry sent the bare question and lost the hints).
 
         Token counts from retry generate() calls are accumulated into
         total_input and total_output, so DoneEvent always reflects the
@@ -473,14 +495,15 @@ class QueryPipeline:
         question : str
             The user's natural-language question (Greek or English).
         """
-        # Build the system prompt (same as run()).
-        system = self._build_system(question)
+        # Build the prompt pair (same as run()). `user` carries the grounding
+        # hints + the question (ADR-026) and is reused on every retry below.
+        system, user = self._build_prompt(question)
         ontology = load_summary()
 
         # ── Phase 1: stream SPARQL tokens without blocking the event loop ──
         # next() is called in a thread pool so the event loop stays responsive.
         loop = asyncio.get_running_loop()
-        stream_result = self._provider.stream(system, question)
+        stream_result = self._provider.stream(system, user)
         it = stream_result.tokens
         _SENTINEL = object()  # unique object; nothing else will ever `is` this
         full_sparql = ""
@@ -535,7 +558,7 @@ class QueryPipeline:
                 failed_sparql=full_sparql,
                 error=error,
             )
-            response_obj = self._provider.generate(retry_system, question)
+            response_obj = self._provider.generate(retry_system, user)
             full_sparql = _clean_sparql(response_obj.text)
             logger.info("Retry %d LLM output:\n%s", retries, full_sparql)
 
@@ -572,7 +595,7 @@ class QueryPipeline:
     # ------------------------------------------------------------------
 
     def _generate_with_retry(
-        self, system: str, question: str, ontology: str
+        self, system: str, user: str, ontology: str
     ) -> tuple[str, int, int, int]:
         """Generate SPARQL and retry on validation failure (synchronous path).
 
@@ -605,8 +628,10 @@ class QueryPipeline:
         ----------
         system : str
             The pre-built main system prompt from run().
-        question : str
-            The user's natural-language question.
+        user : str
+            The user message from _build_prompt(): the question, plus (v6+)
+            the grounding hints. Sent unchanged on every attempt, so retries
+            keep the hints (ADR-026).
         ontology : str
             The ontology summary string, passed separately so the retry prompt
             builder can substitute {ontology_summary} without reloading it.
@@ -634,7 +659,7 @@ class QueryPipeline:
                     error=error,
                 )
 
-            response = self._provider.generate(current_system, question)
+            response = self._provider.generate(current_system, user)
             total_input += response.input_tokens
             total_output += response.output_tokens
             sparql = _clean_sparql(response.text)

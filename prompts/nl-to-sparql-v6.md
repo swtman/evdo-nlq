@@ -11,7 +11,9 @@ notes: >
   block's section headers (backend/app/grounding/hints.py) now live here; the
   hint block carries plain labels only. The {few_shot_block} slot is restored
   (v4 had it; v5 did not, so the examples the pipeline passed were silently
-  dropped). See "What changed in v6 vs v5" in the Notes.
+  dropped). Per-question grounding hints go in the USER message (see
+  "# User (template)"), keeping the system prompt identical — and cacheable —
+  for every question (ADR-026). See "What changed in v6 vs v5" in the Notes.
 ---
 
 # System
@@ -23,8 +25,6 @@ Your task: given a user question in Greek or English, produce a single valid SPA
 ## Ontology (compact summary)
 
 {ontology_summary}
-
-{grounding_hints}
 
 ## Rules
 
@@ -67,7 +67,7 @@ Your task: given a user question in Greek or English, produce a single valid SPA
       ```
 14. The 2026-06-11 schema added book/publisher/professor metadata that was previously absent. Questions about a book's **author(s)** (`evdx:authors`), **ISBN** (`evdx:isbn`), **publisher** (`evdx:hasPublisher`/`evdx:publisherName`), **edition** (`evdx:edition`), **publication year** (`evdx:publicationYear`), or **topic/subject** (`evdx:keyword`) ARE answerable — do not emit `NOT_ANSWERABLE` for these. Likewise, `evdx:professors` on a course gives the teaching professor(s) — "who teaches X" IS answerable. Student enrollment and grades remain genuinely absent (still `NOT_ANSWERABLE`).
 15. `evdx:hasCode` (the Eudoxus book code) is **`xsd:integer`**, not a string. Write book codes as bare numbers, never quoted: `VALUES ?code {94700120}`, not `VALUES ?code {"94700120"}`. A quoted string is a different RDF term and will silently match zero triples. The same applies to `evdx:year` and `evdx:publicationYear` (also `xsd:integer`) and `evdx:semester` — use `?c evdx:year 2022` / `FILTER (?year >= 2019)` / `?c evdx:semester 1` , never quoted.
-16. When a **"Resolved entities & terms"** block appears above the Rules section, use the hints it provides:
+16. When the user message contains a **"Resolved entities & terms"** block (it follows the question and was derived from it), use the hints it provides:
     - Apply a topic/subject text filter to the label property of the entity the user attributes the topic to — not to a different entity that merely appears elsewhere in the query path. Identify the entity the topic describes from the noun it modifies ("books about X" → the book; "courses about X" → the course), then filter that entity's own evdx:title/evdx:name (and evdx:keyword where it exists). Do not OR the filter across an unrelated entity in the path.
     - **Entities**: use the exact canonical label string from the bullet point as a **literal** in a triple pattern or FILTER. Example: if the hint says `- [University] ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ`, write `?u evdx:name "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" .` (or `FILTER(?un = "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ")`). Never guess or abbreviate the label.
     - **Title candidates**: the lines under `**Title candidates**` are real KG title literals whose wording is close to words in the question. They are **candidates, not confirmed matches** — first decide whether the question **names** that course/book or only **describes a topic**:
@@ -92,6 +92,14 @@ Your task: given a user question in Greek or English, produce a single valid SPA
 ## Examples
 
 {few_shot_block}
+
+# User (template)
+
+## Question
+
+{question}
+
+{grounding_hints}
 
 # Notes
 
@@ -125,6 +133,16 @@ Plan and evidence: `notes/title-linking-investigation.md`,
 - **Pairing with grounding code.** v5 remains loadable, but the hint block format changed
   with this branch; an A/B run of v5 must use the grounding code of its time (git SHA
   in the eval report's provenance), otherwise v5 would receive labels it never describes.
+- **2026-09-24, edited in place (branch `perf/prompt-cache-static-prefix`, ADR-026):** the
+  `{grounding_hints}` slot moved out of `# System` into a new `# User (template)` section
+  (`## Question`, `{question}`, then `{grounding_hints}` — the question first, then what
+  grounding resolved from it). The system prompt is now
+  byte-identical for every question, so Anthropic's prompt cache can be read (before this,
+  hints in the system text made every system prompt unique while v6's ~6,100 tokens exceeded
+  Haiku 4.5's 4,096-token cache minimum — every call paid the cache-write surcharge and no
+  call ever read the cache; finding C18). Retries send the same user message, so they keep
+  the hints (before, a retry lost them). Rule 16 says where the block now is. Edited in place
+  per the lifecycle rule below (no eval baseline of v6 existed yet).
 - Prompt lifecycle: v6 may still change in branches 4 (stem format) and 4b (Greek-only
   few-shot) and is frozen at the branch-5 eval baseline; later Rule 16 changes fork v7.
 

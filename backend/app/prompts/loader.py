@@ -75,8 +75,31 @@ def load(name: str, version: int) -> str:
     ValueError
         If the file exists but has no `# System` section.
     """
-    # Build the cache key, e.g. "nl-to-sparql-v1"
-    key = f"{name}-v{version}"
+    result = _load_section(name, version, "System")
+    if result is None:
+        raise ValueError(f"No '# System' section found in {name}-v{version}.md")
+    return result
+
+
+def load_user_template(name: str, version: int) -> str | None:
+    """Return the '# User (template)' section of a versioned prompt, or None.
+
+    Prompts from v6 on carry the per-question part of the prompt — the grounding
+    hints and the question — in this section, so the '# System' section is the
+    same for every question and can be served from Anthropic's prompt cache
+    (ADR-026). Older prompts either have no such section or only a documentary
+    one; the pipeline uses it only when it contains a ``{question}`` slot.
+
+    Returns:
+        The section text (stripped), or None if the file has no such section.
+    """
+    return _load_section(name, version, "User (template)")
+
+
+def _load_section(name: str, version: int, heading: str) -> str | None:
+    """Read (and cache) one top-level '# <heading>' section of a prompt file."""
+    # Build the cache key, e.g. "nl-to-sparql-v1" / "nl-to-sparql-v6#User (template)"
+    key = f"{name}-v{version}" if heading == "System" else f"{name}-v{version}#{heading}"
 
     # Return immediately if already cached
     if key in _cache:
@@ -96,14 +119,15 @@ def load(name: str, version: int) -> str:
     # re.DOTALL makes . match newlines too, so .*? spans multiple lines.
     raw = re.sub(r"\A---\n.*?\n---\n*", "", raw, flags=re.DOTALL)
 
-    # Step 2 — extract the # System section.
+    # Step 2 — extract the requested top-level section ("# System", "# User (template)").
     # re.MULTILINE makes ^ match the start of any line (not just the string).
     # re.DOTALL makes . match newlines so (.*?) can span multiple lines.
     # (?=^# |\Z) is a "lookahead": stop before the next top-level heading
     # or the end of the string — but don't consume those characters.
-    m = re.search(r"^# System\n(.*?)(?=^# |\Z)", raw, re.MULTILINE | re.DOTALL)
+    # re.escape: the heading "User (template)" contains regex metacharacters.
+    m = re.search(rf"^# {re.escape(heading)}\n(.*?)(?=^# |\Z)", raw, re.MULTILINE | re.DOTALL)
     if not m:
-        raise ValueError(f"No '# System' section found in {path.name}")
+        return None
 
     # m.group(1) is the text captured by the first set of parentheses (.*?)
     result = m.group(1).strip()

@@ -50,11 +50,14 @@ query using ?t are compared first-column-to-first-column. Different variable
 names are tolerated; wrong column ordering is not.
 
 Usage (from backend/):
+    uv run python scripts/eval.py --provider claude --model claude-haiku-4-5 --language greek
     uv run python scripts/eval.py --prompt-version 1 --provider fake --language english
-    uv run python scripts/eval.py --prompt-version 4 --provider claude --model claude-haiku-4-5 --language both
 
 Options:
-    --prompt-version  1-4 (default: 4 — the active production prompt)
+    --prompt-version  any prompts/nl-to-sparql-v<N>.md on disk (default: PROMPT_VERSION from
+                      app/pipeline/query_pipeline.py — the production prompt). Grounded
+                      versions are built per question by production's _build_prompt (ADR-025/026).
+    --examples-file   gold example file (default: prompts/examples.yaml)
     --provider        claude | gemini | fake (default: claude)
     --model           model name (default: claude-haiku-4-5)
     --language        greek | english | both (default: both)
@@ -97,7 +100,7 @@ from app.pipeline.query_pipeline import (
     _is_not_answerable,  # shared with production pipeline to guarantee identical detection logic
 )
 from app.prompts.examples_loader import select_few_shot
-from app.prompts.loader import fill, load
+from app.prompts.loader import fill, load, load_user_template
 from app.sparql.client import SparqlClient, SparqlResult, validate_sparql
 
 logging.basicConfig(level=logging.WARNING)
@@ -700,10 +703,14 @@ def _available_prompt_versions() -> list[int]:
 def _is_grounded(prompt_version: int) -> bool:
     """Whether this prompt version has a ``{grounding_hints}`` slot (v5 onwards).
 
-    Read from the template itself, not from a version cut-off, so a future
-    prompt is classified correctly without touching this file.
+    The slot is in the ``# System`` section (v5) or, since ADR-026, in the
+    ``# User (template)`` section (v6: hints go in the user message so the
+    system prompt stays cacheable). Read from the template itself, not from a
+    version cut-off, so a future prompt is classified correctly without
+    touching this file.
     """
-    return "{grounding_hints}" in load("nl-to-sparql", prompt_version)
+    user_template = load_user_template("nl-to-sparql", prompt_version) or ""
+    return "{grounding_hints}" in load("nl-to-sparql", prompt_version) + user_template
 
 
 def _entities_db_fingerprint() -> str:
@@ -795,7 +802,7 @@ def _render_report(
         f"| nl-to-sparql-v{prompt_version}.md sha256[:12] | `{prompt_sha}` |",
         f"| {examples_name} sha256[:12] | `{examples_sha}` |",
         "| system prompt | "
-        + ("per-question grounding (production `_build_system`)" if grounded
+        + ("per-question grounding (production `_build_prompt`)" if grounded
            else "fixed, no grounding hints") + " |",
         f"| entities.db sha256[:12] | `{entities_db}` |",
         "",
@@ -914,7 +921,7 @@ def _build_pipeline(prompt_version: int, provider_name: str, model: str) -> Quer
     Grounded prompts (any version whose template has ``{grounding_hints}``,
     i.e. v5, v6, …) depend on the question: the hints are computed from it.
     For them the prompt is built PER QUESTION by production's own
-    ``QueryPipeline._build_system`` (same few-shot k, same grounding code),
+    ``QueryPipeline._build_prompt`` (system + user message — ADR-026) (same few-shot k, same grounding code),
     with the requested ``prompt_version``. Before this, the harness only
     accepted v1-v4 and filled a single prompt without hints, so the production
     prompt could never be evaluated (title-linking plan, finding C17). Reusing
@@ -961,7 +968,7 @@ def _build_pipeline(prompt_version: int, provider_name: str, model: str) -> Quer
         The parent class's run() builds the system prompt and then calls
         _generate_with_retry() followed by SparqlClient.execute(). This override
         builds the prompt (fixed for v1-v4, production's per-question
-        ``_build_system`` for grounded versions), calls only
+        ``_build_prompt`` for grounded versions), calls only
         _generate_with_retry(), and returns an empty PipelineResult.
 
         GraphDB execution is intentionally omitted here — the eval harness
@@ -973,10 +980,11 @@ def _build_pipeline(prompt_version: int, provider_name: str, model: str) -> Quer
         """
 
         def run(self, question: str) -> PipelineResult:  # type: ignore[override]
-            system = fixed_system if fixed_system is not None else self._build_system(question)
-            sparql, ti, to, retries = self._generate_with_retry(
-                system, question, ontology
-            )
+            if fixed_system is not None:
+                system, user = fixed_system, question
+            else:
+                system, user = self._build_prompt(question)
+            sparql, ti, to, retries = self._generate_with_retry(system, user, ontology)
             # Return empty columns/rows — the eval harness executes GraphDB itself.
             return PipelineResult(
                 sparql=sparql,

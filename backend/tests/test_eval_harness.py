@@ -4,7 +4,8 @@ Finding C17 of the title-linking plan: the harness accepted --prompt-version 1-4
 only and built ONE fixed system prompt without per-question grounding hints, so
 the production prompt (v5/v6, grounded) could never be evaluated. These tests pin
 the fix: grounded prompt versions are built per question by the SAME builder
-production uses (QueryPipeline._build_system), and the report records what data
+production uses (QueryPipeline._build_prompt — system + user message, ADR-026),
+and the report records what data
 the grounding used.
 
 scripts/ is not a package, so the module is loaded from its file path.
@@ -31,17 +32,17 @@ def harness():
     return module
 
 
-def _capture_system(pipeline, question: str) -> str:
-    """Run the harness pipeline with the LLM call stubbed, return the system prompt it used."""
+def _capture_prompt(pipeline, question: str) -> tuple[str, str]:
+    """Run the harness pipeline with the LLM call stubbed; return the (system, user) it sent."""
     seen: dict[str, str] = {}
 
-    def fake_generate(system, q, ontology):
-        seen["system"] = system
+    def fake_generate(system, user, ontology):
+        seen["system"], seen["user"] = system, user
         return "SELECT * WHERE { ?s ?p ?o }", 0, 0, 0
 
     pipeline._generate_with_retry = fake_generate  # instance attribute shadows the method
     pipeline.run(question)
-    return seen["system"]
+    return seen["system"], seen["user"]
 
 
 def test_production_prompt_versions_are_selectable(harness) -> None:
@@ -58,28 +59,30 @@ def test_grounded_version_detected_from_template(harness) -> None:
 def test_grounded_prompt_is_built_per_question_like_production(harness) -> None:
     question = "ποια βιβλία προτείνει το ΑΠΘ;"
     pipeline = harness._build_pipeline(PROMPT_VERSION, "fake", "fake-v1")
-    system = _capture_system(pipeline, question)
+    system, user = _capture_prompt(pipeline, question)
 
-    # grounding hints for THIS question are present …
-    assert "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" in system
-    # … and the prompt is byte-identical to what production builds
+    # grounding hints for THIS question are present (in the user message since ADR-026) …
+    assert "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" in user
+    # … and the prompt pair is byte-identical to what production builds
     production = QueryPipeline(pipeline._provider, pipeline._sparql_client, "fake", "fake-v1")
-    assert system == production._build_system(question)
+    assert (system, user) == production._build_prompt(question)
 
 
-def test_grounded_prompt_differs_between_questions(harness) -> None:
+def test_grounded_prompt_per_question_in_user_static_system(harness) -> None:
     pipeline = harness._build_pipeline(PROMPT_VERSION, "fake", "fake-v1")
-    a = _capture_system(pipeline, "ποια βιβλία προτείνει το ΑΠΘ;")
-    b = _capture_system(pipeline, "ποια βιβλία αλγορίθμων υπάρχουν;")
-    assert a != b
+    system_a, user_a = _capture_prompt(pipeline, "ποια βιβλία προτείνει το ΑΠΘ;")
+    system_b, user_b = _capture_prompt(pipeline, "ποια βιβλία αλγορίθμων υπάρχουν;")
+    assert user_a != user_b      # per-question part differs …
+    assert system_a == system_b  # … the cacheable system prompt does not (ADR-026)
 
 
 def test_legacy_version_keeps_fixed_ungrounded_prompt(harness) -> None:
     pipeline = harness._build_pipeline(4, "fake", "fake-v1")
-    a = _capture_system(pipeline, "ποια βιβλία προτείνει το ΑΠΘ;")
-    b = _capture_system(pipeline, "ποια βιβλία αλγορίθμων υπάρχουν;")
-    assert a == b
-    assert "Resolved entities" not in a
+    system_a, user_a = _capture_prompt(pipeline, "ποια βιβλία προτείνει το ΑΠΘ;")
+    system_b, _ = _capture_prompt(pipeline, "ποια βιβλία αλγορίθμων υπάρχουν;")
+    assert system_a == system_b
+    assert "Resolved entities" not in system_a
+    assert user_a == "ποια βιβλία προτείνει το ΑΠΘ;"
 
 
 def test_pipeline_prompt_version_is_configurable() -> None:
@@ -91,8 +94,8 @@ def test_pipeline_prompt_version_is_configurable() -> None:
     v5 = QueryPipeline(FakeProvider(), MagicMock(spec=SparqlClient), "fake", "fake-v1", prompt_version=5)
     v6 = QueryPipeline(FakeProvider(), MagicMock(spec=SparqlClient), "fake", "fake-v1")
     q = "ποια βιβλία προτείνει το ΑΠΘ;"
-    assert "## Examples" not in v5._build_system(q)  # v5 has no few-shot slot
-    assert "## Examples" in v6._build_system(q)
+    assert "## Examples" not in v5._build_prompt(q)[0]  # v5 has no few-shot slot
+    assert "## Examples" in v6._build_prompt(q)[0]
 
 
 def test_report_provenance_records_grounding_inputs(harness) -> None:
