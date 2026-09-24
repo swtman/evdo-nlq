@@ -528,3 +528,42 @@ def test_list_titles_university_scores_are_one() -> None:
     """Listing implies no similarity judgement — every score is exactly 1.0."""
     results = list_titles(entity_class="university")
     assert all(r.score == 1.0 for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Series markers (decision 4): numbered variants must be told apart, Latin and
+# Greek look-alike numerals must match each other, markers are not FTS terms.
+# ---------------------------------------------------------------------------
+
+from app.grounding.title_index.search import _fts_query_terms  # noqa: E402
+
+SERIES_CORPUS: dict[str, list[str]] = {
+    "φυσικη": ["ΦΥΣΙΚΗ"],
+    "φυσικη ι": ["ΦΥΣΙΚΗ Ι"],
+    "φυσικη ιι": ["ΦΥΣΙΚΗ ΙΙ"],
+    "αρχιτεκτονικη υπολογιστων i": ["Αρχιτεκτονική Υπολογιστών I"],  # Latin I in the KG
+}
+
+
+def test_numbered_variant_ranks_first() -> None:
+    results = rank_titles_from_corpus(SERIES_CORPUS, "φυσικη ιι", k=3)
+    assert results[0].normalized_title == "φυσικη ιι"
+    assert results[0].score == pytest.approx(1.0)
+
+
+def test_latin_marker_query_finds_greek_marker_title() -> None:
+    results = rank_titles_from_corpus(SERIES_CORPUS, "φυσικη ii", k=1)
+    assert results[0].normalized_title == "φυσικη ιι"
+    assert results[0].score == pytest.approx(1.0)
+
+
+def test_greek_marker_query_finds_latin_marker_title() -> None:
+    results = rank_titles_from_corpus(SERIES_CORPUS, "αρχιτεκτονικη υπολογιστων Ι", k=1)
+    assert results[0].normalized_title == "αρχιτεκτονικη υπολογιστων i"
+    assert results[0].score == pytest.approx(1.0)
+
+
+def test_series_markers_are_not_fts_terms() -> None:
+    # "ι*" as an FTS prefix term would match almost every title
+    assert _fts_query_terms("φυσικη ιι") == _fts_query_terms("φυσικη")
+    assert _fts_query_terms("μαθηματικα 2") == _fts_query_terms("μαθηματικα")

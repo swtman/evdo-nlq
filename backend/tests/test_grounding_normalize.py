@@ -171,3 +171,39 @@ def test_already_normalised_is_idempotent():
     first = normalize_greek("ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ")
     second = normalize_greek(first)
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# Series markers (title-linking plan, decision 4; branch fix/keep-roman-numeral-tokens)
+# ---------------------------------------------------------------------------
+
+from app.grounding.normalize import fold_series_markers, is_series_marker  # noqa: E402
+
+
+def test_fold_latin_roman_marker_to_greek():
+    """Latin I/X look identical to Greek Ι/Χ but are different characters."""
+    assert fold_series_markers("φυσικη i") == "φυσικη ι"
+    assert fold_series_markers("φυσικη ii") == "φυσικη ιι"
+    assert fold_series_markers("ιστορια xi") == "ιστορια χι"
+
+
+def test_fold_mixed_roman_marker():
+    # "ΙV" is often typed with a Greek Ι and a Latin V; both spellings fold alike
+    assert fold_series_markers("φυσικη iv") == fold_series_markers("φυσικη ιv") == "φυσικη ιv"
+
+
+def test_fold_leaves_ordinary_words_alone():
+    assert fold_series_markers("introduction to physics") == "introduction to physics"
+    assert fold_series_markers("φυσικη ιι") == "φυσικη ιι"
+    assert fold_series_markers("") == ""
+
+
+def test_is_series_marker_true_cases():
+    for tok in ("ι", "ιι", "ιιι", "ιv", "v", "i", "ii", "χ", "1", "2", "12", "α", "β", "γ", "δ"):
+        assert is_series_marker(tok), tok
+
+
+def test_is_series_marker_false_cases():
+    # years and book codes are not series markers; ordinary words are not
+    for tok in ("2022", "94700120", "123", "ε", "η", "ιστορια", "και", "ιιιιι", ""):
+        assert not is_series_marker(tok), tok

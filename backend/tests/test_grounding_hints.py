@@ -380,3 +380,50 @@ def test_per_class_thresholds_apply_independently(monkeypatch) -> None:
 
     assert "[Course]" not in result  # 0.75 < 0.8 course threshold
     assert "[Book]" in result  # 0.75 >= 0.7 book threshold
+
+
+# ---------------------------------------------------------------------------
+# Branch 2 (fix/keep-roman-numeral-tokens) — series-marker tokens (decision 4).
+# ---------------------------------------------------------------------------
+
+from app.grounding.mentions import _tokenize  # noqa: E402
+
+
+def test_tokenize_keeps_marker_after_content_word() -> None:
+    assert _tokenize("αναλυση κυκλωματων ι", keep_series_markers=True) == [
+        "αναλυση", "κυκλωματων", "ι"]
+    assert _tokenize("Φυσική ΙΙ", keep_series_markers=True) == ["Φυσική", "ΙΙ"]
+    assert _tokenize("Μαθηματικά 2", keep_series_markers=True) == ["Μαθηματικά", "2"]
+    assert _tokenize("αρχιτεκτονικη I", keep_series_markers=True) == ["αρχιτεκτονικη", "I"]
+
+
+def test_tokenize_drops_years_codes_and_unanchored_markers() -> None:
+    # years / book codes are not markers; a marker must follow a kept content word
+    assert "2022" not in _tokenize("βιβλία 2022", keep_series_markers=True)
+    assert "94700120" not in _tokenize("βιβλίο 94700120", keep_series_markers=True)
+    assert _tokenize("ι αναλυση", keep_series_markers=True) == ["αναλυση"]
+    assert "ι" not in _tokenize("το ι", keep_series_markers=True)
+
+
+def test_tokenize_default_unchanged() -> None:
+    """Without the flag (entity tokens) the tokenizer behaves exactly as before."""
+    assert _tokenize("αναλυση κυκλωματων ι 2") == ["αναλυση", "κυκλωματων"]
+
+
+def test_title_phrase_carries_the_marker(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
+        seen.append(phrase)
+        return []
+
+    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    build_grounding_hints("ζωροβατικη μελετη ιι")
+    assert seen and all(p.endswith("ιι") for p in seen)
+
+
+def test_markers_never_become_stems() -> None:
+    result = build_grounding_hints("ξενοφωνικης ιι 2")
+    stem_lines = result.split("**Topic stems**")[-1] if "**Topic stems**" in result else ""
+    for marker in ("- ιι", "- 2"):
+        assert marker not in stem_lines

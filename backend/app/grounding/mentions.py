@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from app.grounding.lexicon import _GREEK_STOPWORDS, _INSTITUTION_GLUE
 from app.grounding.linker import ResolvedEntity, resolve_mention
-from app.grounding.normalize import normalize_greek
+from app.grounding.normalize import is_series_marker, normalize_greek
 from app.grounding.stem import greek_stem
 
 # Priority for deduplicating entity matches across window sizes.
@@ -30,13 +30,25 @@ _STAGE_PRIORITY: dict[str, int] = {"acronym": 0, "exact": 1, "fuzzy": 2}
 def _tokenize(
     question: str,
     stopwords: frozenset[str] = _GREEK_STOPWORDS,
+    *,
+    keep_series_markers: bool = False,
 ) -> list[str]:
-    """Extract word-only tokens from a Greek/English question string.
+    """Extract word tokens from a Greek/English question string.
 
-    Uses a Unicode-aware regex to pull out sequences of non-whitespace,
-    non-punctuation, non-digit characters.  Then filters:
+    Uses a Unicode-aware regex to pull out runs of letters and runs of digits.
+    Then filters:
       - Tokens shorter than 3 characters (too short for meaningful matching).
       - Tokens whose normalized form is in ``stopwords``.
+    Digit runs never pass these filters on their own.
+
+    With ``keep_series_markers=True`` a SERIES MARKER is kept although it is
+    short — a roman numeral (Greek or Latin letters, "Ι", "ΙΙ", "I", "IV"), a
+    1-2 digit number, or one of the letters Α Β Γ Δ — but only when it comes
+    directly after a kept content word ("ανάλυση κυκλωμάτων Ι", "Μαθηματικά 2").
+    Without it, "ΑΝΑΛΥΣΗ ΚΥΚΛΩΜΑΤΩΝ Ι" and "… ΙΙ" were indistinguishable to the
+    title ranker (title-linking plan, decision 4). The adjacency rule and the
+    1-2 digit limit keep years ("2022") and book codes ("94700120") — frequent
+    in questions — out of the title phrase. See ``normalize.is_series_marker``.
 
     Args:
         question: Raw user question, any Unicode text.
@@ -45,21 +57,27 @@ def _tokenize(
                    Pass ``lexicon._ENTITY_STOPWORDS`` to retain institution
                    words (e.g. "πανεπιστημιο") for entity disambiguation
                    while still filtering generic stopwords.
+        keep_series_markers: Keep series markers that follow a content word.
+                   Used for TOPIC tokens (title ranking) only; entity
+                   tokens leave it off, so entity resolution is unchanged.
 
     Returns:
         List of raw token strings that survive the filter (original casing
         preserved so that acronym detection like "ΑΠΘ" works at full uppercase).
     """
-    # re.findall with a Unicode word-char pattern: letters only (no digits, no punct).
-    raw_tokens: list[str] = re.findall(r"[^\s\W\d]+", question, flags=re.UNICODE)
+    # Unicode-aware: runs of letters (no digits, no punctuation) or runs of digits.
+    raw_tokens: list[str] = re.findall(r"[^\s\W\d]+|\d+", question, flags=re.UNICODE)
 
     result: list[str] = []
+    previous_kept_as_content = False
     for tok in raw_tokens:
-        if len(tok) < 3:  # too short to be meaningful
-            continue
-        if normalize_greek(tok) in stopwords:
-            continue
-        result.append(tok)
+        norm = normalize_greek(tok)
+        is_content = len(tok) >= 3 and not tok.isdigit() and norm not in stopwords
+        if is_content:
+            result.append(tok)
+        elif keep_series_markers and previous_kept_as_content and is_series_marker(norm):
+            result.append(tok)
+        previous_kept_as_content = is_content
     return result
 
 

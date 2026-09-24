@@ -153,7 +153,10 @@ def build_grounding_hints(question: str) -> str:
     # Step 1b — topic tokens: full stopword set (including attribute nouns like
     #            "καθηγητεσ") so only genuine content words survive for title
     #            ranking and stemming.
-    topic_tokens = _tokenize(question)
+    #            Series markers ("Ι", "ΙΙ", "2", "Α") after a content word are
+    #            kept so numbered titles can be told apart (decision 4); they
+    #            never produce stems (too short / no-op, see _collect_stems).
+    topic_tokens = _tokenize(question, keep_series_markers=True)
 
     if not entity_tokens and not topic_tokens:
         logger.info("Grounding output: (no entity/topic tokens — no hints)")

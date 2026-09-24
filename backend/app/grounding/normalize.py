@@ -72,3 +72,72 @@ def normalize_greek(text: str) -> str:
     text = " ".join(text.split())
 
     return text
+
+
+# ---------------------------------------------------------------------------
+# Series markers (title-linking plan, decision 4)
+# ---------------------------------------------------------------------------
+#
+# Course/book titles are often numbered: "ΦΥΣΙΚΗ Ι", "ΦΥΣΙΚΗ ΙΙ", "ΜΑΘΗΜΑΤΙΚΑ 2",
+# "ΜΑΘΗΜΑΤΙΚΑ Α". Measured on entities.db (S09): among course titles 6,750 end in
+# a Greek roman numeral, 2,637 in a LATIN roman numeral, 1,319 in a digit and 328
+# in a single letter. The same numeral is typed both ways — Latin "I" and Greek
+# "Ι" look identical but are different characters — so both sides of every
+# comparison must be folded to one spelling.
+
+# Latin letters that have a Greek look-alike used in roman numerals. "v" has no
+# Greek look-alike and stays Latin ("ΙV" is typically Greek Ι + Latin V).
+_LATIN_TO_GREEK_ROMAN = str.maketrans({"i": "ι", "x": "χ"})
+
+# A roman-numeral token after folding: only ι / v / χ, at most 4 characters
+# (Ι … ΙΙΙΙ, ΙV, VΙΙΙ, ΧΙ …). Longer runs are not plausible series numbers.
+_ROMAN_RE = re.compile(r"^[ιvχ]{1,4}$")
+# A numeric series marker: 1-2 digits. Years ("2022") and Eudoxus book codes
+# ("94700120") appear in questions constantly and must NOT count as markers.
+_DIGIT_RE = re.compile(r"^\d{1,2}$")
+# Single-letter series markers ("ΜΑΘΗΜΑΤΙΚΑ Α"): only the first four letters.
+_LETTER_MARKERS = frozenset("αβγδ")
+
+
+def _fold_token(token: str) -> str:
+    """Fold one already-normalized token to Greek roman letters if it is roman-only."""
+    # Latin i, v, x plus their Greek look-alikes ι, χ (Greek ν is NOT a look-alike of v).
+    if token and len(token) <= 4 and all(ch in "ivxιχ" for ch in token):
+        return token.translate(_LATIN_TO_GREEK_ROMAN)
+    return token
+
+
+def fold_series_markers(text: str) -> str:
+    """Fold Latin roman-numeral tokens to their Greek look-alikes (i→ι, x→χ).
+
+    Applied token by token to an already ``normalize_greek``-ed string, and only
+    to tokens made entirely of roman-numeral letters — ordinary words are never
+    touched ("introduction" stays as is). Used on BOTH sides of a title
+    comparison, so "φυσικη ii" (Latin) and "φυσικη ιι" (Greek) become equal.
+
+    Examples:
+        >>> fold_series_markers("φυσικη ii")
+        'φυσικη ιι'
+        >>> fold_series_markers("φυσικη iv")
+        'φυσικη ιv'
+    """
+    if not text:
+        return text
+    return " ".join(_fold_token(t) for t in text.split(" "))
+
+
+def is_series_marker(token: str) -> bool:
+    """Whether a normalized token is a series marker (Ι/ΙΙ/I/IV…, 1-2 digits, α-δ).
+
+    Args:
+        token: A single token, already passed through ``normalize_greek``.
+
+    Returns:
+        True for roman numerals (Greek or Latin letters, ≤ 4 characters),
+        1-2 digit numbers, and the single letters α β γ δ; False otherwise —
+        in particular for years and book codes.
+    """
+    if not token:
+        return False
+    folded = _fold_token(token)
+    return bool(_ROMAN_RE.match(folded) or _DIGIT_RE.match(token) or token in _LETTER_MARKERS)

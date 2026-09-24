@@ -33,7 +33,7 @@ from rapidfuzz import process
 
 from app.grounding import db
 from app.grounding.gazetteer import ACRONYM_MAP
-from app.grounding.normalize import normalize_greek
+from app.grounding.normalize import fold_series_markers, is_series_marker, normalize_greek
 from app.grounding.schema import LISTABLE_CLASSES, TITLE_CLASSES
 from app.grounding.stem import greek_stem
 from app.grounding.title_index.corpus import (
@@ -62,11 +62,16 @@ def _fts_query_terms(phrase: str) -> list[str]:
     Args:
         phrase: An already ``normalize_greek``-processed phrase.
 
+    Series markers ("ι", "ιι", "2", "α") are left out: as FTS prefix terms they
+    would match almost every title ("ι*"), and the content words already
+    retrieve the right family — the marker then decides between its members
+    at the rerank stage (title-linking plan, decision 4).
+
     Returns:
         A sorted list of distinct, non-empty stems. Sorted only for
         deterministic test output — order does not affect the OR query below.
     """
-    tokens = phrase.split()
+    tokens = [t for t in phrase.split() if not is_series_marker(t)]
     stems = {greek_stem(t) for t in tokens}
     return sorted(s for s in stems if s)
 
@@ -171,7 +176,14 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
     # the scorer differs by class).
     results: list[TitleMatch] = []
     if candidate_norms:
-        ranked = process.extract(q_norm, candidate_norms, scorer=policy.scorer, limit=k)
+        # For titles, fold Latin look-alike numerals to Greek on BOTH sides at
+        # comparison time (rapidfuzz applies `processor` to the query and to
+        # every choice), so "φυσικη ii" scores 100 against "φυσικη ιι". The
+        # stored norm is untouched here; branch 2b moves this fold into it.
+        processor = fold_series_markers if policy.series_markers else None
+        ranked = process.extract(
+            q_norm, candidate_norms, scorer=policy.scorer, processor=processor, limit=k
+        )
         for norm, score, _idx in ranked:
             if not _clears_floor(score, policy):
                 continue

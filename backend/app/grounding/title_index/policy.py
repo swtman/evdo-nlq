@@ -117,6 +117,10 @@ class _MatchPolicy:
     min_score: float  # raw 0-100 floor (see _clears_floor for the
     # inclusive/exclusive distinction)
     inclusive_floor: bool  # True: score >= min_score. False: score > min_score.
+    # Fold Latin look-alike roman numerals to Greek (i→ι, x→χ) on both sides
+    # while scoring — titles are numbered ("ΦΥΣΙΚΗ ΙΙ" vs "Physics II"),
+    # institution names are not, so their measured ADR-020 policy is unchanged.
+    series_markers: bool = False
 
 
 _POLICY: dict[str, _MatchPolicy] = {
@@ -126,6 +130,7 @@ _POLICY: dict[str, _MatchPolicy] = {
         acronyms=False,
         min_score=0.0,
         inclusive_floor=False,
+        series_markers=True,
     ),
     "book": _MatchPolicy(
         scorer=fuzz.token_sort_ratio,
@@ -133,6 +138,7 @@ _POLICY: dict[str, _MatchPolicy] = {
         acronyms=False,
         min_score=0.0,
         inclusive_floor=False,
+        series_markers=True,
     ),
     "university": _MatchPolicy(
         scorer=fuzz.WRatio,
