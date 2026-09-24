@@ -4,8 +4,9 @@ WHAT THIS SCRIPT DOES
 -----------------------
 Produces the single SQLite database the grounding module reads at runtime
 (`app/grounding/db.py`): university names, department names, course titles,
-and book titles, each keyed by their `normalize_greek()` form for fast
-lookup. Course and book additionally get an FTS5 full-text index for the
+and book titles, each keyed for fast lookup — universities/departments by
+`normalize_greek()`, courses/books by `normalize.title_key()` plus a
+`title_family()` key (the title without a trailing "(…)"/"[…]"; ADR-024). Course and book additionally get an FTS5 full-text index for the
 candidate-generation stage of `app/grounding/title_index/corpus.py` — university
 and department deliberately do NOT (at 46 / 379 rows a full table scan beats
 FTS on both speed and recall; see ADR-020) — (see ADR-018, ADR-019, ADR-020).
@@ -50,9 +51,14 @@ reasoning, in short:
     compute `norm` (the search key) — ranking behavior is therefore
     unchanged by this fix.
   - Titles containing U+FFFD (mojibake) or a literal newline are dropped.
-  - Surface forms are grouped by `normalize_greek()` key, so KG variants of
-    the same title (ALL-CAPS accent-free vs. mixed-case accented) end up as
-    multiple `surface` rows sharing one `norm` value.
+  - Surface forms are grouped by `title_key()`, so KG variants of the same
+    title (ALL-CAPS accent-free vs. mixed-case accented, and since ADR-024
+    also punctuation variants such as "Α-Β" / "Α Β") end up as multiple
+    `surface` rows sharing one `norm` value. Each row also stores its
+    `family` key, so a title with a trailing "(Θ)" / "[electronic resource]"
+    tail can be found both exactly and together with its family.
+  - Rebuild from the frozen dump so before/after comparisons use identical
+    data: `--from-json ../notes/investigations/title-linking/data/labels-2026-09-24.json`.
   Every drop is counted and reported, itemized by reason — see "Report what
   was dropped" in CLAUDE.md's cost-awareness section; silent truncation is
   not acceptable for a data artifact this deliberately curated.
@@ -78,8 +84,8 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.grounding.clean import DropCounts, clean_titles  # noqa: E402
-from app.grounding.normalize import normalize_greek  # noqa: E402
-from app.grounding.schema import FTS_CLASSES, create_schema, sync_title_fts  # noqa: E402
+from app.grounding.normalize import normalize_greek, title_family  # noqa: E402
+from app.grounding.schema import FTS_CLASSES, create_schema, family_column, sync_title_fts  # noqa: E402
 
 try:
     from SPARQLWrapper import JSON, SPARQLWrapper
@@ -214,24 +220,30 @@ def clean_departments(raw_departments: list[dict[str, str]]) -> list[dict[str, s
 
 
 def _insert_rows(
-    conn: sqlite3.Connection, table: str, rows: list[tuple[str, str, str | None]]
+    conn: sqlite3.Connection, table: str, rows: list[tuple[str, str | None, str, str | None]]
 ) -> None:
-    """Insert `(norm, surface, parent)` rows into `table`.
+    """Insert `(norm, family, surface, parent)` rows into `table`.
 
     Syncs the table's FTS5 index afterwards — but only for classes that have
     one (`schema.FTS_CLASSES` — course, book). university/department have
     no FTS table to sync (ADR-020; see `schema.py`'s module docstring "FTS5
     — SELECTIVELY, NOT UNIFORMLY").
     """
-    conn.executemany(f"INSERT INTO {table}(norm, surface, parent) VALUES (?, ?, ?)", rows)
+    conn.executemany(
+        f"INSERT INTO {table}(norm, family, surface, parent) VALUES (?, ?, ?, ?)", rows
+    )
     if table in FTS_CLASSES:
         sync_title_fts(conn, table)
 
 
 def _insert_title_rows(conn: sqlite3.Connection, table: str, surface_map: dict[str, set[str]]) -> None:
-    """Insert `(norm, surface, NULL)` rows for one title corpus (course/book)."""
+    """Insert `(norm, family, surface, NULL)` rows for one title corpus (course/book).
+
+    `family` is computed per surface (not per norm): two surfaces sharing a key
+    can differ in whether their tail was written in parentheses.
+    """
     rows = [
-        (norm, surface, None)
+        (norm, family_column(norm, title_family(" ".join(surface.split()))), surface, None)
         for norm, surfaces in surface_map.items()
         for surface in sorted(surfaces)
     ]
@@ -258,14 +270,16 @@ def build_database(
         conn.execute("INSERT INTO meta(key, value) VALUES ('snapshot', ?)", (snapshot,))
 
         # University: no parent (it IS the top of the hierarchy).
-        uni_rows = [(normalize_greek(name), name, None) for name in universities]
+        # family is NULL for institutions: they have no optional-tail concept
+        # (their trailing "(…)" is a status/campus note stripped by normalize_greek).
+        uni_rows = [(normalize_greek(name), None, name, None) for name in universities]
         _insert_rows(conn, "university", uni_rows)
 
         # Department: parent is the owning university's canonical name. A
         # department name shared by several universities becomes several
         # rows under the same `norm` — see title_index.policy.TitleMatch.parents.
         dept_rows = [
-            (normalize_greek(d["department"]), d["department"], d["university"])
+            (normalize_greek(d["department"]), None, d["department"], d["university"])
             for d in departments
         ]
         _insert_rows(conn, "department", dept_rows)

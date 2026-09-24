@@ -32,13 +32,17 @@ import unicodedata
 _STATUS_SUFFIX_RE = re.compile(r" \([^)]+\)$")
 
 
-def normalize_greek(text: str) -> str:
+def normalize_greek(text: str, *, strip_status_suffix: bool = True) -> str:
     """Normalize a Greek string to an accent-free, lowercase, whitespace-collapsed form.
 
     Applies the five-step pipeline described in the module docstring.
 
     Args:
         text: A Greek (or mixed Greek/ASCII) string — may be user input or a KG label.
+        strip_status_suffix: Step 1 on/off. On (default) for university and
+            department names, where a trailing "(…)" is a status or campus
+            annotation. ``title_key`` turns it off: in course/book titles the
+            trailing parenthetical is meaningful ("(Θ)" vs "(Ε)", "(2nd edition)").
 
     Returns:
         The normalized form, suitable for label matching against other normalized strings.
@@ -57,7 +61,8 @@ def normalize_greek(text: str) -> str:
         return ""
 
     # Step 1 — strip trailing parenthetical status suffix (KG artifact).
-    text = _STATUS_SUFFIX_RE.sub("", text)
+    if strip_status_suffix:
+        text = _STATUS_SUFFIX_RE.sub("", text)
 
     # Step 2 — NFD decomposition so combining diacritics become separate code points.
     text = unicodedata.normalize("NFD", text)
@@ -141,3 +146,68 @@ def is_series_marker(token: str) -> bool:
         return False
     folded = _fold_token(token)
     return bool(_ROMAN_RE.match(folded) or _DIGIT_RE.match(token) or token in _LETTER_MARKERS)
+
+
+# ---------------------------------------------------------------------------
+# Title keys for course/book (title-linking plan: branch 2b, finding F18, decision C3)
+# ---------------------------------------------------------------------------
+#
+# WHY A SEPARATE KEY FOR TITLES
+# The stored search key and the question must be prepared IDENTICALLY, or an
+# exactly-typed title does not find itself. Measured before this change (S23):
+# course titles with punctuation inside a word were found 48% of the time, titles
+# ending in "(…)" 53%. Causes: the question tokenizer splits on punctuation while
+# the stored key kept it ("συνολα-ανεξαρτητη"), and normalize_greek strips a
+# trailing "(…)" — right for department status notes, wrong for titles, where it
+# merged e.g. ΓΕΩΦΥΣΙΚΗ (Θ) with (Ε) and first with revised editions (C3).
+#
+# title_key   — the full title: accents/case removed, punctuation → space,
+#               digits kept, series markers folded. Nothing is deleted:
+#               "[electronic resource]" stays as words.
+# title_family — the same key without a trailing "(…)" / "[…]": the family that
+#               groups a title with its tailed variants, so a question that leaves
+#               the tail out still finds all of them (the "optional tail").
+
+# Any run of characters that is not a letter or digit (Unicode-aware). Underscore
+# counts as punctuation here although \w matches it.
+_NON_WORD_RE = re.compile(r"[\W_]+", flags=re.UNICODE)
+# One trailing parenthetical or bracketed tail, with surrounding spaces.
+_TRAILING_TAIL_RE = re.compile(r"\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$")
+
+
+def title_key(text: str) -> str:
+    """The course/book search key: same function for stored titles and questions.
+
+    Examples:
+        >>> title_key("Μουσικά Σύνολα-Ανεξάρτητη Μελέτη")
+        'μουσικα συνολα ανεξαρτητη μελετη'
+        >>> title_key("ΓΕΩΦΥΣΙΚΗ  (Θ)")
+        'γεωφυσικη θ'
+        >>> title_key("Αρχιτεκτονική Υπολογιστών I")
+        'αρχιτεκτονικη υπολογιστων ι'
+    """
+    if not text:
+        return ""
+    base = normalize_greek(text, strip_status_suffix=False)
+    return fold_series_markers(" ".join(_NON_WORD_RE.sub(" ", base).split()))
+
+
+def title_family(text: str) -> str:
+    """``title_key`` of the title without its trailing "(…)"/"[…]" tail(s).
+
+    Falls back to ``title_key(text)`` when nothing would be left (a title that is
+    only a parenthetical), so the family key is never empty.
+
+    Examples:
+        >>> title_family("ΓΕΩΦΥΣΙΚΗ  (Θ)")
+        'γεωφυσικη'
+        >>> title_family("ΓΕΡΜΑΝΙΚΑ Ι (2019-2020)")
+        'γερμανικα ι'
+    """
+    stripped = text or ""
+    while True:
+        shorter = _TRAILING_TAIL_RE.sub("", stripped)
+        if shorter == stripped:
+            break
+        stripped = shorter
+    return title_key(stripped) or title_key(text)

@@ -33,7 +33,7 @@ from rapidfuzz import process
 
 from app.grounding import db
 from app.grounding.gazetteer import ACRONYM_MAP
-from app.grounding.normalize import fold_series_markers, is_series_marker, normalize_greek
+from app.grounding.normalize import is_series_marker, normalize_greek
 from app.grounding.schema import LISTABLE_CLASSES, TITLE_CLASSES
 from app.grounding.stem import greek_stem
 from app.grounding.title_index.corpus import (
@@ -60,7 +60,7 @@ def _fts_query_terms(phrase: str) -> list[str]:
     used for FTS-backed classes (course, book) — see ``policy._MatchPolicy.use_fts``.
 
     Args:
-        phrase: An already ``normalize_greek``-processed phrase.
+        phrase: An already key-processed phrase (``policy.key`` of the question).
 
     Series markers ("ι", "ιι", "2", "α") are left out: as FTS prefix terms they
     would match almost every title ("ι*"), and the content words already
@@ -159,7 +159,9 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
 
     policy = _POLICY[state.table]
 
-    q_norm = normalize_greek(phrase)
+    # The SAME key function that built this class's stored `norm` (ADR-024):
+    # title_key for course/book, normalize_greek for university/department.
+    q_norm = policy.key(phrase)
     if not q_norm:
         return []
 
@@ -176,18 +178,21 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
     # the scorer differs by class).
     results: list[TitleMatch] = []
     if candidate_norms:
-        # For titles, fold Latin look-alike numerals to Greek on BOTH sides at
-        # comparison time (rapidfuzz applies `processor` to the query and to
-        # every choice), so "φυσικη ii" scores 100 against "φυσικη ιι". The
-        # stored norm is untouched here; branch 2b moves this fold into it.
-        processor = fold_series_markers if policy.series_markers else None
-        ranked = process.extract(
-            q_norm, candidate_norms, scorer=policy.scorer, processor=processor, limit=k
-        )
+        # Candidates are full-title keys AND family keys (ADR-024), so a family
+        # and one of its members can both score well. Over-fetch, then skip any
+        # result whose surfaces are all already covered by a better-ranked one —
+        # a member listed after its whole family adds nothing.
+        ranked = process.extract(q_norm, candidate_norms, scorer=policy.scorer, limit=k * 4)
+        covered: set[str] = set()
         for norm, score, _idx in ranked:
+            if len(results) == k:
+                break
             if not _clears_floor(score, policy):
                 continue
             surface_forms, parents = _lookup_surfaces_and_parents(state, norm)
+            if surface_forms and set(surface_forms) <= covered:
+                continue
+            covered.update(surface_forms)
             results.append(
                 TitleMatch(
                     normalized_title=norm,
@@ -266,7 +271,9 @@ def rank_titles_from_corpus(
     the live data and from other tests.
 
     Args:
-        surface_map: A ``normalize_greek(title)`` -> ``[raw surface form, ...]``
+        surface_map: A grouping key -> ``[raw surface form, ...]`` (for course/book the
+                     keys are re-derived from each surface with ``title_key`` /
+                     ``title_family``, exactly as the real builder does)
                      dict. Typically a small fixture corpus.
         phrase: Raw user phrase to rank.
         k: Maximum number of results.

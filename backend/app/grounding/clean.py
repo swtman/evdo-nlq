@@ -20,8 +20,9 @@ THE FIX
 ``surface`` (what gets stored, and later bound in ``VALUES``) is now the RAW
 KG literal, untouched. The whitespace-collapsed form is used ONLY to (a)
 validate the title isn't empty/junk and (b) compute ``norm`` (the search key,
-via ``normalize_greek``, which does its own whitespace collapsing as its
-final step regardless). Because ``norm`` is unchanged by this fix, ranking
+via ``normalize.title_key`` since ADR-024 — ``normalize_greek`` before — which
+does its own whitespace collapsing regardless). Because ``norm`` was unchanged by
+this fix, ranking
 behavior — the FTS5 index, the bm25 candidate order, the rapidfuzz scores,
 the acceptance threshold — is exactly what it was before. This is a pure
 ``surface``-column correctness fix, not a ranking change.
@@ -48,7 +49,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.grounding.normalize import normalize_greek
+from app.grounding.normalize import title_key
 
 
 @dataclass
@@ -81,9 +82,11 @@ def clean_titles(raw_titles: list[str]) -> tuple[dict[str, set[str]], DropCounts
 
     Returns:
         A tuple of:
-          - ``surface_map``: ``normalize_greek(collapsed title) ->
+          - ``surface_map``: ``title_key(collapsed title) ->
             {raw surface form, ...}``. Values are the RAW, unmodified KG
-            literals — see module docstring for why.
+            literals — see module docstring for why. The key is the SAME
+            function the ranker applies to questions (``normalize.title_key``,
+            ADR-024), so punctuation variants of one title share a key.
           - ``drops``: itemized counts of discarded raw titles.
     """
     surface_map: dict[str, set[str]] = {}
@@ -106,7 +109,7 @@ def clean_titles(raw_titles: list[str]) -> tuple[dict[str, set[str]], DropCounts
             drops.empty += 1
             continue
 
-        norm = normalize_greek(collapsed)
+        norm = title_key(collapsed)
         if not norm:
             drops.empty += 1
             continue

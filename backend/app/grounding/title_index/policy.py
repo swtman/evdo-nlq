@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz
 
+from app.grounding.normalize import normalize_greek, title_key
 from app.grounding.schema import FTS_CLASSES, TITLE_CLASSES
 
 # ---------------------------------------------------------------------------
@@ -56,8 +57,10 @@ class TitleMatch:
     Attributes
     ----------
     normalized_title : str
-        The accent-free, lowercase key used for ranking (output of
-        ``normalize_greek`` applied to the raw title/name).
+        The key used for ranking: ``normalize_greek`` of the name for
+        university/department; for course/book a ``title_key`` (the full title)
+        or a ``title_family`` key (the title without its trailing "(…)"/"[…]"
+        tail, which then groups the whole family — ADR-024).
     score : float
         Similarity score in the range [0, 1] (rapidfuzz's raw 0-100 score,
         divided by 100 — see ``_POLICY`` for which scorer produced it).
@@ -117,10 +120,13 @@ class _MatchPolicy:
     min_score: float  # raw 0-100 floor (see _clears_floor for the
     # inclusive/exclusive distinction)
     inclusive_floor: bool  # True: score >= min_score. False: score > min_score.
-    # Fold Latin look-alike roman numerals to Greek (i→ι, x→χ) on both sides
-    # while scoring — titles are numbered ("ΦΥΣΙΚΗ ΙΙ" vs "Physics II"),
-    # institution names are not, so their measured ADR-020 policy is unchanged.
-    series_markers: bool = False
+    # The key function applied to the QUESTION phrase — must be the same
+    # function that built the stored `norm` column for this class, or an exactly
+    # typed title cannot find itself (ADR-024). Course/book: title_key
+    # (punctuation → space, digits kept, series markers folded — ADR-023's
+    # comparison-time fold now lives in the stored key). University/department:
+    # normalize_greek, unchanged, because ADR-020's thresholds were measured on it.
+    key: Callable[[str], str] = normalize_greek
 
 
 _POLICY: dict[str, _MatchPolicy] = {
@@ -130,7 +136,7 @@ _POLICY: dict[str, _MatchPolicy] = {
         acronyms=False,
         min_score=0.0,
         inclusive_floor=False,
-        series_markers=True,
+        key=title_key,
     ),
     "book": _MatchPolicy(
         scorer=fuzz.token_sort_ratio,
@@ -138,7 +144,7 @@ _POLICY: dict[str, _MatchPolicy] = {
         acronyms=False,
         min_score=0.0,
         inclusive_floor=False,
-        series_markers=True,
+        key=title_key,
     ),
     "university": _MatchPolicy(
         scorer=fuzz.WRatio,

@@ -37,7 +37,14 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from app.grounding.schema import FTS_CLASSES, TITLE_CLASSES, create_schema, sync_title_fts
+from app.grounding.normalize import title_family, title_key
+from app.grounding.schema import (
+    FTS_CLASSES,
+    TITLE_CLASSES,
+    create_schema,
+    family_column,
+    sync_title_fts,
+)
 
 # ---------------------------------------------------------------------------
 # Internal index state
@@ -109,19 +116,27 @@ def _build_index(
     create_schema(conn)
 
     parent_map = parent_map or {}
-    rows: list[tuple[str, str, str | None]] = []
+    rows: list[tuple[str, str | None, str, str | None]] = []
     for norm, surfaces in surface_map.items():
+        if entity_class in FTS_CLASSES:
+            # Course/book: derive the keys from the surface with the SAME functions
+            # the real builder uses (ADR-024), so a fixture can never drift from
+            # production keying; the dict key is only a grouping label here.
+            for surface in surfaces:
+                key = title_key(surface)
+                rows.append((key, family_column(key, title_family(surface)), surface, None))
+            continue
         parents_for_norm = parent_map.get(norm, [])
         if parents_for_norm:
             rows.extend(
-                (norm, surface, parent) for surface in surfaces for parent in parents_for_norm
+                (norm, None, surface, parent) for surface in surfaces for parent in parents_for_norm
             )
         else:
-            rows.extend((norm, surface, None) for surface in surfaces)
+            rows.extend((norm, None, surface, None) for surface in surfaces)
 
     if rows:
         conn.executemany(
-            f"INSERT INTO {entity_class}(norm, surface, parent) VALUES (?, ?, ?)", rows
+            f"INSERT INTO {entity_class}(norm, family, surface, parent) VALUES (?, ?, ?, ?)", rows
         )
         if entity_class in FTS_CLASSES:
             sync_title_fts(conn, entity_class)
@@ -147,8 +162,12 @@ def _fts_candidates(state: _IndexState, stems: list[str]) -> list[str]:
         stems: Non-empty stem list from ``search._fts_query_terms``.
 
     Returns:
-        Up to ``_CANDIDATE_LIMIT`` distinct normalized titles, ordered by
-        FTS5 relevance (see the ``ORDER BY bm25`` note below).
+        Candidate KEYS in FTS5 relevance order (see the ``ORDER BY bm25`` note
+        below), from up to ``_CANDIDATE_LIMIT`` matching rows: each row's full
+        ``norm`` and, when different, its ``family`` key (the title without a
+        trailing "(…)"/"[…]" tail — ADR-024). Scoring both lets a question that
+        includes the tail match the exact title, and one that leaves it out match
+        the family.
     """
     # Each stem becomes a quoted FTS5 prefix term ("term"*). Quoting protects
     # against stems that happen to collide with FTS5 query-syntax keywords
@@ -187,14 +206,19 @@ def _fts_candidates(state: _IndexState, stems: list[str]) -> list[str]:
     # see "TWO SEPARATE CORPORA" in the module docstring for why course and
     # book each get their own 500-slot budget instead of sharing one.
     cursor = state.conn.execute(
-        f"SELECT DISTINCT c.norm "
+        f"SELECT DISTINCT c.norm, c.family "
         f"FROM {fts_table} f JOIN {table} c ON c.id = f.rowid "
         f"WHERE {fts_table} MATCH ? "
         f"ORDER BY bm25({fts_table}) "
         f"LIMIT ?",
         (fts_query, _CANDIDATE_LIMIT),
     )
-    return [row["norm"] for row in cursor.fetchall()]
+    keys: dict[str, None] = {}  # ordered set: keeps bm25 order, drops repeats
+    for row in cursor.fetchall():
+        keys[row["norm"]] = None
+        if row["family"] is not None:  # NULL = the title has no tail (schema.family_column)
+            keys[row["family"]] = None
+    return list(keys)
 
 
 def _all_norms(state: _IndexState) -> list[str]:
@@ -229,9 +253,16 @@ def _lookup_surfaces_and_parents(state: _IndexState, norm: str) -> tuple[list[st
     institutions — and every distinct ``(surface, parent)`` pair must survive
     so ``parents`` reflects all of them.
 
+    A key matches a row through its ``norm`` OR its ``family`` column: the key
+    "γεωφυσικη" returns ΓΕΩΦΥΣΙΚΗ, ΓΕΩΦΥΣΙΚΗ (Θ) and ΓΕΩΦΥΣΙΚΗ (Ε) — the family,
+    as a question that leaves the tail out means — while "γεωφυσικη θ" returns
+    only the (Θ) title (ADR-024). ``family`` is NULL for titles without a tail
+    and for every university/department row, and NULL never equals the key, so
+    for those this is the plain norm lookup it always was.
+
     Args:
         state: An ``_IndexState`` wrapping an open connection.
-        norm: A normalized name/title present in ``state.table``.
+        norm: A key (full ``norm`` or ``family``) present in ``state.table``.
 
     Returns:
         ``(surface_forms, parents)`` — ``surface_forms`` sorted, ``parents``
@@ -239,8 +270,9 @@ def _lookup_surfaces_and_parents(state: _IndexState, norm: str) -> tuple[list[st
         for every class except ``department``).
     """
     rows = state.conn.execute(
-        f"SELECT DISTINCT surface, parent FROM {state.table} WHERE norm = ? ORDER BY surface",
-        (norm,),
+        f"SELECT DISTINCT surface, parent FROM {state.table} "
+        f"WHERE norm = ? OR family = ? ORDER BY surface",
+        (norm, norm),
     ).fetchall()
     surface_forms = [r["surface"] for r in rows]
     parents = sorted({r["parent"] for r in rows if r["parent"] is not None})

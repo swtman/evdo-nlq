@@ -559,8 +559,83 @@ def test_latin_marker_query_finds_greek_marker_title() -> None:
 
 def test_greek_marker_query_finds_latin_marker_title() -> None:
     results = rank_titles_from_corpus(SERIES_CORPUS, "αρχιτεκτονικη υπολογιστων Ι", k=1)
-    assert results[0].normalized_title == "αρχιτεκτονικη υπολογιστων i"
+    # Since ADR-024 the fold lives in the stored key: the Latin "I" title is keyed
+    # with a Greek "ι", and its raw surface (Latin) is what VALUES will bind.
+    assert results[0].normalized_title == "αρχιτεκτονικη υπολογιστων ι"
+    assert results[0].surface_forms == ["Αρχιτεκτονική Υπολογιστών I"]
     assert results[0].score == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Symmetric title keys + optional tail (ADR-024)
+# ---------------------------------------------------------------------------
+
+TAIL_CORPUS: dict[str, list[str]] = {
+    "γεωφυσικη": ["ΓΕΩΦΥΣΙΚΗ"],
+    "γεωφυσικη θ": ["ΓΕΩΦΥΣΙΚΗ  (Θ)"],
+    "γεωφυσικη ε": ["ΓΕΩΦΥΣΙΚΗ  (Ε)"],
+    "μουσικα συνολα ανεξαρτητη μελετη": ["ΜΟΥΣΙΚΑ ΣΥΝΟΛΑ-ΑΝΕΞΑΡΤΗΤΗ ΜΕΛΕΤΗ", "Μουσικά Σύνολα -Ανεξάρτητη Μελέτη"],
+    "music electronic": ["Music in Early Childhood [electronic resource]"],
+}
+
+
+def test_bare_title_finds_the_whole_family() -> None:
+    top = rank_titles_from_corpus(TAIL_CORPUS, "γεωφυσικη", k=3)[0]
+    assert top.score == pytest.approx(1.0)
+    assert set(top.surface_forms) == {"ΓΕΩΦΥΣΙΚΗ", "ΓΕΩΦΥΣΙΚΗ  (Θ)", "ΓΕΩΦΥΣΙΚΗ  (Ε)"}
+
+
+def test_tail_in_question_finds_exactly_that_title() -> None:
+    top = rank_titles_from_corpus(TAIL_CORPUS, "γεωφυσικη θ", k=3)[0]
+    assert top.score == pytest.approx(1.0)
+    assert top.surface_forms == ["ΓΕΩΦΥΣΙΚΗ  (Θ)"]
+
+
+def test_member_not_listed_again_after_its_family() -> None:
+    results = rank_titles_from_corpus(TAIL_CORPUS, "γεωφυσικη", k=3)
+    seen: list[str] = []
+    for r in results:
+        assert not set(r.surface_forms) <= set(seen), r.normalized_title
+        seen.extend(r.surface_forms)
+
+
+def test_punctuation_variants_share_one_key() -> None:
+    top = rank_titles_from_corpus(TAIL_CORPUS, "μουσικα συνολα ανεξαρτητη μελετη", k=1)[0]
+    assert top.score == pytest.approx(1.0)
+    assert len(top.surface_forms) == 2
+
+
+def test_bracketed_tail_kept_and_optional() -> None:
+    with_tail = rank_titles_from_corpus(TAIL_CORPUS, "music in early childhood electronic resource", k=1)[0]
+    without = rank_titles_from_corpus(TAIL_CORPUS, "music in early childhood", k=1)[0]
+    for r in (with_tail, without):
+        assert r.score == pytest.approx(1.0)
+        assert r.surface_forms == ["Music in Early Childhood [electronic resource]"]
+
+
+def test_real_db_titles_find_themselves() -> None:
+    """Regression guard on the committed entities.db: a title fed back as a
+    question finds itself (same function keys both sides — ADR-024). A fixed
+    sample of tailed/punctuated course titles, all measured failures before."""
+    from app.grounding import db
+    from app.grounding.normalize import title_key
+    from app.grounding.title_index import rank_titles
+
+    conn = db.get_connection()
+    try:
+        # the 30 lexically-first course surfaces that end in "(…)" or contain a
+        # hyphen inside a word — both groups failed often before ADR-024 (S23)
+        surfaces = [r["surface"] for r in conn.execute(
+            "SELECT DISTINCT surface FROM course "
+            "WHERE rtrim(surface) LIKE '%)' OR surface GLOB '*[^ ]-[^ ]*' "
+            "ORDER BY surface LIMIT 30")]
+    finally:
+        conn.close()
+    assert len(surfaces) == 30
+
+    for surface in surfaces:
+        m = rank_titles(title_key(surface), k=3, entity_class="course")
+        assert any(surface in r.surface_forms and r.score == pytest.approx(1.0) for r in m), surface
 
 
 def test_series_markers_are_not_fts_terms() -> None:

@@ -207,3 +207,49 @@ def test_is_series_marker_false_cases():
     # years and book codes are not series markers; ordinary words are not
     for tok in ("2022", "94700120", "123", "ε", "η", "ιστορια", "και", "ιιιιι", ""):
         assert not is_series_marker(tok), tok
+
+
+# ---------------------------------------------------------------------------
+# Title keys (branch fix/symmetric-title-normalization): one key function for
+# stored course/book titles AND for the question side (finding F18, decision C3).
+# ---------------------------------------------------------------------------
+
+from app.grounding.normalize import title_family, title_key  # noqa: E402
+
+
+def test_title_key_punctuation_becomes_space():
+    assert title_key("Μουσικά Σύνολα-Ανεξάρτητη Μελέτη") == "μουσικα συνολα ανεξαρτητη μελετη"
+    assert title_key("ΣΧΕΔΙΑΣΗ ΑΝΑΛΥΣΗ ΗΛ.ΚΥΚΛΩΜΑΤΩΝ ΜΕ Η/Υ") == "σχεδιαση αναλυση ηλ κυκλωματων με η υ"
+    # punctuation variants of the same title get the same key
+    assert title_key("Εισαγωγή στο Ισλάμ:Αραβικός Πολιτισμός Ι") == title_key(
+        "ΕΙΣΑΓΩΓΗ ΣΤΟ ΙΣΛΑΜ ΑΡΑΒΙΚΟΣ ΠΟΛΙΤΙΣΜΟΣ Ι")
+
+
+def test_title_key_keeps_digits_and_parenthetical_text():
+    assert title_key("ΚΤΗΜΑΤΟΛΟΓΙΟ 2020") == "κτηματολογιο 2020"
+    assert title_key("ΓΕΩΦΥΣΙΚΗ  (Θ)") == "γεωφυσικη θ"
+    # bracketed text is meaningful (an electronic edition) — kept, never removed
+    assert title_key("Genetics of Adaptation [electronic resource]") == \
+        "genetics of adaptation electronic resource"
+
+
+def test_title_key_folds_series_markers():
+    assert title_key("Αρχιτεκτονική Υπολογιστών I") == title_key("ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ Ι")
+
+
+def test_title_family_drops_only_the_trailing_tail():
+    assert title_family("ΓΕΩΦΥΣΙΚΗ  (Θ)") == "γεωφυσικη"
+    assert title_family("ΓΕΩΦΥΣΙΚΗ") == "γεωφυσικη"
+    assert title_family("Music in Early Childhood [electronic resource]") == "music in early childhood"
+    assert title_family("ΓΕΡΜΑΝΙΚΑ Ι (2019-2020)") == "γερμανικα ι"
+    # a leading parenthetical is not a tail
+    assert title_family("(ΠΑΛΑΙΟ ΠΡΟΓΡΑΜΜΑ) ΙΣΤΟΡΙΑ ΤΕΧΝΗΣ") == "παλαιο προγραμμα ιστορια τεχνησ"
+
+
+def test_title_family_never_empty():
+    assert title_family("(Θ)") == title_key("(Θ)") == "θ"
+
+
+def test_normalize_greek_unchanged_for_institutions():
+    # universities/departments keep the status-suffix stripping (ADR-020 measured on it)
+    assert normalize_greek("ΝΟΣΗΛΕΥΤΙΚΗΣ (ΔΙΔΥΜΟΤΕΙΧΟ)") == "νοσηλευτικησ"

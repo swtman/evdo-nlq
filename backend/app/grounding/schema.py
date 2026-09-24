@@ -106,10 +106,15 @@ def _title_ddl(name: str, *, fts: bool) -> str:
 CREATE TABLE IF NOT EXISTS {name} (
     id      INTEGER PRIMARY KEY,
     surface TEXT NOT NULL,   -- exact KG literal (evdx:title or evdx:name), for SPARQL VALUES
-    norm    TEXT NOT NULL,   -- normalize_greek(surface), what we search against
+    norm    TEXT NOT NULL,   -- search key: normalize.title_key(surface) for course/book,
+                             -- normalize_greek(surface) for university/department
+    family  TEXT,            -- course/book: normalize.title_family(surface) — the key
+                             -- without a trailing "(…)"/"[…]" (ADR-024) — stored ONLY
+                             -- when it differs from norm (see family_column); else NULL
     parent  TEXT              -- NULL except department: parent university's canonical name
 );
 CREATE INDEX IF NOT EXISTS {name}_norm_idx ON {name}(norm);
+CREATE INDEX IF NOT EXISTS {name}_family_idx ON {name}(family);
 """
     if not fts:
         return base
@@ -143,6 +148,19 @@ def create_schema(conn: sqlite3.Connection) -> None:
         conn: An open SQLite connection, either to a real file or `:memory:`.
     """
     conn.executescript(_SCHEMA_SQL)
+
+
+def family_column(norm: str, family: str) -> str | None:
+    """Value to store in the ``family`` column for one course/book row (ADR-024).
+
+    NULL unless the family key differs from the row's own ``norm`` — i.e. only
+    for titles that actually have a trailing "(…)"/"[…]" tail (~13% of course
+    surfaces). Storing it for every row duplicated ``norm`` and grew the
+    committed database by ~58%; lookups use ``norm = ? OR family = ?``, which a
+    NULL never matches, so behaviour is identical. Shared by the builder script
+    and the in-memory test fixture so the two can never disagree.
+    """
+    return family if family and family != norm else None
 
 
 def sync_title_fts(conn: sqlite3.Connection, table: str) -> None:
