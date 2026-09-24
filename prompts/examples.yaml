@@ -463,6 +463,7 @@ examples:
               VALUES ?code1 {102070469 13909}
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
+              ?c1 evdx:year 2022 .
               ?d evdx:hasCourse ?c1 .
             }
           }
@@ -475,6 +476,10 @@ examples:
     notes: >
       Department-level variant: FILTER NOT EXISTS checks that no other course
       offering ?c1 in the same outer department ?d uses the excluded books.
+      2026-09-24 gold fix: the exclusion now also requires ?c1 evdx:year 2022
+      ("το 2022" scopes both books; sibling ex-011 already had it). Without it
+      a department was excluded if it EVER used 102070469/13909 — 8 rows
+      instead of 10. See notes/investigations/title-linking/results/s27_manual_verdicts_v6_baseline.md.
 
   # ---------------------------------------------------------------------------
   # Q11 — set-difference-by-book (university)
@@ -605,6 +610,7 @@ examples:
               VALUES ?code1 {94700120}
               ?b1 evdx:hasCode ?code1 .
               ?c1 evdx:hasBook ?b1 .
+              ?c1 evdx:year 2022 .
               ?d evdx:hasCourse ?c1 .
             }
           }
@@ -614,7 +620,12 @@ examples:
     granularity: department
     comparison_mode: set
     few_shot_priority: 13
-    notes: "Department-level intersection. FILTER EXISTS checks some other course offering ?c1 in the same ?d."
+    notes: >
+      Department-level intersection. FILTER EXISTS checks some other course offering ?c1 in the same ?d.
+      2026-09-24 gold fix: the EXISTS check now also requires ?c1 evdx:year 2022
+      ("το 2022" scopes both books; sibling ex-014 already had it). Without it a
+      department counted if it EVER used 94700120 — 49 rows instead of 48. See
+      notes/investigations/title-linking/results/s27_manual_verdicts_v6_baseline.md.
 
   # ---------------------------------------------------------------------------
   # Q14 — set-intersection-by-book (university)
