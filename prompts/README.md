@@ -48,8 +48,8 @@ For the evaluation chapter of the thesis you will want to answer "did v2 actuall
 
 | Name | Latest version | Status |
 |---|---|---|
-| nl-to-sparql | v7 | **Candidate** (2026-09-25) — not yet active; production stays on v6 until a live A/B on the same golds. Rule 13 rewritten around the answer entity (level of NOT/BOTH conditions, row shape, year inside filters, integer codes) + a worked example that does not overlap the eval set. |
-| nl-to-sparql | v6 | **Active in production** (2026-09-24). Rule 16 treats matched titles as candidates, topic stems always present, `{few_shot_block}` restored (ADR-022). |
+| nl-to-sparql | v7 | **Active in production** (2026-09-25, ADR-027). Rule 13 rewritten around the answer entity (level of NOT/BOTH conditions, row shape, year inside filters, integer codes) + a worked example that does not overlap the eval set. Live A/B vs v6 on the same corrected golds: strict 9/20 vs 7/20, correct answers 16/20 vs 14/20. |
+| nl-to-sparql | v6 | Kept loadable for A/B (active 2026-09-24 → 2026-09-25). Rule 16 treats matched titles as candidates, topic stems always present, `{few_shot_block}` restored (ADR-022). |
 | nl-to-sparql | v5 | Kept loadable for A/B. Added `{grounding_hints}`; note it has **no** `{few_shot_block}` slot, so no few-shot examples reached the model while it was active. |
 | nl-to-sparql | v4 | Archived — schema-v2 rules + few-shot. |
 | nl-to-sparql | v3 | Archived. |
@@ -61,7 +61,7 @@ For the evaluation chapter of the thesis you will want to answer "did v2 actuall
 
 Gold example bank used by two consumers:
 
-1. **`backend/app/prompts/examples_loader.py`** — `select_few_shot(k)` picks one example per distinct `query_shape`, sorted by `few_shot_priority`, and the rendered block fills `{few_shot_block}` (production: k=8 into `nl-to-sparql-v6.md`; the eval harness uses k=6).
+1. **`backend/app/prompts/examples_loader.py`** — `select_few_shot(k)` picks one example per distinct `query_shape`, sorted by `few_shot_priority`, and the rendered block fills `{few_shot_block}` (production: k=8 into the prompt named by `PROMPT_VERSION`, currently `nl-to-sparql-v7.md`; the eval harness builds grounded prompts exactly as production does — ADR-025 — and keeps k=6 only for the legacy fixed prompts v2–v4).
 2. **`backend/scripts/eval.py`** — runs every non-`skip_eval` example through the pipeline and reports result-set match accuracy.
 
 Schema fields: `id`, `question_english`, `question_greek`, `gold_sparql`, `query_shape`, `granularity`, `comparison_mode`, `few_shot_priority` (optional, lower = higher priority), `skip_eval` (optional, excludes from eval metrics), `notes`.
