@@ -18,7 +18,7 @@ HOW TO RUN
 
 
 TODO: add auth/rate limiting before any public deployment. Currently any
-process on localhost can hit port 8000 and consume your API key quota.
+process on localhost can hit port 8001 and consume your API key quota.
 CORS only blocks browsers — it does not block curl or scripts.
 """
 

@@ -465,13 +465,13 @@ All animations respect `prefers-reduced-motion: reduce` — they are disabled fo
 ```typescript
 server: {
   proxy: {
-    '/query':     'http://localhost:8000',
-    '/providers': 'http://localhost:8000',
+    '/query':     'http://localhost:8001',
+    '/providers': 'http://localhost:8001',
   },
 }
 ```
 
-This means `fetch('/query/stream', ...)` in the browser actually hits `http://localhost:8000/query/stream` on the backend. Without this proxy the browser would get a CORS error. In production a real reverse proxy (nginx, Caddy) would handle this.
+This means `fetch('/query/stream', ...)` in the browser actually hits `http://localhost:8001/query/stream` on the backend. Without this proxy the browser would get a CORS error. In production a real reverse proxy (nginx, Caddy) would handle this.
 
 ---
 

@@ -6,10 +6,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/query': 'http://localhost:8000',
-      '/providers': 'http://localhost:8000',
-      '/sparql': 'http://localhost:8000',
-      '/entities': 'http://localhost:8000',
+      '/query': 'http://localhost:8001',
+      '/providers': 'http://localhost:8001',
+      '/sparql': 'http://localhost:8001',
+      '/entities': 'http://localhost:8001',
     },
   },
 })

@@ -22,7 +22,7 @@ COPY backend/app/ ./app/
 COPY prompts/ /prompts/
 
 # Expose the port uvicorn will listen on.
-EXPOSE 8000
+EXPOSE 8001
 
 # Run uvicorn directly (no reload — this is the production image).
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
