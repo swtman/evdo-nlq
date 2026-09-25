@@ -143,7 +143,11 @@ function BrowseModal({
   const filtered = useMemo(() => {
     const q = foldGreek(query.trim())
     if (!q) return results
-    return results.filter(r => foldGreek(r.title).includes(q))
+    // Match the exact department names too: a grouped result is titled by the
+    // shared name, so "λαρισα" must still find "… (ΛΑΡΙΣΑ)" (ADR-029).
+    return results.filter(
+      r => foldGreek(r.title).includes(q) || (r.variants ?? []).some(v => foldGreek(v.name).includes(q)),
+    )
   }, [results, query])
 
   return (
@@ -173,9 +177,41 @@ function BrowseModal({
 }
 
 // ── Department row rendering — badge inline, full parent names in the modal ─
+//
+// A department result can group several EXACT names that differ only by a
+// trailing "(…)" — ΝΟΣΗΛΕΥΤΙΚΗΣ (7 universities), ΝΟΣΗΛΕΥΤΙΚΗΣ
+// (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ) (ΔΠΘ), … — because search matches on the name without the
+// tail. Showing one name with every university implied that ΔΠΘ's department
+// is called "ΝΟΣΗΛΕΥΤΙΚΗΣ", and hid names such as "… (ΛΑΡΙΣΑ)" entirely. So
+// with several variants the row shows the shared name as a header and each
+// exact name below it with ITS universities (ADR-029); with one, the row
+// looks exactly as before.
+
+/** True when the result groups more than one exact department name. */
+function hasVariants(r: EntitySearchResult): boolean {
+  return (r.variants?.length ?? 0) > 1
+}
 
 function DeptInlineItem(r: EntitySearchResult) {
   const parents = r.parents ?? []
+  if (hasVariants(r)) {
+    return (
+      <span className="od-list-item-detail">
+        <span className="od-list-item--dept">
+          <span className="od-list-item-name">{r.title}</span>
+          <span className="od-list-item-badge">{t.ontologyDeptVariantsNote(r.variants!.length)}</span>
+        </span>
+        <ul className="od-dept-variants">
+          {r.variants!.map(v => (
+            <li key={v.name} className="od-list-item--dept">
+              <span className="od-list-item-name">{v.name}</span>
+              <span className="od-list-item-badge">{t.ontologyDeptSharedNote(v.parents.length)}</span>
+            </li>
+          ))}
+        </ul>
+      </span>
+    )
+  }
   return (
     <span className="od-list-item--dept">
       <span className="od-list-item-name">{r.title}</span>
@@ -188,6 +224,23 @@ function DeptInlineItem(r: EntitySearchResult) {
 
 function DeptModalItem(r: EntitySearchResult) {
   const parents = r.parents ?? []
+  if (hasVariants(r)) {
+    return (
+      <span className="od-list-item-detail">
+        <span className="od-list-item-name">{r.title}</span>
+        <ul className="od-dept-variants">
+          {r.variants!.map(v => (
+            <li key={v.name} className="od-list-item-detail">
+              <span className="od-list-item-name">{v.name}</span>
+              <span className="od-list-item-parents">
+                {t.ontologyDeptParentsLabel}: {v.parents.join(', ')}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </span>
+    )
+  }
   return (
     <span className="od-list-item-detail">
       <span className="od-list-item-name">{r.title}</span>

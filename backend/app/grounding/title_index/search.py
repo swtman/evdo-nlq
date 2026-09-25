@@ -118,7 +118,7 @@ def _acronym_match(state: _IndexState, q_norm: str) -> TitleMatch | None:
     if canonical is None:
         return None
     target_norm = normalize_greek(canonical)
-    surface_forms, parents = _lookup_surfaces_and_parents(state, target_norm)
+    surface_forms, parents, variants = _lookup_surfaces_and_parents(state, target_norm)
     if not surface_forms:
         return None
     return TitleMatch(
@@ -127,6 +127,7 @@ def _acronym_match(state: _IndexState, q_norm: str) -> TitleMatch | None:
         surface_forms=surface_forms,
         entity_class=state.table,
         parents=parents,
+        variants=variants,
     )
 
 
@@ -189,7 +190,7 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
                 break
             if not _clears_floor(score, policy):
                 continue
-            surface_forms, parents = _lookup_surfaces_and_parents(state, norm)
+            surface_forms, parents, variants = _lookup_surfaces_and_parents(state, norm)
             if surface_forms and set(surface_forms) <= covered:
                 continue
             covered.update(surface_forms)
@@ -200,6 +201,7 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
                     surface_forms=surface_forms,
                     entity_class=state.table,
                     parents=parents,
+                    variants=variants,
                 )
             )
 
@@ -345,7 +347,7 @@ def list_titles(*, entity_class: str, limit: int = 1000) -> list[TitleMatch]:
         ).fetchall()
         results: list[TitleMatch] = []
         for row in rows:
-            surface_forms, parents = _lookup_surfaces_and_parents(state, row["norm"])
+            surface_forms, parents, variants = _lookup_surfaces_and_parents(state, row["norm"])
             results.append(
                 TitleMatch(
                     normalized_title=row["norm"],
@@ -353,6 +355,7 @@ def list_titles(*, entity_class: str, limit: int = 1000) -> list[TitleMatch]:
                     surface_forms=surface_forms,
                     entity_class=entity_class,
                     parents=parents,
+                    variants=variants,
                 )
             )
         return results

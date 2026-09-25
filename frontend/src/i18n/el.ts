@@ -181,7 +181,11 @@ export const t = {
   ontologyModalResults: (n: number): string => `${n} αποτελέσματα`,
   ontologyBookExampleBtn: 'δείτε παράδειγμα',
   ontologyExampleTitle: (cls: string): string => `Παράδειγμα οντότητας ${cls}`,
-  ontologyDeptSharedNote: (n: number): string => `${n} ιδρύματα`,
+  ontologyDeptSharedNote: (n: number): string => `${n} ${n === 1 ? 'ίδρυμα' : 'ιδρύματα'}`,
+  // Badge on a department result that groups several exact names (e.g.
+  // ΝΟΣΗΛΕΥΤΙΚΗΣ and ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)) — each listed below it
+  // with its own universities (ADR-029).
+  ontologyDeptVariantsNote: (n: number): string => `${n} ονομασίες`,
   // Label prefixing the parent-university list on a department row inside
   // the "δείτε τα όλα" browse modal (e.g. "Ιδρύματα: ΑΠΘ, ΠΑΝΕΠΙΣΤΗΜΙΟ
   // ΠΕΙΡΑΙΩΣ") — the inline search card only shows the ontologyDeptSharedNote

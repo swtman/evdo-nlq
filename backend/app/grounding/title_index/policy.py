@@ -82,6 +82,14 @@ class TitleMatch:
         recorded parent — a department shared across several universities
         (joint programmes, or simply a common name like "ΠΛΗΡΟΦΟΡΙΚΗΣ") has
         more than one entry. Always ``[]`` for course/book/university.
+    variants : dict[str, list[str]]
+        ``entity_class == "department"`` only: each distinct exact name in
+        this group → its own sorted parent universities. The group key drops a
+        trailing "(…)", so one group can hold several real names —
+        ``ΝΟΣΗΛΕΥΤΙΚΗΣ`` (7 universities), ``ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)``
+        (ΔΠΘ), … — and the flat ``parents`` list cannot say which name belongs
+        to which university. Keys in ``surface_forms`` order. Always ``{}``
+        for course/book/university (ADR-029).
     """
 
     normalized_title: str
@@ -89,6 +97,7 @@ class TitleMatch:
     surface_forms: list[str] = field(default_factory=list)
     entity_class: str = "course"
     parents: list[str] = field(default_factory=list)
+    variants: dict[str, list[str]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

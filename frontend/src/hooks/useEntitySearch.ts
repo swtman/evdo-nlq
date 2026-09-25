@@ -36,11 +36,26 @@ export const ENTITY_SEARCH_LIMIT = 50
 
 export type EntityClass = 'course' | 'book' | 'university' | 'department'
 
+/** One exact department name inside a result, with the universities that have it. */
+export interface DepartmentVariant {
+  /** Exact KG name, e.g. "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)" — what a query must use. */
+  name: string
+  parents: string[]
+}
+
 export interface EntitySearchResult {
   title: string
   score: number
   /** Parent university name(s) — populated only for class='department'. */
   parents?: string[]
+  /**
+   * class='department' only: every exact name grouped into this result, each
+   * with its own universities. A result groups names that differ only by a
+   * trailing "(…)" (ΝΟΣΗΛΕΥΤΙΚΗΣ, ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ), …); with
+   * several, `title` is the shared name and these list the real ones
+   * (ADR-029). Absent in the offline sample.
+   */
+  variants?: DepartmentVariant[]
 }
 
 interface EntitySearchState {

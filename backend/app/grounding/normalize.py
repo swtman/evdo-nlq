@@ -32,6 +32,22 @@ import unicodedata
 _STATUS_SUFFIX_RE = re.compile(r" \([^)]+\)$")
 
 
+def drop_status_suffix(text: str) -> str:
+    """Remove ONE trailing " (…)" annotation, keeping case and accents.
+
+    Step 1 of ``normalize_greek``, exposed on its own for display: the
+    ΟΝΤΟΛΟΓΙΑ department card is titled by the name its group key stands for
+    ("ΝΟΣΗΛΕΥΤΙΚΗΣ" for ΝΟΣΗΛΕΥΤΙΚΗΣ, ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ), …), with
+    the exact names listed under it (ADR-029). One definition, so the header
+    can never disagree with the key.
+
+    Examples:
+        >>> drop_status_suffix("ΠΡΟΓΡΑΜΜΑ ΣΠΟΥΔΩΝ ΝΟΣΗΛΕΥΤΙΚΗΣ (ΛΑΜΙΑ)")
+        'ΠΡΟΓΡΑΜΜΑ ΣΠΟΥΔΩΝ ΝΟΣΗΛΕΥΤΙΚΗΣ'
+    """
+    return _STATUS_SUFFIX_RE.sub("", text)
+
+
 def normalize_greek(text: str, *, strip_status_suffix: bool = True) -> str:
     """Normalize a Greek string to an accent-free, lowercase, whitespace-collapsed form.
 
@@ -62,7 +78,7 @@ def normalize_greek(text: str, *, strip_status_suffix: bool = True) -> str:
 
     # Step 1 — strip trailing parenthetical status suffix (KG artifact).
     if strip_status_suffix:
-        text = _STATUS_SUFFIX_RE.sub("", text)
+        text = drop_status_suffix(text)
 
     # Step 2 — NFD decomposition so combining diacritics become separate code points.
     text = unicodedata.normalize("NFD", text)

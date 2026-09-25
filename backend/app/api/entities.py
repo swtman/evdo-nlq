@@ -45,10 +45,27 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.grounding.normalize import drop_status_suffix
 from app.grounding.schema import LISTABLE_CLASSES, TITLE_CLASSES
-from app.grounding.title_index import list_titles, rank_titles
+from app.grounding.title_index import TitleMatch, list_titles, rank_titles
 
 router = APIRouter()
+
+
+class DepartmentVariant(BaseModel):
+    """One exact department name inside a result, with its own universities.
+
+    Fields
+    ------
+    name : str
+        The exact KG name (whitespace collapsed for display only), e.g.
+        "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)" — the string a SPARQL query must use.
+    parents : list[str]
+        The universities that have a department with exactly this name.
+    """
+
+    name: str
+    parents: list[str]
 
 
 class EntitySearchResult(BaseModel):
@@ -59,7 +76,9 @@ class EntitySearchResult(BaseModel):
     title : str
         A display-ready surface form of the matched entity (the mixed-case
         accented KG variant when one exists, otherwise whatever form is
-        stored). See ``_pick_display_surface``.
+        stored). See ``_pick_display_surface``. For a department result that
+        groups several exact names, the shared name without its trailing
+        "(…)" — see ``_result``.
     score : float
         Similarity score in [0, 1], from ``TitleMatch.score``. Higher means
         a closer match to the query phrase. Always ``1.0`` for
@@ -68,12 +87,20 @@ class EntitySearchResult(BaseModel):
         Parent university name(s) — populated only for
         ``class=department`` results; ``[]`` for every other class. A
         department name shared by several universities (a common name, or a
-        joint programme) has more than one parent.
+        joint programme) has more than one parent. Kept for compatibility;
+        ``variants`` says which university has which exact name.
+    variants : list[DepartmentVariant]
+        ``class=department`` only: every exact name in this result, each with
+        its own universities, in name order. ``[]`` for every other class.
+        Needed because a result groups names that differ only by a trailing
+        "(…)" — ΝΟΣΗΛΕΥΤΙΚΗΣ, ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ), … — and showing
+        one of them hid the others (ADR-029).
     """
 
     title: str
     score: float
     parents: list[str] = []
+    variants: list[DepartmentVariant] = []
 
 
 class EntitySearchResponse(BaseModel):
@@ -115,6 +142,27 @@ def _pick_display_surface(surface_forms: list[str]) -> str:
     return " ".join(surface_forms[0].split())
 
 
+def _result(m: TitleMatch) -> EntitySearchResult:
+    """Build one API result from a ``TitleMatch`` (shared by search and list).
+
+    Departments carry ``variants`` — every exact name with its own
+    universities. When a result groups SEVERAL names, its title is the shared
+    name without the trailing "(…)" (``normalize.drop_status_suffix``, the
+    same rule that formed the group key), so the card header reads
+    "ΠΡΟΓΡΑΜΜΑ ΣΠΟΥΔΩΝ ΝΟΣΗΛΕΥΤΙΚΗΣ" above "… (ΛΑΜΙΑ)" and "… (ΛΑΡΙΣΑ)"
+    instead of one of them hiding the other. A single name keeps its exact
+    form as the title — nothing is shortened when nothing is grouped.
+    """
+    title = _pick_display_surface(m.surface_forms)
+    if len(m.variants) > 1:
+        title = drop_status_suffix(title)
+    variants = [
+        DepartmentVariant(name=" ".join(name.split()), parents=parents)
+        for name, parents in m.variants.items()
+    ]
+    return EntitySearchResult(title=title, score=m.score, parents=m.parents, variants=variants)
+
+
 @router.get("/entities/search", response_model=EntitySearchResponse)
 def search_entities(
     q: str = Query(..., min_length=1, description="Search phrase, Greek or English"),
@@ -141,12 +189,7 @@ def search_entities(
         )
 
     matches = rank_titles(q, k=limit, entity_class=entity_class)
-    results = [
-        EntitySearchResult(
-            title=_pick_display_surface(m.surface_forms), score=m.score, parents=m.parents
-        )
-        for m in matches
-    ]
+    results = [_result(m) for m in matches]
     return EntitySearchResponse(query=q, results=results, total=len(results))
 
 
@@ -181,10 +224,5 @@ def list_entities(
         )
 
     matches = list_titles(entity_class=entity_class, limit=limit)
-    results = [
-        EntitySearchResult(
-            title=_pick_display_surface(m.surface_forms), score=m.score, parents=m.parents
-        )
-        for m in matches
-    ]
+    results = [_result(m) for m in matches]
     return EntitySearchResponse(query="", results=results, total=len(results))

@@ -244,7 +244,9 @@ def _all_norms(state: _IndexState) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _lookup_surfaces_and_parents(state: _IndexState, norm: str) -> tuple[list[str], list[str]]:
+def _lookup_surfaces_and_parents(
+    state: _IndexState, norm: str
+) -> tuple[list[str], list[str], dict[str, list[str]]]:
     """Fetch every ``(surface, parent)`` row for one normalized name.
 
     ``DISTINCT`` matters here for reasons beyond deduplicating identical
@@ -265,9 +267,12 @@ def _lookup_surfaces_and_parents(state: _IndexState, norm: str) -> tuple[list[st
         norm: A key (full ``norm`` or ``family``) present in ``state.table``.
 
     Returns:
-        ``(surface_forms, parents)`` — ``surface_forms`` sorted, ``parents``
-        sorted and deduplicated with ``None`` entries dropped (always ``[]``
-        for every class except ``department``).
+        ``(surface_forms, parents, variants)`` — ``surface_forms`` sorted,
+        ``parents`` sorted and deduplicated with ``None`` entries dropped
+        (always ``[]`` for every class except ``department``), and
+        ``variants``: each distinct surface → its own sorted parents, built
+        from the same rows so the (name, university) pairing survives
+        (department only; ``{}`` otherwise — ADR-029).
     """
     rows = state.conn.execute(
         f"SELECT DISTINCT surface, parent FROM {state.table} "
@@ -276,4 +281,9 @@ def _lookup_surfaces_and_parents(state: _IndexState, norm: str) -> tuple[list[st
     ).fetchall()
     surface_forms = [r["surface"] for r in rows]
     parents = sorted({r["parent"] for r in rows if r["parent"] is not None})
-    return surface_forms, parents
+    variants: dict[str, list[str]] = {}
+    for r in rows:
+        if r["parent"] is not None:
+            variants.setdefault(r["surface"], []).append(r["parent"])
+    variants = {surface: sorted(set(ps)) for surface, ps in variants.items()}
+    return surface_forms, parents, variants

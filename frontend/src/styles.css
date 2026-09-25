@@ -2149,6 +2149,24 @@ table.results-table tbody tr:nth-child(n+11) {
   line-height: 1.35;
 }
 
+/* Exact names grouped under one department result (EntitySpotlights'
+   DeptInlineItem / DeptModalItem, ADR-029): an indented sub-list under the
+   shared-name header, each exact name with its own universities. */
+.od-dept-variants {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0 0 0 10px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.od-dept-variants > li {
+  font-size: 0.95em;
+  color: var(--ink-soft);
+}
+
 .od-list-empty {
   font-family: var(--font-mono);
   font-size: 11px;
