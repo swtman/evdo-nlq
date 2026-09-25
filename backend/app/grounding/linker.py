@@ -28,15 +28,18 @@ WHY THREE STAGES?
 DEDUPLICATION
 -------------
 It is possible for the same canonical label to appear in multiple stages (e.g.
-an exact university match that also fires a fuzzy university match, or two
-department entries with the same canonical label from different indices).  We
-keep the entry with the highest score and deduplicate by ``canonical_label``
-before returning.
+an exact university match that also fires a fuzzy university match).  We keep the entry with the
+highest stage priority per ``entity_key`` — the (label, parent university)
+pair — before returning. The key includes the parent because department
+names are NOT unique: the name "ΝΟΣΗΛΕΥΤΙΚΗΣ" belongs to 20 departments at 19
+universities (under 5 labels), and each of them is kept (ADR-028).
 
 RETURN CONTRACT
 ---------------
 - Returns ``[]`` for empty input or when nothing scores above ``FUZZY_THRESHOLD``.
-- All returned ``ResolvedEntity`` objects have distinct ``canonical_label`` values.
+- All returned ``ResolvedEntity`` objects have distinct (``canonical_label``,
+  ``parent_university``) pairs; the same department label may appear once per
+  university that has it.
 - ``parent_university`` is ``None`` for university entities and a non-empty string
   for department entities.
 - ``score`` is exactly ``1.0`` for "acronym" and "exact" methods; it is the raw
@@ -160,12 +163,26 @@ def _get_normalized_acronym_map() -> dict[str, str]:
 _STAGE_PRIORITY: dict[str, int] = {"acronym": 0, "exact": 1, "fuzzy": 2}
 
 
-def _deduplicate(candidates: list[ResolvedEntity]) -> list[ResolvedEntity]:
-    """Deduplicate by ``canonical_label``, keeping the highest-priority entry.
+def entity_key(entity: ResolvedEntity) -> tuple[str, str | None]:
+    """Identity of a resolved entity: its label AND its parent university.
 
-    When the same canonical label appears from multiple resolution stages
-    (e.g. an exact university hit and then a fuzzy hit for the same label),
-    only the entry with the highest stage priority is kept.
+    A department is a (label, university) pair, and labels are not unique:
+    the label "ΝΟΣΗΛΕΥΤΙΚΗΣ" alone exists at 7 universities. Keying on the label alone
+    collapsed all of them onto one arbitrary university (evidence S11/S28:
+    the named university survived in 135/548 questions) — ADR-028.
+    Universities have ``parent_university=None``, so for them this is just
+    the label.
+    """
+    return (entity.canonical_label, entity.parent_university)
+
+
+def _deduplicate(candidates: list[ResolvedEntity]) -> list[ResolvedEntity]:
+    """Deduplicate by ``entity_key`` (label + parent), keeping the highest-priority entry.
+
+    When the same entity appears from multiple resolution stages (e.g. an
+    exact university hit and then a fuzzy hit for the same label), only the
+    entry with the highest stage priority is kept. The same label at two
+    different universities is two entities and both are kept.
 
     See ``_STAGE_PRIORITY`` for the ordering rationale.
 
@@ -175,20 +192,21 @@ def _deduplicate(candidates: list[ResolvedEntity]) -> list[ResolvedEntity]:
                     then fuzzy) for the priority logic to work correctly.
 
     Returns:
-        Deduplicated list preserving the highest-priority entry per label,
+        Deduplicated list preserving the highest-priority entry per key,
         in insertion order of first occurrence.
     """
 
-    seen: dict[str, ResolvedEntity] = {}
+    seen: dict[tuple[str, str | None], ResolvedEntity] = {}
     for entity in candidates:
-        if entity.canonical_label not in seen:
-            seen[entity.canonical_label] = entity
+        key = entity_key(entity)
+        if key not in seen:
+            seen[key] = entity
         else:
-            existing = seen[entity.canonical_label]
+            existing = seen[key]
             # Keep the entry with lower priority number (higher semantic confidence).
             # Within the same priority, keep the first occurrence (already in ``seen``).
             if _STAGE_PRIORITY[entity.match_method] < _STAGE_PRIORITY[existing.match_method]:
-                seen[entity.canonical_label] = entity
+                seen[key] = entity
     return list(seen.values())
 
 
@@ -280,10 +298,12 @@ def _stage3_fuzzy(normalized_mention: str) -> list[ResolvedEntity]:
         normalized_mention: The user mention after ``normalize_greek``.
 
     Returns:
-        List of ``ResolvedEntity`` objects (at most one university and one
-        department) that score above ``FUZZY_THRESHOLD``.  May be empty.
-        Note: ``extractOne`` returns only the single best match per list, so
-        this stage returns at most 2 results (best university + best department).
+        List of ``ResolvedEntity`` objects that score above
+        ``FUZZY_THRESHOLD``.  May be empty.  ``extractOne`` picks the single
+        best university and the single best department LABEL; the department
+        is then expanded to every (label, university) pair sharing that
+        normalized label, so the result holds at most one university plus
+        one entity per university with that department.
     """
     results: list[ResolvedEntity] = []
 
@@ -326,18 +346,21 @@ def _stage3_fuzzy(normalized_mention: str) -> list[ResolvedEntity]:
         score_cutoff=FUZZY_THRESHOLD,
     )
     if best_dept is not None:
-        _matched_norm, _score, idx = best_dept
-        canonical_dept = normalized_depts[idx][1]
-        parent_uni = normalized_depts[idx][2]
-        results.append(
-            ResolvedEntity(
-                canonical_label=canonical_dept,
-                entity_type="department",
-                parent_university=parent_uni,
-                match_method="fuzzy",
-                score=float(_score),
+        matched_norm, _score, _idx = best_dept
+        # ``extractOne`` returns ONE triple, but the best normalized label is
+        # usually shared: "νοσηλευτικησ" is the key of 20 (label, university)
+        # pairs at 19 universities. Expand to all of them, exactly as the exact stage does, so a
+        # fuzzy mention does not pick one university arbitrarily (ADR-028).
+        for dept_entry in get_department_index()[matched_norm]:
+            results.append(
+                ResolvedEntity(
+                    canonical_label=dept_entry["department"],
+                    entity_type="department",
+                    parent_university=dept_entry["university"],
+                    match_method="fuzzy",
+                    score=float(_score),
+                )
             )
-        )
 
     return results
 
@@ -363,8 +386,9 @@ def resolve_mention(mention: str) -> list[ResolvedEntity]:
                  or whitespace-only strings return ``[]`` immediately.
 
     Returns:
-        A list of ``ResolvedEntity`` objects, deduplicated by ``canonical_label``
-        (highest score kept when the same label appears in multiple stages).
+        A list of ``ResolvedEntity`` objects, deduplicated by ``entity_key``
+        (label + parent university; the highest-priority stage is kept when
+        the same entity appears in multiple stages).
         Returns ``[]`` if no stage produces a result above ``FUZZY_THRESHOLD``,
         or if the input is empty/whitespace.
 
@@ -389,5 +413,5 @@ def resolve_mention(mention: str) -> list[ResolvedEntity]:
     candidates.extend(_stage2_exact(normalized))
     candidates.extend(_stage3_fuzzy(normalized))
 
-    # Deduplicate by canonical_label, keeping the highest-score entry per label.
+    # Deduplicate by (label, parent), keeping the highest-priority entry per key.
     return _deduplicate(candidates)

@@ -1,0 +1,469 @@
+# Department ↔ university eval set (title-linking plan, branch 3; ADR-028).
+#
+# Eval-only gold file — NOT a few-shot bank. Run with
+#   uv run python scripts/eval.py --examples-file ../prompts/eval-departments.yaml
+# Production few-shot examples still come from prompts/examples.yaml, so nothing
+# here can leak into the prompt.
+#
+# Purpose: an answer-level before/after check of branch 3 (decision 8). Every
+# question names a department whose EXACT label exists at several universities:
+#   dept-named-*  — asked at a university that is NOT the alphabetically first
+#                   one with that label. Before branch 3 the hint kept only the
+#                   first, so for these 12 it named a different university
+#                   than the question did.
+#   dept-absent-* — the university has no department with that name (gold 0,
+#                   negative existence): the hint must not make the model
+#                   borrow another university's department.
+#   dept-bare-*   — no university named; labels with a single surface form (no
+#                   "(…)" variants), so "how many universities" is unambiguous.
+#                   Before branch 3 the hint listed one of them.
+# Counts, not lists, so presentation (column order, grouping) cannot decide a
+# pass — every item is comparison_mode: scalar.
+#
+# Data: candidates and gold numbers from S29
+# (notes/investigations/title-linking/results/s29_dept_course_counts.txt,
+# data/dept_course_counts_2022.json, GraphDB 2026-09-25). Generated, not real
+# user questions (decision 3 limitation).
+
+version: 1
+examples:
+  - id: dept-named-01
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Οικονομικών Επιστημών του Πανεπιστημίου Πελοποννήσου;
+    question_english: How many courses did the Department of Economics of the University of the Peloponnese have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΛΟΠΟΝΝΗΣΟΥ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΟΙΚΟΝΟΜΙΚΩΝ ΕΠΙΣΤΗΜΩΝ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 11 universities; gold 71 (S29).
+
+  - id: dept-named-02
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Ηλεκτρολόγων Μηχανικών και Μηχανικών Υπολογιστών του Πολυτεχνείου Κρήτης;
+    question_english: How many courses did the Department of Electrical and Computer Engineering of the Technical University of Crete have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΟΛΥΤΕΧΝΕΙΟ ΚΡΗΤΗΣ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΗΛΕΚΤΡΟΛΟΓΩΝ ΜΗΧΑΝΙΚΩΝ ΚΑΙ ΜΗΧΑΝΙΚΩΝ ΥΠΟΛΟΓΙΣΤΩΝ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 8 universities; gold 86 (S29).
+
+  - id: dept-named-03
+    question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Φυσικής του Πανεπιστημίου Πατρών το 2022;
+    question_english: How many courses did the Department of Physics of the University of Patras offer in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΑΤΡΩΝ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΦΥΣΙΚΗΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 8 universities; gold 90 (S29).
+
+  - id: dept-named-04
+    question_greek: Πόσα μαθήματα είχε το 2022 το Παιδαγωγικό Τμήμα Δημοτικής Εκπαίδευσης του Πανεπιστημίου Κρήτης;
+    question_english: How many courses did the Department of Primary Education of the University of Crete have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΚΡΗΤΗΣ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΠΑΙΔΑΓΩΓΙΚΟ ΔΗΜΟΤΙΚΗΣ ΕΚΠΑΙΔΕΥΣΗΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 8 universities; gold 99 (S29). Natural word order puts "Τμήμα" inside the name.
+
+  - id: dept-named-05
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Νοσηλευτικής του Πανεπιστημίου Πελοποννήσου;
+    question_english: How many courses did the Department of Nursing of the University of the Peloponnese have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΛΟΠΟΝΝΗΣΟΥ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΝΟΣΗΛΕΥΤΙΚΗΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 7 universities (the name, with "(…)" variants, at 19); gold 55 (S29).
+
+  - id: dept-named-06
+    question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Πληροφορικής του ΠΑΠΕΙ το 2022;
+    question_english: How many courses did the Department of Informatics of the University of Piraeus offer in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΠΛΗΡΟΦΟΡΙΚΗΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 7 universities; gold 98 (S29). University as acronym.
+
+  - id: dept-named-07
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Ψυχολογίας του Παντείου Πανεπιστημίου;
+    question_english: How many courses did the Department of Psychology of Panteion University have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΤΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΚΟΙΝΩΝΙΚΩΝ ΚΑΙ ΠΟΛΙΤΙΚΩΝ ΕΠΙΣΤΗΜΩΝ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΨΥΧΟΛΟΓΙΑΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 6 universities; gold 99 (S29).
+
+  - id: dept-named-08
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Νομικής του ΕΚΠΑ;
+    question_english: How many courses did the School of Law of the National and Kapodistrian University of Athens have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΕΘΝΙΚΟ & ΚΑΠΟΔΙΣΤΡΙΑΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΝΟΜΙΚΗΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 3 universities; gold 94 (S29). University as acronym.
+
+  - id: dept-named-09
+    question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Κοινωνικής Εργασίας του ΠΑΔΑ το 2022;
+    question_english: How many courses did the Department of Social Work of the University of West Attica offer in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΔΥΤΙΚΗΣ ΑΤΤΙΚΗΣ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΚΟΙΝΩΝΙΚΗΣ ΕΡΓΑΣΙΑΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 3 universities; gold 73 (S29). University as acronym.
+
+  - id: dept-named-10
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Μουσικών Σπουδών του Πανεπιστημίου Ιωαννίνων;
+    question_english: How many courses did the Department of Music Studies of the University of Ioannina have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΙΩΑΝΝΙΝΩΝ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΜΟΥΣΙΚΩΝ ΣΠΟΥΔΩΝ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 4 universities; gold 144 (S29).
+
+  - id: dept-named-11
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Γεωγραφίας του Χαροκοπείου Πανεπιστημίου;
+    question_english: How many courses did the Department of Geography of Harokopio University have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΧΑΡΟΚΟΠΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΓΕΩΓΡΑΦΙΑΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 2 universities; gold 73 (S29).
+
+  - id: dept-named-12
+    question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Κτηνιατρικής του Πανεπιστημίου Θεσσαλίας το 2022;
+    question_english: How many courses did the Department of Veterinary Medicine of the University of Thessaly offer in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣΣΑΛΙΑΣ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΚΤΗΝΙΑΤΡΙΚΗΣ" .
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Label at 2 universities; gold 100 (S29).
+
+  - id: dept-absent-01
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Νοσηλευτικής του ΑΠΘ;
+    question_english: How many courses did the Department of Nursing of the Aristotle University of Thessaloniki have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name ?dn .
+        FILTER(STRSTARTS(?dn, "ΝΟΣΗΛΕΥΤΙΚΗΣ"))
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: >-
+      Negative existence — ΑΠΘ has no nursing department (none of the 20 "νοσηλευτικης"
+      departments is at ΑΠΘ); gold 0. STRSTARTS so any "(…)" variant would also count.
+
+  - id: dept-absent-02
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Ψυχολογίας του ΕΜΠ;
+    question_english: How many courses did the Department of Psychology of the National Technical University of Athens have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΕΘΝΙΚΟ ΜΕΤΣΟΒΙΟ ΠΟΛΥΤΕΧΝΕΙΟ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name ?dn .
+        FILTER(STRSTARTS(?dn, "ΨΥΧΟΛΟΓΙΑΣ"))
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Negative existence — ΕΜΠ has no psychology department (label at 7 other universities); gold 0.
+
+  - id: dept-absent-03
+    question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Νομικής του Πανεπιστημίου Πατρών το 2022;
+    question_english: How many courses did the School of Law of the University of Patras offer in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΑΤΡΩΝ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name ?dn .
+        FILTER(STRSTARTS(?dn, "ΝΟΜΙΚΗΣ"))
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Negative existence — law exists only at ΑΠΘ, ΔΠΘ, ΕΚΠΑ; gold 0.
+
+  - id: dept-absent-04
+    question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Κτηνιατρικής του ΕΚΠΑ;
+    question_english: How many courses did the Department of Veterinary Medicine of the National and Kapodistrian University of Athens have in 2022?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name "ΕΘΝΙΚΟ & ΚΑΠΟΔΙΣΤΡΙΑΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ" .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name ?dn .
+        FILTER(STRSTARTS(?dn, "ΚΤΗΝΙΑΤΡΙΚΗΣ"))
+        ?d evdx:hasCourse ?c .
+        ?c a evdx:Course .
+        ?c evdx:year 2022 .
+      }
+    query_shape: department-course-count
+    granularity: department
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: Negative existence — veterinary medicine exists only at ΑΠΘ and Πανεπιστήμιο Θεσσαλίας; gold 0.
+
+  - id: dept-bare-01
+    question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Κοινωνιολογίας;
+    question_english: How many universities have a Department of Sociology?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name ?un .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΚΟΙΝΩΝΙΟΛΟΓΙΑΣ" .
+      }
+    query_shape: department-university-count
+    granularity: university
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: >-
+      One surface form, 4 universities (S29); no other department label contains the name.
+      Counts university NAMES — the KG has more university nodes than names (ex-003 aside),
+      so COUNT(DISTINCT ?u) could differ.
+
+  - id: dept-bare-02
+    question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Αρχιτεκτόνων Μηχανικών;
+    question_english: How many universities have a Department of Architecture?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name ?un .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΑΡΧΙΤΕΚΤΟΝΩΝ ΜΗΧΑΝΙΚΩΝ" .
+      }
+    query_shape: department-university-count
+    granularity: university
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: One surface form, 7 universities (S29); no other department label contains the name.
+
+  - id: dept-bare-03
+    question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Βιολογίας;
+    question_english: How many universities have a Department of Biology?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name ?un .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΒΙΟΛΟΓΙΑΣ" .
+      }
+    query_shape: department-university-count
+    granularity: university
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: >-
+      One surface form, 4 universities (S29). "ΜΟΡΙΑΚΗΣ ΒΙΟΛΟΓΙΑΣ ΚΑΙ ΓΕΝΕΤΙΚΗΣ" is a
+      different department and is not counted.
+
+  - id: dept-bare-04
+    question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Ιατρικής;
+    question_english: How many universities have a Department (School) of Medicine?
+    gold_sparql: |
+      PREFIX evdx: <https://w3id.org/evdoxus#>
+      SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)
+      WHERE {
+        ?u a evdx:University .
+        ?u evdx:name ?un .
+        ?u evdx:hasDepartment ?d .
+        ?d a evdx:Department .
+        ?d evdx:name "ΙΑΤΡΙΚΗΣ" .
+      }
+    query_shape: department-university-count
+    granularity: university
+    comparison_mode: scalar
+    few_shot_priority: 99
+    notes: >-
+      One surface form, 7 universities (S29). ΚΤΗΝΙΑΤΡΙΚΗΣ / ΟΔΟΝΤΙΑΤΡΙΚΗΣ contain the
+      letters but are different departments.

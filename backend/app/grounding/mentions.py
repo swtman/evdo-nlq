@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 
 from app.grounding.lexicon import _GREEK_STOPWORDS, _INSTITUTION_GLUE
-from app.grounding.linker import ResolvedEntity, resolve_mention
+from app.grounding.linker import ResolvedEntity, entity_key, resolve_mention
 from app.grounding.normalize import is_series_marker, normalize_greek
 from app.grounding.stem import greek_stem
 
@@ -111,7 +111,9 @@ class _WindowCandidate:
     size: int  # window width in tokens
 
 
-def _resolve_all_windows(entity_tokens: list[str]) -> dict[str, ResolvedEntity]:
+def _resolve_all_windows(
+    entity_tokens: list[str],
+) -> dict[tuple[str, str | None], ResolvedEntity]:
     """Resolve entity mentions using greedy span-disjoint window selection.
 
     Accepts ``entity_tokens`` — a token list built with
@@ -153,8 +155,11 @@ def _resolve_all_windows(entity_tokens: list[str]) -> dict[str, ResolvedEntity]:
                         ``_tokenize(q, lexicon._ENTITY_STOPWORDS)``.
 
     Returns:
-        Dict mapping ``canonical_label → ResolvedEntity`` for every accepted
-        entity.  Empty dict if nothing resolves.
+        Dict mapping ``linker.entity_key`` — (label, parent university) —
+        to ``ResolvedEntity`` for every accepted entity.  Keyed by the pair,
+        not the label: a department label shared by several universities
+        ("ΝΟΣΗΛΕΥΤΙΚΗΣ") keeps one entry per university, none chosen
+        arbitrarily (ADR-028).  Empty dict if nothing resolves.
     """
     # --- 1. Gather window candidates ------------------------------------------
     candidates: list[_WindowCandidate] = []
@@ -189,7 +194,7 @@ def _resolve_all_windows(entity_tokens: list[str]) -> dict[str, ResolvedEntity]:
 
     # --- 3. Greedy span-disjoint acceptance ------------------------------------
     accepted_indices: set[int] = set()
-    best: dict[str, ResolvedEntity] = {}
+    best: dict[tuple[str, str | None], ResolvedEntity] = {}
 
     for cand in candidates:
         span = set(range(cand.start, cand.end))
@@ -197,21 +202,23 @@ def _resolve_all_windows(entity_tokens: list[str]) -> dict[str, ResolvedEntity]:
             continue  # overlaps an already-accepted window — drop
         accepted_indices |= span
 
-        # Merge entities from this window, keeping highest-priority per label.
+        # Merge entities from this window, keeping highest-priority per
+        # (label, parent) — same identity as linker._deduplicate.
         for entity in cand.entities:
-            if entity.canonical_label not in best:
-                best[entity.canonical_label] = entity
+            key = entity_key(entity)
+            if key not in best:
+                best[key] = entity
             else:
-                existing = best[entity.canonical_label]
+                existing = best[key]
                 if _STAGE_PRIORITY[entity.match_method] < _STAGE_PRIORITY[existing.match_method]:
-                    best[entity.canonical_label] = entity
+                    best[key] = entity
 
     return best
 
 
 def _tokens_used_by_entity(
     tokens: list[str],
-    entities: dict[str, ResolvedEntity],
+    entities: dict[tuple[str, str | None], ResolvedEntity],
     high_priority_methods: frozenset[str],
 ) -> frozenset[int]:
     """Identify which token indices were claimed by high-priority entity matches.
@@ -227,7 +234,7 @@ def _tokens_used_by_entity(
 
     Args:
         tokens: Filtered raw tokens.
-        entities: Resolved entities dict (canonical_label → ResolvedEntity).
+        entities: Resolved entities dict (``entity_key`` → ResolvedEntity).
         high_priority_methods: Match methods that count as "entity claimed"
             (typically {"acronym", "exact"}).
 

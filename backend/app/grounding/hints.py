@@ -80,10 +80,18 @@ CONTAINS substring of the normalized title "ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΔΟΜΕ
 
 DEDUPLICATION ACROSS WINDOWS
 ------------------------------
-The same canonical label may fire for multiple overlapping windows (e.g. a
-bigram and a trigram that both resolve to the same entity).  We keep the
-highest-priority match (acronym > exact > fuzzy) per canonical label, matching
-the contract of ``linker._deduplicate``.
+The same entity may fire for multiple overlapping windows (e.g. a bigram and
+a trigram that both resolve to the same entity).  We keep the highest-priority
+match (acronym > exact > fuzzy) per ``linker.entity_key`` — the (label, parent
+university) pair — matching the contract of ``linker._deduplicate``.
+
+A department label shared by several universities ("ΝΟΣΗΛΕΥΤΙΚΗΣ" exists at
+7; the name, with its "(…)" variants, at 19) is therefore kept once PER
+UNIVERSITY, and the hint prints one line per label listing every university
+("[Department @ A | B | …] LABEL"). The block never narrows to the university
+the question names: listing all of them cannot contradict the question, and
+"other than X" questions still see every label (ADR-028; before, the label
+alone was the key and one arbitrary university survived — 135/548 in S11).
 """
 
 from __future__ import annotations
@@ -91,7 +99,7 @@ from __future__ import annotations
 import logging
 
 from app.config import settings
-from app.grounding.hint_lines import _accent_last_vowel, _format_entity_line, _format_title_line
+from app.grounding.hint_lines import _accent_last_vowel, _format_entity_lines, _format_title_line
 from app.grounding.lexicon import _ENTITY_STOPWORDS
 from app.grounding.mentions import (
     _collect_stems,
@@ -219,8 +227,9 @@ def build_grounding_hints(question: str) -> str:
     # code (title-linking plan, finding C1).
     if entities:
         lines.append("**Entities**:")
-        for entity in entities.values():
-            lines.append(_format_entity_line(entity))
+        # One line per label; a department shared by several universities
+        # lists all of them (ADR-028).
+        lines.extend(_format_entity_lines(entities.values()))
 
     if title_matches:
         if entities:
