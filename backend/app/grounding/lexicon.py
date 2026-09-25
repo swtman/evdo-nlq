@@ -177,3 +177,55 @@ _VOWEL_TO_ACCENTED: dict[int, str] = str.maketrans("αεηιουω", "άέήίό
 
 # Display label per TitleMatch.entity_class — keys must match schema.TITLE_CLASSES.
 _TITLE_CLASS_LABELS: dict[str, str] = {"course": "Course", "book": "Book"}
+
+# ---------------------------------------------------------------------------
+# ΟΝΤΟΛΟΓΙΑ page search — word rules (ADR-030; title_index/word_search.py)
+# ---------------------------------------------------------------------------
+# Values exactly as measured by the S35 v2.2 prototype
+# (notes/investigations/title-linking/scripts/s35_word_search_rules.py). This is the
+# PAGE search (a person looking a name up), not question grounding: none of these lists
+# is used by hints.py / linker.py. All entries are in normalized form (accent-free,
+# lowercase, ς→σ), like the stopword sets above.
+
+# Words that only glue a name together. Optional in a query; in NAMES they match only
+# as whole words — «κα» must not reach every name containing «και» (S35 v2.1: 268 hits).
+_SEARCH_CONNECTORS: frozenset[str] = frozenset(
+    {
+        "του",
+        "τησ",
+        "των",
+        "το",
+        "τα",
+        "τη",
+        "την",
+        "στο",
+        "στη",
+        "στην",
+        "και",
+        "η",
+        "ο",
+        "οι",
+        "απο",
+        "για",
+        "με",
+        "σε",
+    }
+)
+
+# Words people add around a name («τμήμα πληροφορικής», «νομική σχολή») that the stored
+# names mostly lack. Optional in a query, but matched normally inside names, where some
+# are real words («ΠΑΙΔΑΓΩΓΙΚΟ ΤΜΗΜΑ …», «… άλλο Ίδρυμα)») — S35 v2.2.
+_SEARCH_CLASS_WORDS: frozenset[str] = frozenset(
+    {"τμημα", "τμηματοσ", "τμηματα", "σχολη", "σχολησ", "ιδρυμα", "ιδρυματοσ"}
+)
+
+# A typed word from this set need not match — unless the query has nothing else.
+_SEARCH_OPTIONAL: frozenset[str] = _SEARCH_CONNECTORS | _SEARCH_CLASS_WORDS
+
+# Text written differently in the KG than people type it; applied to names AND queries.
+# «&» appears in 41 department names typed as «και» (S35 v1 losses); «θεσ/νικησ» is the
+# only slash abbreviation in any university/department name (the ΑΠΘ).
+_SEARCH_SYNONYMS: dict[str, str] = {"θεσ/νικησ": "θεσσαλονικησ", "&": " και "}
+
+# Latin look-alike letters for a whole word: «T.E.» (Latin) is «Τ.Ε.» (Greek) = «τε».
+_SEARCH_LOOKALIKES: dict[str, str] = {"te": "τε"}

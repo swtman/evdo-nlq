@@ -2167,6 +2167,105 @@ table.results-table tbody tr:nth-child(n+11) {
   color: var(--ink-soft);
 }
 
+/* ── Exact KG form (ADR-030 C2 — ExactForm.tsx) ──────────────────────────────
+   A readable row, a small ⧉ copy button, and — only where the stored literal
+   differs or several spellings exist — a native <details> disclosure showing
+   each literal in monospace with invisible characters drawn visibly. */
+.od-result-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.od-copy-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.od-copy {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 4px;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.od-copy:hover,
+.od-copy:focus-visible {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--hover);
+}
+
+.od-copy-status {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--accent);
+}
+
+.od-exact {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+.od-exact > summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.od-exact > summary:hover,
+.od-exact > summary:focus-visible { color: var(--accent); }
+
+.od-exact-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.od-exact-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.od-exact-literal {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+  white-space: pre-wrap;   /* show the literal as stored, not re-flowed */
+  word-break: break-word;
+}
+
+/* An invisible character drawn visibly (⇥ tab, ⍽ no-break space, • extra space). */
+.od-ws-mark {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.od-exact-all {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.od-exact-legend {
+  margin: 4px 0 0;
+  font-size: 9.5px;
+}
+
 .od-list-empty {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -2275,10 +2374,13 @@ table.results-table tbody tr:nth-child(n+11) {
   inset: 0;
   background: rgba(2, 7, 5, .55);
   display: flex;
-  align-items: center;
+  /* Anchored near the top, not centred: the dialog's height follows its list
+     (it changes as you type — ADR-030), and a centred dialog jumped under the
+     pointer on every keystroke. */
+  align-items: flex-start;
   justify-content: center;
   z-index: 60;
-  padding: 16px;
+  padding: 10vh 16px 16px;
   animation: od-fadein .15s ease;
 }
 

@@ -19,6 +19,13 @@ interface EntityModalProps {
 
 export function EntityModal({ title, count, onClose, children }: EntityModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  // A backdrop click closes the dialog only if the press ALSO started on the
+  // backdrop. A click whose mousedown and mouseup land on different elements is
+  // delivered to their nearest common ancestor — the backdrop — so without this
+  // check, pressing the search box's clear (×) closed the dialog: clearing the
+  // query changes the list, the dialog resized under the pointer, and the mouseup
+  // landed outside it (found in the ADR-030 browser check).
+  const pressStartedOnBackdrop = useRef(false)
 
   // Close on Esc
   useEffect(() => {
@@ -44,7 +51,11 @@ export function EntityModal({ title, count, onClose, children }: EntityModalProp
   return (
     <div
       className="od-modal-overlay"
-      onClick={onClose}
+      onMouseDown={e => { pressStartedOnBackdrop.current = e.target === e.currentTarget }}
+      onClick={e => {
+        if (pressStartedOnBackdrop.current && e.target === e.currentTarget) onClose()
+        pressStartedOnBackdrop.current = false
+      }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="od-modal-title"

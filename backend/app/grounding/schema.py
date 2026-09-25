@@ -83,6 +83,18 @@ LISTABLE_CLASSES: tuple[str, ...] = ("university", "department")
 # FTS-backed" shared by the DDL generator and the ranker.
 FTS_CLASSES: frozenset[str] = frozenset({"course", "book"})
 
+# Classes with a WORD index for the ΟΝΤΟΛΟΓΙΑ page search (ADR-030;
+# title_index/word_search.py) — a different job from the `rank_titles` ranking above:
+# a person looking a name up, matched word by word, "(…)" included. Per class:
+#   {class}_name      one row per EXACT name: norm (group key), surface (raw literal),
+#                     words (normalize.search_fold of the surface, space-joined);
+#   {class}_name_fts  FTS5 over `words` (candidate retrieval);
+#   {class}_vocab     each distinct word, flagged when it is a connector (lexicon
+#                     _SEARCH_CONNECTORS — matched only as a whole word).
+# This does not contradict "university/department get NO FTS table" above: that is
+# about `rank_titles`' candidate generation, which stays a full scan.
+SEARCH_CLASSES: tuple[str, ...] = ("university", "department")
+
 _BASE_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -134,10 +146,39 @@ CREATE VIRTUAL TABLE IF NOT EXISTS {name}_fts USING fts5(
     )
 
 
+def _search_ddl(name: str) -> str:
+    """DDL for one class's ΟΝΤΟΛΟΓΙΑ word index (see ``SEARCH_CLASSES``).
+
+    Args:
+        name: One of ``SEARCH_CLASSES`` — never user input.
+    """
+    return f"""
+CREATE TABLE IF NOT EXISTS {name}_name (
+    id      INTEGER PRIMARY KEY,
+    norm    TEXT NOT NULL,   -- group key, same as {name}.norm (normalize_greek)
+    surface TEXT NOT NULL,   -- the exact KG literal, untouched
+    words   TEXT NOT NULL    -- normalize.search_words(surface), space-joined
+);
+CREATE INDEX IF NOT EXISTS {name}_name_norm_idx ON {name}_name(norm);
+CREATE VIRTUAL TABLE IF NOT EXISTS {name}_name_fts USING fts5(
+    words,
+    content='{name}_name',
+    content_rowid='id',
+    tokenize='unicode61'
+);
+CREATE TABLE IF NOT EXISTS {name}_vocab (
+    word         TEXT PRIMARY KEY,
+    is_connector INTEGER NOT NULL   -- 1: lexicon._SEARCH_CONNECTORS, whole-word match only
+) WITHOUT ROWID;
+"""
+
+
 # Data Definition Language for the whole database. Executed as one script via
 # `sqlite3.Connection.executescript` so all statements share one transaction.
-_SCHEMA_SQL = _BASE_SQL + "".join(
-    _title_ddl(name, fts=name in FTS_CLASSES) for name in TITLE_CLASSES
+_SCHEMA_SQL = (
+    _BASE_SQL
+    + "".join(_title_ddl(name, fts=name in FTS_CLASSES) for name in TITLE_CLASSES)
+    + "".join(_search_ddl(name) for name in SEARCH_CLASSES)
 )
 
 
@@ -186,3 +227,42 @@ def sync_title_fts(conn: sqlite3.Connection, table: str) -> None:
             f"{table!r} has no FTS table to sync; only {sorted(FTS_CLASSES)} do"
         )
     conn.execute(f"INSERT INTO {table}_fts(rowid, norm) SELECT id, norm FROM {table}")
+
+
+def sync_search_index(conn: sqlite3.Connection, table: str) -> None:
+    """(Re)build ``<table>_name``, its FTS5 index and ``<table>_vocab`` from ``<table>``.
+
+    Call once after the base table is filled (builder script; in-memory test fixtures).
+    Idempotent: the three derived tables are emptied first.
+
+    Args:
+        conn: An open SQLite connection whose schema came from ``create_schema``.
+        table: One of ``SEARCH_CLASSES``.
+
+    Raises:
+        ValueError: If ``table`` has no word index.
+    """
+    # Imported here: normalize imports lexicon only, but keeping schema.py's top-level
+    # imports to the standard library preserves its role as the dependency-free DDL module.
+    from app.grounding.lexicon import _SEARCH_CONNECTORS
+    from app.grounding.normalize import search_words
+
+    if table not in SEARCH_CLASSES:
+        raise ValueError(f"{table!r} has no word index; only {list(SEARCH_CLASSES)} do")
+
+    conn.execute(f"DELETE FROM {table}_name")
+    conn.execute(f"INSERT INTO {table}_name_fts({table}_name_fts) VALUES ('delete-all')")
+    conn.execute(f"DELETE FROM {table}_vocab")
+
+    names = conn.execute(
+        f"SELECT DISTINCT norm, surface FROM {table} ORDER BY norm, surface"
+    ).fetchall()
+    rows = [(norm, surface, " ".join(search_words(surface))) for norm, surface in names]
+    conn.executemany(f"INSERT INTO {table}_name(norm, surface, words) VALUES (?, ?, ?)", rows)
+    conn.execute(f"INSERT INTO {table}_name_fts(rowid, words) SELECT id, words FROM {table}_name")
+
+    vocab = sorted({w for _, _, words in rows for w in words.split()})
+    conn.executemany(
+        f"INSERT INTO {table}_vocab(word, is_connector) VALUES (?, ?)",
+        [(w, int(w in _SEARCH_CONNECTORS)) for w in vocab],
+    )

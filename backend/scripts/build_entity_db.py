@@ -85,7 +85,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.grounding.clean import DropCounts, clean_titles  # noqa: E402
 from app.grounding.normalize import normalize_greek, title_family  # noqa: E402
-from app.grounding.schema import FTS_CLASSES, create_schema, family_column, sync_title_fts  # noqa: E402
+from app.grounding.schema import (  # noqa: E402
+    FTS_CLASSES,
+    SEARCH_CLASSES,
+    create_schema,
+    family_column,
+    sync_search_index,
+    sync_title_fts,
+)
 
 try:
     from SPARQLWrapper import JSON, SPARQLWrapper
@@ -283,6 +290,11 @@ def build_database(
             for d in departments
         ]
         _insert_rows(conn, "department", dept_rows)
+
+        # ΟΝΤΟΛΟΓΙΑ page word index (ADR-030): one row per exact name + FTS5 + vocab,
+        # derived from the base tables just written.
+        for table in SEARCH_CLASSES:
+            sync_search_index(conn, table)
 
         _insert_title_rows(conn, "course", course_map)
         _insert_title_rows(conn, "book", book_map)

@@ -11,15 +11,24 @@ or inflected phrase:
      can bind an exact SPARQL VALUES clause instead of an under-constrained
      CONTAINS filter (see ADR-015, ADR-018, ADR-020).
 
-Both call the SAME ranking function — ``app.grounding.title_index.search.rank_titles``
-— so an entity a user can find by browsing here is exactly one the SPARQL
-pipeline is capable of matching from a natural-language mention (course/book
-via ``hints.py``'s title resolution; university/department via
-``linker.py``'s Stage 3, which shares the same score threshold — see
-``title_index.policy.INSTITUTION_MATCH_THRESHOLD``). This endpoint is that
-function's HTTP-facing twin: grounding calls ``rank_titles`` in-process (no
-network hop); this endpoint calls it for the frontend, which cannot reach
-Python functions directly and needs an HTTP interface.
+LOOKUP IS NOT LINKING (ADR-030)
+-------------------------------
+The two share the data (``entities.db``) and the normalization, not the matching
+policy. Grounding LINKS a name inside a question and must be strict (a wrong binding
+silently changes the SPARQL). This page is a person LOOKING a name up and must find
+what they type and show everything that could be meant. So:
+
+* course/book search here calls ``title_index.search.rank_titles`` — the same function
+  ``hints.py`` uses for title candidates (their page matching gets its own measured
+  branch later);
+* university/department search here calls ``title_index.word_search.search_names`` —
+  word rules measured in S35 and checked for parity in S38 — while grounding keeps
+  ``linker.py``. One result list serves both the card (its first 8) and the «δείτε και
+  τα N» modal (all of it, one scrollable list — ``limit`` up to 1000; ``total`` = every
+  match), so the two views cannot disagree. ``offset`` is available for paging clients.
+
+Every class needs at least ``MIN_QUERY_LETTERS`` (2) letters; below that the response
+is empty, not an error — the page shows its prompt.
 
 SCOPE
 -----
@@ -45,9 +54,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.grounding.normalize import drop_status_suffix
-from app.grounding.schema import LISTABLE_CLASSES, TITLE_CLASSES
+from app.grounding.normalize import drop_status_suffix, search_words
+from app.grounding.schema import LISTABLE_CLASSES, SEARCH_CLASSES, TITLE_CLASSES
 from app.grounding.title_index import TitleMatch, list_titles, rank_titles
+from app.grounding.title_index.word_search import MIN_QUERY_LETTERS, search_names
 
 router = APIRouter()
 
@@ -62,10 +72,14 @@ class DepartmentVariant(BaseModel):
         "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)" — the string a SPARQL query must use.
     parents : list[str]
         The universities that have a department with exactly this name.
+    literal : str
+        The same name exactly as stored in the KG — whitespace untouched (the ⧉ copy
+        and the «ακριβής μορφή» view of the ΟΝΤΟΛΟΓΙΑ page, ADR-030 C2).
     """
 
     name: str
     parents: list[str]
+    literal: str
 
 
 class EntitySearchResult(BaseModel):
@@ -95,12 +109,18 @@ class EntitySearchResult(BaseModel):
         Needed because a result groups names that differ only by a trailing
         "(…)" — ΝΟΣΗΛΕΥΤΙΚΗΣ, ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ), … — and showing
         one of them hid the others (ADR-029).
+    literals : list[str]
+        Every KG literal of this result exactly as stored (all spelling variants, first
+        occurrence order, duplicates removed) — ``title`` is a tidied display form, these
+        are what a hand-written SPARQL query must use (ADR-030 C2). 13,301 course titles
+        differ from their display form only by invisible whitespace.
     """
 
     title: str
     score: float
     parents: list[str] = []
     variants: list[DepartmentVariant] = []
+    literals: list[str] = []
 
 
 class EntitySearchResponse(BaseModel):
@@ -157,10 +177,16 @@ def _result(m: TitleMatch) -> EntitySearchResult:
     if len(m.variants) > 1:
         title = drop_status_suffix(title)
     variants = [
-        DepartmentVariant(name=" ".join(name.split()), parents=parents)
+        DepartmentVariant(name=" ".join(name.split()), parents=parents, literal=name)
         for name, parents in m.variants.items()
     ]
-    return EntitySearchResult(title=title, score=m.score, parents=m.parents, variants=variants)
+    return EntitySearchResult(
+        title=title,
+        score=m.score,
+        parents=m.parents,
+        variants=variants,
+        literals=list(dict.fromkeys(m.surface_forms)),
+    )
 
 
 @router.get("/entities/search", response_model=EntitySearchResponse)
@@ -171,14 +197,18 @@ def search_entities(
         alias="class",
         description="Entity type to search: 'course', 'book', 'university', or 'department'",
     ),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of results"),
+    # Up to 1000, like /entities/list: the ΟΝΤΟΛΟΓΙΑ modal shows ALL results of a query
+    # in one scrollable list (ADR-030); the card asks for its first 8.
+    limit: int = Query(50, ge=1, le=1000, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of ranked results to skip"),
 ) -> EntitySearchResponse:
-    """Search KG entity names by phrase, ranked by similarity to ``q``.
+    """Search KG entity names by phrase (see module docstring "LOOKUP IS NOT LINKING").
 
-    Calls the exact same ``rank_titles`` function the SPARQL grounding
-    pipeline uses (see module docstring) — no separate search logic to keep
-    in sync. Each class is matched by its own policy (see
-    ``title_index.policy._POLICY``); the response shape is identical regardless.
+    university/department: the word search, sliced by ``offset``/``limit``, with
+    ``total`` = every match — the card shows the first 8, the modal the whole SAME list.
+    course/book: ``rank_titles`` ranking as before; ``total`` counts the
+    ranked matches up to ``offset + limit``. Fewer than ``MIN_QUERY_LETTERS`` letters:
+    empty response for every class. The response shape is the same for all classes.
 
     Returns 400 if ``class`` is not one of the supported values.
     """
@@ -187,10 +217,15 @@ def search_entities(
             status_code=400,
             detail=f"Unsupported class {entity_class!r}. Supported: {sorted(TITLE_CLASSES)}",
         )
+    if len("".join(search_words(q))) < MIN_QUERY_LETTERS:
+        return EntitySearchResponse(query=q, results=[], total=0)
 
-    matches = rank_titles(q, k=limit, entity_class=entity_class)
-    results = [_result(m) for m in matches]
-    return EntitySearchResponse(query=q, results=results, total=len(results))
+    if entity_class in SEARCH_CLASSES:
+        matches, total = search_names(q, entity_class=entity_class, limit=limit, offset=offset)
+    else:
+        ranked = rank_titles(q, k=offset + limit, entity_class=entity_class)
+        matches, total = ranked[offset:], len(ranked)
+    return EntitySearchResponse(query=q, results=[_result(m) for m in matches], total=total)
 
 
 @router.get("/entities/list", response_model=EntitySearchResponse)

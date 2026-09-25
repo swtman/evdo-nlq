@@ -1,44 +1,70 @@
 /**
  * EntitySpotlights — four entity spotlight cards, all backed by live search.
  *
- * All four classes (University, Department, Course, Book) now go through
- * the exact same pattern: a debounced live search against
- * GET /entities/search (see backend/app/api/entities.py, ADR-018/ADR-020) —
- * each keystroke ranks the real corpus server-side and returns only the top
- * matches. This used to be true only for Course/Book; University/Department
- * shipped their entire list inside the JS bundle (data/entities.json, 46 +
- * 799 records) and filtered it client-side. That bundle is gone — see
- * ADR-020 for why: it duplicated data already served live, and meant a
- * university a user could find by browsing here was not provably one
- * Stage-1 grounding could resolve from a question (the whole guarantee
- * ADR-018 established for Course/Book).
+ * All four classes (University, Department, Course, Book) search live against
+ * GET /entities/search (backend/app/api/entities.py). University and
+ * Department are matched word by word (the ΟΝΤΟΛΟΓΙΑ word rules, ADR-030);
+ * Course and Book by the ranking that question grounding also uses.
  *
- * University and Department additionally get a "δείτε τα όλα" browse
- * modal — genuinely different from search (there's no ranking to "browse
- * everything", so it can't reuse the search results) — fed by a SEPARATE
- * endpoint, GET /entities/list, and a separate hook, useEntityList. Course
- * and Book don't: at ~73k/~37k distinct titles, listing "everything" isn't
- * a coherent UI action the way it is for 46 universities.
+ * ONE SEARCH, TWO VIEWS (ADR-030). A University/Department card shows the first
+ * INLINE_LIMIT results of its query and, when there are more, «δείτε και τα N
+ * αποτελέσματα»: that opens the modal with the SAME query, showing the whole SAME
+ * server result list in one scrollable list — so the card and the modal can never
+ * disagree (they used to: the modal filtered a downloaded list in the browser, a
+ * second search mechanism; «λαρισα» gave 1 result in the card and 4 in the
+ * modal). With an empty box the modal is the alphabetical browse list
+ * (GET /entities/list, useEntityList), also scrollable. Course/Book cards have
+ * no modal (73k/37k titles are not "browsable") and show up to
+ * ENTITY_SEARCH_LIMIT results inline, as before.
  *
- * The four cards share one component, LiveSearchCard, parameterized by
- * which useXSearch hook to call and (for University/Department) the browse
- * config — see that component for the shared layout.
+ * Nothing is searched below MIN_QUERY_LETTERS letters (user decision) — the card
+ * says so instead.
+ *
+ * EXACT FORM (C2). Every row carries a ⧉ copy of the exact KG literal and, where
+ * it differs from the readable text, an «ακριβής μορφή» disclosure — see
+ * ExactForm.tsx.
  */
 
-import { useMemo, useState } from 'react'
-import { courseSearchStats, bookSearchStats, universitySearchStats, departmentSearchStats, classes } from '../data/ontology'
+import { useState } from 'react'
+import {
+  courseSearchStats,
+  bookSearchStats,
+  universitySearchStats,
+  departmentSearchStats,
+  classes,
+} from '../data/ontology'
 import {
   useCourseSearch,
   useBookSearch,
   useUniversitySearch,
   useDepartmentSearch,
-  foldGreek,
+  queryLetters,
   ENTITY_SEARCH_LIMIT,
+  INLINE_LIMIT,
+  MIN_QUERY_LETTERS,
   type EntitySearchResult,
+  type UseSearch,
 } from '../hooks/useEntitySearch'
 import { useEntityList, type ListableEntityClass } from '../hooks/useEntityList'
 import { EntityModal } from './EntityModal'
+import { CopyButton, ExactForm, ResultLine, primaryLiteral } from './ExactForm'
 import { t } from '../i18n/el'
+
+/** The modal shows ALL results of its query in one scrollable list (user decision) —
+ * the API's maximum; the broadest 2-letter department query returns 120 (S35 M5). */
+const MODAL_LIMIT = 1000
+
+type RenderItem = (r: EntitySearchResult) => React.ReactNode
+
+const defaultRender: RenderItem = r => <ResultLine r={r} />
+
+/** The list's empty-state line for a query (none / too short / no results). */
+function emptyLine(query: string): string {
+  const letters = queryLetters(query)
+  if (letters === 0) return t.ontologySearchPrompt
+  if (letters < MIN_QUERY_LETTERS) return t.ontologyMinLetters
+  return t.ontologyNoResults
+}
 
 // ── Shared live-search card ─────────────────────────────────────────────────
 
@@ -47,17 +73,17 @@ interface BrowseConfig {
   /** Total shown on the "δείτε τα όλα (N)" button — known synchronously
    * (from data/ontology.ts's *SearchStats), no need to wait for the fetch. */
   total: number
-  /** How to render one row inside the browse modal. Defaults to plain title. */
-  renderModalItem?: (r: EntitySearchResult) => React.ReactNode
+  /** How to render one row inside the modal. Defaults to the card's renderer. */
+  renderModalItem?: RenderItem
 }
 
 interface LiveSearchCardProps {
   titleText: string
   subLine: string
   placeholder: string
-  useSearch: (query: string) => { results: EntitySearchResult[]; loading: boolean; offline: boolean }
-  /** How to render one row inline. Defaults to plain title. */
-  renderItem?: (r: EntitySearchResult) => React.ReactNode
+  useSearch: UseSearch
+  /** How to render one row inline. Defaults to ResultLine (title + ⧉ + exact form). */
+  renderItem?: RenderItem
   browse?: BrowseConfig
 }
 
@@ -66,13 +92,16 @@ function LiveSearchCard({
   subLine,
   placeholder,
   useSearch,
-  renderItem = r => r.title,
+  renderItem = defaultRender,
   browse,
 }: LiveSearchCardProps) {
   const [query, setQuery] = useState('')
-  const { results, loading, offline } = useSearch(query)
-  const shown = results.slice(0, ENTITY_SEARCH_LIMIT)
-  const [modalOpen, setModalOpen] = useState(false)
+  // Cards with a modal show their first INLINE_LIMIT results; the others keep their longer list.
+  const limit = browse ? INLINE_LIMIT : ENTITY_SEARCH_LIMIT
+  const { results, total, loading, offline } = useSearch(query, { limit, offset: 0 })
+  // null = closed; otherwise the query the modal opens with ('' = browse everything).
+  const [modalQuery, setModalQuery] = useState<string | null>(null)
+  const hasMore = queryLetters(query) >= MIN_QUERY_LETTERS && total > results.length
 
   return (
     <div className="od-spotlight-card">
@@ -94,28 +123,29 @@ function LiveSearchCard({
 
       <ul className="od-list" aria-label={`Λίστα ${titleText}`}>
         {loading && <li className="od-list-empty">{t.ontologySearching}</li>}
-        {!loading && shown.map(r => (
+        {!loading && results.map(r => (
           <li key={r.title} className="od-list-item">{renderItem(r)}</li>
         ))}
-        {!loading && shown.length === 0 && query.trim() === '' && (
-          <li className="od-list-empty">{t.ontologySearchPrompt}</li>
-        )}
-        {!loading && shown.length === 0 && query.trim() !== '' && (
-          <li className="od-list-empty">{t.ontologyNoResults}</li>
-        )}
+        {!loading && results.length === 0 && <li className="od-list-empty">{emptyLine(query)}</li>}
       </ul>
 
       {browse && (
         <>
-          <button className="od-show-more" type="button" onClick={() => setModalOpen(true)}>
-            {t.ontologySeeAll(browse.total)}
+          <button
+            className="od-show-more"
+            type="button"
+            onClick={() => setModalQuery(hasMore ? query : '')}
+          >
+            {hasMore ? t.ontologySeeAllResults(total) : t.ontologySeeAll(browse.total)}
           </button>
-          {modalOpen && (
-            <BrowseModal
+          {modalQuery !== null && (
+            <SearchModal
               title={titleText}
               entityClass={browse.entityClass}
-              onClose={() => setModalOpen(false)}
-              renderItem={browse.renderModalItem ?? (r => r.title)}
+              useSearch={useSearch}
+              initialQuery={modalQuery}
+              onClose={() => setModalQuery(null)}
+              renderItem={browse.renderModalItem ?? renderItem}
             />
           )}
         </>
@@ -124,34 +154,38 @@ function LiveSearchCard({
   )
 }
 
-// ── Browse modal — "δείτε τα όλα", backed by GET /entities/list ───────────
+// ── Modal — the SAME search, every result, one scrollable list; empty box = browse ──
 
-function BrowseModal({
+function SearchModal({
   title,
   entityClass,
+  useSearch,
+  initialQuery,
   onClose,
   renderItem,
 }: {
   title: string
   entityClass: ListableEntityClass
+  useSearch: UseSearch
+  initialQuery: string
   onClose: () => void
-  renderItem: (r: EntitySearchResult) => React.ReactNode
+  renderItem: RenderItem
 }) {
-  const { results, loading, offline } = useEntityList(entityClass)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery)
+  const searching = queryLetters(query) >= MIN_QUERY_LETTERS
 
-  const filtered = useMemo(() => {
-    const q = foldGreek(query.trim())
-    if (!q) return results
-    // Match the exact department names too: a grouped result is titled by the
-    // shared name, so "λαρισα" must still find "… (ΛΑΡΙΣΑ)" (ADR-029).
-    return results.filter(
-      r => foldGreek(r.title).includes(q) || (r.variants ?? []).some(v => foldGreek(v.name).includes(q)),
-    )
-  }, [results, query])
+  // Both hooks always run (hooks cannot be conditional); the search hook does
+  // nothing below MIN_QUERY_LETTERS, the list is fetched once per open.
+  const search = useSearch(query, { limit: MODAL_LIMIT, offset: 0 })
+  const list = useEntityList(entityClass)
+
+  const total = searching ? search.total : list.results.length
+  const rows = searching ? search.results : list.results
+  const loading = searching ? search.loading : list.loading
+  const offline = searching ? search.offline : list.offline
 
   return (
-    <EntityModal title={title} count={filtered.length} onClose={onClose}>
+    <EntityModal title={title} count={total} onClose={onClose}>
       {offline && <p className="od-spotlight-offline-note">{t.ontologyOffline}</p>}
       <div className="od-search">
         <span className="od-search-icon" aria-hidden="true">⌕</span>
@@ -163,14 +197,13 @@ function BrowseModal({
           aria-label={`αναζήτηση ${title}`}
         />
       </div>
+      {!searching && queryLetters(query) > 0 && <p className="od-list-empty">{t.ontologyMinLetters}</p>}
       <ul className="od-list" aria-label={`Λίστα ${title}`}>
         {loading && <li className="od-list-empty">{t.ontologySearching}</li>}
-        {!loading && filtered.map(r => (
+        {!loading && rows.map(r => (
           <li key={r.title} className="od-list-item">{renderItem(r)}</li>
         ))}
-        {!loading && filtered.length === 0 && (
-          <li className="od-list-empty">{t.ontologyNoResults}</li>
-        )}
+        {!loading && rows.length === 0 && <li className="od-list-empty">{t.ontologyNoResults}</li>}
       </ul>
     </EntityModal>
   )
@@ -180,12 +213,13 @@ function BrowseModal({
 //
 // A department result can group several EXACT names that differ only by a
 // trailing "(…)" — ΝΟΣΗΛΕΥΤΙΚΗΣ (7 universities), ΝΟΣΗΛΕΥΤΙΚΗΣ
-// (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ) (ΔΠΘ), … — because search matches on the name without the
+// (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ) (ΔΠΘ), … — because search groups on the name without the
 // tail. Showing one name with every university implied that ΔΠΘ's department
 // is called "ΝΟΣΗΛΕΥΤΙΚΗΣ", and hid names such as "… (ΛΑΡΙΣΑ)" entirely. So
 // with several variants the row shows the shared name as a header and each
 // exact name below it with ITS universities (ADR-029); with one, the row
-// looks exactly as before.
+// looks exactly as before. Every exact name has its own ⧉ and, where its KG
+// literal differs from the readable text, its own exact-form disclosure (C2).
 
 /** True when the result groups more than one exact department name. */
 function hasVariants(r: EntitySearchResult): boolean {
@@ -203,9 +237,13 @@ function DeptInlineItem(r: EntitySearchResult) {
         </span>
         <ul className="od-dept-variants">
           {r.variants!.map(v => (
-            <li key={v.name} className="od-list-item--dept">
-              <span className="od-list-item-name">{v.name}</span>
-              <span className="od-list-item-badge">{t.ontologyDeptSharedNote(v.parents.length)}</span>
+            <li key={v.name} className="od-list-item-detail">
+              <span className="od-list-item--dept">
+                <span className="od-list-item-name">{v.name}</span>
+                <CopyButton text={v.literal ?? v.name} />
+                <span className="od-list-item-badge">{t.ontologyDeptSharedNote(v.parents.length)}</span>
+              </span>
+              <ExactForm display={v.name} literals={v.literal ? [v.literal] : []} />
             </li>
           ))}
         </ul>
@@ -213,11 +251,15 @@ function DeptInlineItem(r: EntitySearchResult) {
     )
   }
   return (
-    <span className="od-list-item--dept">
-      <span className="od-list-item-name">{r.title}</span>
-      {parents.length > 1 && (
-        <span className="od-list-item-badge">{t.ontologyDeptSharedNote(parents.length)}</span>
-      )}
+    <span className="od-list-item-detail">
+      <span className="od-list-item--dept">
+        <span className="od-list-item-name">{r.title}</span>
+        <CopyButton text={primaryLiteral(r)} />
+        {parents.length > 1 && (
+          <span className="od-list-item-badge">{t.ontologyDeptSharedNote(parents.length)}</span>
+        )}
+      </span>
+      <ExactForm display={r.title} literals={r.literals ?? []} />
     </span>
   )
 }
@@ -231,10 +273,14 @@ function DeptModalItem(r: EntitySearchResult) {
         <ul className="od-dept-variants">
           {r.variants!.map(v => (
             <li key={v.name} className="od-list-item-detail">
-              <span className="od-list-item-name">{v.name}</span>
+              <span className="od-result-line">
+                <span className="od-list-item-name">{v.name}</span>
+                <CopyButton text={v.literal ?? v.name} />
+              </span>
               <span className="od-list-item-parents">
                 {t.ontologyDeptParentsLabel}: {v.parents.join(', ')}
               </span>
+              <ExactForm display={v.name} literals={v.literal ? [v.literal] : []} />
             </li>
           ))}
         </ul>
@@ -243,12 +289,16 @@ function DeptModalItem(r: EntitySearchResult) {
   }
   return (
     <span className="od-list-item-detail">
-      <span className="od-list-item-name">{r.title}</span>
+      <span className="od-result-line">
+        <span className="od-list-item-name">{r.title}</span>
+        <CopyButton text={primaryLiteral(r)} />
+      </span>
       {parents.length > 0 && (
         <span className="od-list-item-parents">
           {t.ontologyDeptParentsLabel}: {parents.join(', ')}
         </span>
       )}
+      <ExactForm display={r.title} literals={r.literals ?? []} />
     </span>
   )
 }

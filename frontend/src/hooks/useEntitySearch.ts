@@ -1,15 +1,18 @@
 /**
  * useEntitySearch — debounced entity search against GET /entities/search.
  *
- * Calls the SAME backend function the SPARQL grounding pipeline uses to
- * resolve an entity named inside a question (see backend/app/api/entities.py)
- * — so an entity found here is exactly one the pipeline is capable of
- * matching from natural language (course/book via hints.py's title
- * resolution; university/department via linker.py's Stage 3, which shares
- * the same score threshold — see ADR-020). Shared by the four `use*Search`
- * wrappers below rather than duplicated, because the debounce, the
- * stale-response race guard, and the offline fallback are three subtle
- * behaviors that would otherwise drift between four copies.
+ * One backend search serves both views of a ΟΝΤΟΛΟΓΙΑ card (ADR-030): the card
+ * asks for its first INLINE_LIMIT results, the «δείτε και τα N αποτελέσματα»
+ * modal for all results of the SAME query (one scrollable list) — so the two can
+ * never disagree, and `total` is the number of all matches. University and
+ * department are matched by the backend's word rules (title_index/word_search.py);
+ * course and book by `rank_titles` (see backend/app/api/entities.py, "LOOKUP IS
+ * NOT LINKING"). Shared by the four `use*Search` wrappers below rather than
+ * duplicated, because the debounce, the stale-response race guard, and the
+ * offline fallback are three subtle behaviors that would otherwise drift apart.
+ *
+ * Nothing is searched below MIN_QUERY_LETTERS letters — the card shows its
+ * prompt instead (user decision, 2026-09-25; the backend enforces the same).
  *
  * Falls back to a small offline sample when:
  *   - VITE_USE_MOCK_API=1 (frontend UI dev without a backend), or
@@ -28,19 +31,24 @@ import {
 
 const DEBOUNCE_MS = 250
 
-// Single source of truth for the search result cap, shared by the fetch
-// call below and by EntitySpotlights' display slice — previously two
-// separate constants (limit: '50' here, RESULTS_SHOWN = 100 there) where
-// the second one was a silent no-op because the API already caps at 50.
+/** How many results the course/book cards show (they have no modal); the default request size. */
 export const ENTITY_SEARCH_LIMIT = 50
+
+/** Results a university/department card shows before «δείτε και τα N» (user decision). */
+export const INLINE_LIMIT = 8
+
+/** Letters needed before anything is searched — same rule as the backend. */
+export const MIN_QUERY_LETTERS = 2
 
 export type EntityClass = 'course' | 'book' | 'university' | 'department'
 
 /** One exact department name inside a result, with the universities that have it. */
 export interface DepartmentVariant {
-  /** Exact KG name, e.g. "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)" — what a query must use. */
+  /** Display form of the exact KG name, e.g. "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)". */
   name: string
   parents: string[]
+  /** The same name exactly as stored in the KG, whitespace untouched (C2 copy). */
+  literal?: string
 }
 
 export interface EntitySearchResult {
@@ -56,14 +64,30 @@ export interface EntitySearchResult {
    * (ADR-029). Absent in the offline sample.
    */
   variants?: DepartmentVariant[]
+  /**
+   * Every KG literal of this result exactly as stored — `title` is a tidied display
+   * form; these are what a hand-written SPARQL query must use (ADR-030 C2).
+   * Absent in the offline sample.
+   */
+  literals?: string[]
 }
 
-interface EntitySearchState {
+/** Which slice of the ranked results to fetch. */
+export interface SearchPage {
+  limit: number
+  offset: number
+}
+
+export interface EntitySearchState {
   results: EntitySearchResult[]
+  /** Number of ALL matches of the query (not just this page). */
+  total: number
   loading: boolean
   /** True when results come from the offline sample, not a live search. */
   offline: boolean
 }
+
+export type UseSearch = (query: string, page?: SearchPage) => EntitySearchState
 
 const SAMPLE_TITLES: Record<EntityClass, string[]> = {
   course: SAMPLE_COURSE_TITLES,
@@ -71,6 +95,8 @@ const SAMPLE_TITLES: Record<EntityClass, string[]> = {
   university: SAMPLE_UNIVERSITY_TITLES,
   department: SAMPLE_DEPARTMENT_TITLES,
 }
+
+const MOCK = import.meta.env.VITE_USE_MOCK_API === '1'
 
 /**
  * Accent-fold a Greek (or any) string for comparison: NFD-decompose so tone
@@ -86,74 +112,90 @@ export function foldGreek(s: string): string {
   return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
 }
 
+/** Letters and digits in a query — what counts toward MIN_QUERY_LETTERS. */
+export function queryLetters(query: string): number {
+  return foldGreek(query).replace(/[^\p{L}\p{N}]/gu, '').length
+}
+
+/** Offline fallback: substring over the sample titles (labelled offline in the UI). */
 function searchSampleTitles(entityClass: EntityClass, query: string): EntitySearchResult[] {
-  const titles = SAMPLE_TITLES[entityClass]
   const q = foldGreek(query.trim())
-  if (!q) return titles.map(title => ({ title, score: 1 }))
-  return titles
+  return SAMPLE_TITLES[entityClass]
     .filter(title => foldGreek(title).includes(q))
     .map(title => ({ title, score: 1 }))
 }
 
-function useEntitySearch(query: string, entityClass: EntityClass): EntitySearchState {
-  const [state, setState] = useState<EntitySearchState>({
-    results: searchSampleTitles(entityClass, ''),
+function samplePage(entityClass: EntityClass, query: string, page: SearchPage): EntitySearchState {
+  const all = searchSampleTitles(entityClass, query)
+  return {
+    results: all.slice(page.offset, page.offset + page.limit),
+    total: all.length,
     loading: false,
-    offline: import.meta.env.VITE_USE_MOCK_API === '1',
+    offline: true,
+  }
+}
+
+export function useEntitySearch(
+  query: string,
+  entityClass: EntityClass,
+  page: SearchPage = { limit: ENTITY_SEARCH_LIMIT, offset: 0 },
+): EntitySearchState {
+  const [state, setState] = useState<EntitySearchState>({
+    results: [],
+    total: 0,
+    loading: false,
+    offline: MOCK,
   })
 
   // Tracks the most recently issued request so a slow earlier response
   // can't overwrite a faster later one (classic debounce race).
   const requestId = useRef(0)
+  const { limit, offset } = page
 
   useEffect(() => {
-    if (import.meta.env.VITE_USE_MOCK_API === '1') {
-      setState({ results: searchSampleTitles(entityClass, query), loading: false, offline: true })
+    const thisRequest = ++requestId.current
+
+    if (queryLetters(query) < MIN_QUERY_LETTERS) {
+      setState({ results: [], total: 0, loading: false, offline: MOCK })
+      return
+    }
+    if (MOCK) {
+      setState(samplePage(entityClass, query, { limit, offset }))
       return
     }
 
-    const thisRequest = ++requestId.current
     setState(prev => ({ ...prev, loading: true }))
-
     const handle = setTimeout(() => {
       const params = new URLSearchParams({
-        q: query || ' ',
+        q: query,
         class: entityClass,
-        limit: String(ENTITY_SEARCH_LIMIT),
+        limit: String(limit),
+        offset: String(offset),
       })
       fetch(`/entities/search?${params}`)
         .then(res => {
           if (!res.ok) throw new Error(`search failed: ${res.status}`)
-          return res.json() as Promise<{ results: EntitySearchResult[] }>
+          return res.json() as Promise<{ results: EntitySearchResult[]; total: number }>
         })
         .then(data => {
           if (requestId.current !== thisRequest) return // stale response, ignore
-          setState({ results: data.results, loading: false, offline: false })
+          setState({ results: data.results, total: data.total, loading: false, offline: false })
         })
         .catch(() => {
           if (requestId.current !== thisRequest) return
-          setState({ results: searchSampleTitles(entityClass, query), loading: false, offline: true })
+          setState(samplePage(entityClass, query, { limit, offset }))
         })
     }, DEBOUNCE_MS)
 
     return () => clearTimeout(handle)
-  }, [query, entityClass])
+  }, [query, entityClass, limit, offset])
 
   return state
 }
 
-export function useCourseSearch(query: string): EntitySearchState {
-  return useEntitySearch(query, 'course')
-}
-
-export function useBookSearch(query: string): EntitySearchState {
-  return useEntitySearch(query, 'book')
-}
-
-export function useUniversitySearch(query: string): EntitySearchState {
-  return useEntitySearch(query, 'university')
-}
-
-export function useDepartmentSearch(query: string): EntitySearchState {
-  return useEntitySearch(query, 'department')
-}
+export const useCourseSearch: UseSearch = (query, page) => useEntitySearch(query, 'course', page)
+export const useBookSearch: UseSearch = (query, page) => useEntitySearch(query, 'book', page)
+export const useUniversitySearch: UseSearch = (query, page) =>
+  useEntitySearch(query, 'university', page)
+export const useDepartmentSearch: UseSearch = (query, page) =>
+  useEntitySearch(query, 'department', page)

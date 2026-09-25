@@ -186,6 +186,19 @@ export const t = {
   // ΝΟΣΗΛΕΥΤΙΚΗΣ and ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)) — each listed below it
   // with its own universities (ADR-029).
   ontologyDeptVariantsNote: (n: number): string => `${n} ονομασίες`,
+  // One search, two views (ADR-030): the card shows the first results; this link opens
+  // the modal with the SAME query and all its results.
+  ontologySeeAllResults: (n: number): string => `δείτε και τα ${n} αποτελέσματα`,
+  // Shown while fewer than 2 letters are typed (nothing is searched yet).
+  ontologyMinLetters: 'πληκτρολογήστε τουλάχιστον 2 γράμματα',
+  // C2 — exact KG form (ADR-030): copy button and the «ακριβής μορφή» disclosure.
+  ontologyCopy: 'αντιγραφή ακριβούς ονόματος',
+  ontologyCopied: 'αντιγράφηκε',
+  ontologyCopyFailed: 'η αντιγραφή απέτυχε',
+  ontologyCopyAll: 'αντιγραφή όλων',
+  ontologyExactFormDiffers: 'ακριβής μορφή στο γράφο (διαφέρει)',
+  ontologyExactFormSpellings: (n: number): string => `ακριβής μορφή στο γράφο (${n} γραφές)`,
+  ontologyWhitespaceLegend: '⇥ tab · ⍽ μη διαχωριστικό κενό · • επιπλέον κενό',
   // Label prefixing the parent-university list on a department row inside
   // the "δείτε τα όλα" browse modal (e.g. "Ιδρύματα: ΑΠΘ, ΠΑΝΕΠΙΣΤΗΜΙΟ
   // ΠΕΙΡΑΙΩΣ") — the inline search card only shows the ontologyDeptSharedNote

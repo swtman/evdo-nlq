@@ -99,7 +99,7 @@ def test_other_classes_have_no_variants(phrase: str, cls: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# API — rank_titles/list_titles mocked
+# API — search_names/list_titles mocked (rank_titles for the course path)
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +124,7 @@ def _dept(variants: dict[str, list[str]]) -> TitleMatch:
 @pytest.mark.parametrize(
     ("path", "patched"),
     [
-        ("/entities/search", "app.api.entities.rank_titles"),
+        ("/entities/search", "app.api.entities.search_names"),
         ("/entities/list", "app.api.entities.list_titles"),
     ],
 )
@@ -135,14 +135,21 @@ def test_api_returns_each_name_with_its_universities(client, path, patched) -> N
             "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)": [DPTH],
         }
     )
-    with patch(patched, return_value=[match]):
-        body = client.get(path, params={"q": "ν", "class": "department"}).json()
+    # search_names returns (page, total); list_titles returns the list
+    returned = ([match], 1) if patched.endswith("search_names") else [match]
+    with patch(patched, return_value=returned):
+        body = client.get(path, params={"q": "νο", "class": "department"}).json()
 
     result = body["results"][0]
     assert result["title"] == "ΝΟΣΗΛΕΥΤΙΚΗΣ"
     assert result["variants"] == [
-        {"name": "ΝΟΣΗΛΕΥΤΙΚΗΣ", "parents": [PADA]},
-        {"name": "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)", "parents": [DPTH]},
+        # ``literal`` (ADR-030 C2): the raw KG name; equal to ``name`` here (no odd whitespace)
+        {"name": "ΝΟΣΗΛΕΥΤΙΚΗΣ", "parents": [PADA], "literal": "ΝΟΣΗΛΕΥΤΙΚΗΣ"},
+        {
+            "name": "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)",
+            "parents": [DPTH],
+            "literal": "ΝΟΣΗΛΕΥΤΙΚΗΣ (ΑΛΕΞΑΝΔΡΟΥΠΟΛΗ)",
+        },
     ]
     assert result["parents"] == [DPTH, PADA]  # unchanged flat field
 
@@ -156,8 +163,8 @@ def test_group_title_drops_the_tail_only_when_several_names(client) -> None:
         }
     )
     lone = _dept({"ΑΙΣΘΗΤΙΚΗΣ ΚΑΙ ΚΟΣΜΗΤΟΛΟΓΙΑΣ (ΚΑΤΑΡΓΗΘΗΚΕ/ΜΕΤΑΦΕΡΘΗΚΕ)": ["ΤΕΙ ΑΘΗΝΑΣ"]})
-    with patch("app.api.entities.rank_titles", return_value=[several, lone]):
-        results = client.get("/entities/search", params={"q": "x", "class": "department"}).json()[
+    with patch("app.api.entities.search_names", return_value=([several, lone], 2)):
+        results = client.get("/entities/search", params={"q": "xy", "class": "department"}).json()[
             "results"
         ]
 
@@ -168,6 +175,6 @@ def test_group_title_drops_the_tail_only_when_several_names(client) -> None:
 def test_non_department_results_have_empty_variants(client) -> None:
     course = TitleMatch(normalized_title="x", score=1.0, surface_forms=["X"], entity_class="course")
     with patch("app.api.entities.rank_titles", return_value=[course]):
-        result = client.get("/entities/search", params={"q": "X"}).json()["results"][0]
+        result = client.get("/entities/search", params={"q": "XY"}).json()["results"][0]
     assert result["variants"] == []
     assert result["title"] == "X"

@@ -25,6 +25,8 @@ WHY status-suffix stripping?
 import re
 import unicodedata
 
+from app.grounding.lexicon import _SEARCH_LOOKALIKES, _SEARCH_SYNONYMS
+
 # Matches a single space followed by a parenthesised annotation at end-of-string.
 # The content between the parentheses can be any non-empty sequence of characters
 # (typically Greek words and slashes), so the pattern is intentionally broad:
@@ -227,3 +229,48 @@ def title_family(text: str) -> str:
             break
         stripped = shorter
     return title_key(stripped) or title_key(text)
+
+
+# ---------------------------------------------------------------------------
+# ΟΝΤΟΛΟΓΙΑ page search — word folding (ADR-030)
+# ---------------------------------------------------------------------------
+# The page search (title_index/word_search.py) compares WORDS: the words of every exact
+# name (index time) with the words typed (search time). Both sides go through
+# search_fold, so they agree by construction. Unlike normalize_greek's default, the
+# trailing "(…)" is KEPT — campus names such as «(ΛΑΡΙΣΑ)» are what people search for
+# (S33/S35). Behaviour pinned to the measured S35 v2.2 prototype (tests/test_search_fold.py).
+
+# Two or more single letters each followed by a dot: «τ.ε.» -> «τε».
+_DOTTED_ABBREVIATION_RE = re.compile(r"(?<!\w)((?:[^\W\d_]\.){2,})")
+# A search word: a run of letters/digits (punctuation and spaces separate words).
+_SEARCH_WORD_RE = re.compile(r"[^\W_]+")
+
+
+def search_fold(text: str) -> str:
+    """Fold a name or a query for the ΟΝΤΟΛΟΓΙΑ word search.
+
+    ``normalize_greek`` with the "(…)" kept, then: dotted abbreviations joined
+    («Τ.Ε.» -> «τε»), ``lexicon._SEARCH_SYNONYMS`` («&» -> «και», «θεσ/νικησ» ->
+    «θεσσαλονικησ»), and whole-word ``lexicon._SEARCH_LOOKALIKES`` (Latin «te» -> «τε»).
+
+    Examples:
+        >>> search_fold("ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ")
+        'αριστοτελειο πανεπιστημιο θεσσαλονικησ'
+        >>> search_fold("ΜΗΧΑΝΟΛΟΓΩΝ ΜΗΧΑΝΙΚΩΝ Τ.Ε.")
+        'μηχανολογων μηχανικων τε'
+    """
+    folded = normalize_greek(text, strip_status_suffix=False)
+    folded = _DOTTED_ABBREVIATION_RE.sub(lambda m: m.group(1).replace(".", "") + " ", folded)
+    for written, meant in _SEARCH_SYNONYMS.items():
+        folded = folded.replace(written, meant)
+    return " ".join(_SEARCH_LOOKALIKES.get(w, w) for w in folded.split())
+
+
+def search_words(text: str) -> list[str]:
+    """The words of ``search_fold(text)``, punctuation dropped.
+
+    Examples:
+        >>> search_words("ΝΟΣΗΛΕΥΤΙΚΗΣ (ΛΑΡΙΣΑ)")
+        ['νοσηλευτικησ', 'λαρισα']
+    """
+    return _SEARCH_WORD_RE.findall(search_fold(text))

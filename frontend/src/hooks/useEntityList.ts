@@ -10,10 +10,11 @@
  * `department` are listable — course/book are far too large (see
  * `EntityClass` in useEntitySearch.ts and `LISTABLE_CLASSES` backend-side).
  *
- * Fetches once per mount (or per `entityClass` change) rather than on every
- * keystroke — the modal's own search box then filters the already-fetched
- * full list client-side, same UX the old bundled-entities.json cards had,
- * just backed by a live fetch instead of a bundled JSON import.
+ * Fetches once per mount (or per `entityClass` change). Used only while the
+ * modal's search box has fewer than 2 letters (the alphabetical browse); typing
+ * switches the modal to the SAME server search the card uses (useEntitySearch,
+ * paged) — there is no client-side filtering any more, which used to make the
+ * card and the modal disagree (ADR-030).
  *
  * Falls back to the same offline sample convention as `useEntitySearch`
  * (VITE_USE_MOCK_API=1, or a failed fetch) so the modal never silently shows

@@ -1,7 +1,9 @@
 """Tests for GET /entities/search and GET /entities/list (app.api.entities).
 
-``rank_titles`` / ``list_titles`` are monkeypatched throughout so these tests
-never touch ``entities.db``.
+``rank_titles`` / ``search_names`` / ``list_titles`` are monkeypatched throughout so
+these tests never touch ``entities.db``. University/department searches reach
+``search_names`` (ADR-030); every search needs at least 2 letters, hence the 2-letter
+queries below. More of the ADR-030 contract: tests/test_entities_search_api.py.
 
 Run from backend/:
     uv run pytest tests/test_entities_endpoint.py -v
@@ -29,11 +31,11 @@ def test_course_search_defaults_and_returns_results(client):
         mock_rank.return_value = [
             TitleMatch(normalized_title="x", score=1.0, surface_forms=["X"], entity_class="course")
         ]
-        response = client.get("/entities/search", params={"q": "X"})
+        response = client.get("/entities/search", params={"q": "XY"})
 
     assert response.status_code == 200
     # class= was omitted -> defaults to "course".
-    mock_rank.assert_called_once_with("X", k=50, entity_class="course")
+    mock_rank.assert_called_once_with("XY", k=50, entity_class="course")
     body = response.json()
     assert body["total"] == 1
     assert body["results"][0]["title"] == "X"
@@ -44,8 +46,12 @@ def test_book_search_reaches_ranker_with_book_class(client):
     the assertion that actually pins that."""
     with patch("app.api.entities.rank_titles") as mock_rank:
         mock_rank.return_value = [
-            TitleMatch(normalized_title="βασεισ δεδομενων", score=0.9,
-                       surface_forms=["Βάσεις Δεδομένων"], entity_class="book")
+            TitleMatch(
+                normalized_title="βασεισ δεδομενων",
+                score=0.9,
+                surface_forms=["Βάσεις Δεδομένων"],
+                entity_class="book",
+            )
         ]
         response = client.get("/entities/search", params={"q": "βασεις", "class": "book"})
 
@@ -65,36 +71,43 @@ def test_unknown_class_returns_400(client):
     assert "book" in response.json()["detail"]
 
 
-def test_university_search_reaches_ranker_with_university_class(client):
-    with patch("app.api.entities.rank_titles") as mock_rank:
-        mock_rank.return_value = [
-            TitleMatch(
-                normalized_title="αριστοτελειο πανεπιστημιο θεσ/νικης",
-                score=1.0,
-                surface_forms=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"],
-                entity_class="university",
-            )
-        ]
+def test_university_search_reaches_word_search(client):
+    """University/department go to the page word search, not rank_titles (ADR-030)."""
+    with patch("app.api.entities.search_names") as mock_search:
+        mock_search.return_value = (
+            [
+                TitleMatch(
+                    normalized_title="αριστοτελειο πανεπιστημιο θεσ/νικης",
+                    score=1.0,
+                    surface_forms=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"],
+                    entity_class="university",
+                )
+            ],
+            1,
+        )
         response = client.get("/entities/search", params={"q": "ΑΠΘ", "class": "university"})
 
     assert response.status_code == 200
-    mock_rank.assert_called_once_with("ΑΠΘ", k=50, entity_class="university")
+    mock_search.assert_called_once_with("ΑΠΘ", entity_class="university", limit=50, offset=0)
     body = response.json()
     assert body["results"][0]["title"] == "ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ"
     assert body["results"][0]["parents"] == []
 
 
 def test_department_search_returns_parents(client):
-    with patch("app.api.entities.rank_titles") as mock_rank:
-        mock_rank.return_value = [
-            TitleMatch(
-                normalized_title="πληροφορικησ",
-                score=0.95,
-                surface_forms=["ΠΛΗΡΟΦΟΡΙΚΗΣ"],
-                entity_class="department",
-                parents=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ", "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ"],
-            )
-        ]
+    with patch("app.api.entities.search_names") as mock_search:
+        mock_search.return_value = (
+            [
+                TitleMatch(
+                    normalized_title="πληροφορικησ",
+                    score=0.95,
+                    surface_forms=["ΠΛΗΡΟΦΟΡΙΚΗΣ"],
+                    entity_class="department",
+                    parents=["ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ", "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ"],
+                )
+            ],
+            1,
+        )
         response = client.get(
             "/entities/search", params={"q": "πληροφορικης", "class": "department"}
         )
@@ -113,7 +126,7 @@ def test_course_search_parents_is_empty_list(client):
         mock_rank.return_value = [
             TitleMatch(normalized_title="x", score=1.0, surface_forms=["X"], entity_class="course")
         ]
-        response = client.get("/entities/search", params={"q": "X"})
+        response = client.get("/entities/search", params={"q": "XY"})
 
     assert response.json()["results"][0]["parents"] == []
 
@@ -121,14 +134,17 @@ def test_course_search_parents_is_empty_list(client):
 def test_limit_is_passed_through_as_k(client):
     with patch("app.api.entities.rank_titles") as mock_rank:
         mock_rank.return_value = []
-        client.get("/entities/search", params={"q": "x", "limit": 10})
+        client.get("/entities/search", params={"q": "xy", "limit": 10})
 
-    mock_rank.assert_called_once_with("x", k=10, entity_class="course")
+    mock_rank.assert_called_once_with("xy", k=10, entity_class="course")
 
 
 def test_limit_out_of_bounds_rejected(client):
+    # Max 1000, like /entities/list: the ΟΝΤΟΛΟΓΙΑ modal asks for ALL results of a query
+    # in one scrollable list (ADR-030; the broadest 2-letter query returns 120 departments).
     assert client.get("/entities/search", params={"q": "x", "limit": 0}).status_code == 422
-    assert client.get("/entities/search", params={"q": "x", "limit": 101}).status_code == 422
+    assert client.get("/entities/search", params={"q": "x", "limit": 1001}).status_code == 422
+    assert client.get("/entities/search", params={"q": "x", "limit": 1000}).status_code == 200
 
 
 def test_empty_query_rejected(client):
@@ -163,7 +179,7 @@ def test_display_prefers_mixed_case_over_all_caps(client):
                 surface_forms=["ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ", "Αρχιτεκτονική Υπολογιστών"],
             )
         ]
-        response = client.get("/entities/search", params={"q": "x"})
+        response = client.get("/entities/search", params={"q": "xy"})
 
     assert response.json()["results"][0]["title"] == "Αρχιτεκτονική Υπολογιστών"
 
@@ -173,7 +189,7 @@ def test_display_falls_back_to_first_when_all_uppercase(client):
         mock_rank.return_value = [
             TitleMatch(normalized_title="x", score=1.0, surface_forms=["ΒΑΣΕΙΣ ΔΕΔΟΜΕΝΩΝ"])
         ]
-        response = client.get("/entities/search", params={"q": "x"})
+        response = client.get("/entities/search", params={"q": "xy"})
 
     assert response.json()["results"][0]["title"] == "ΒΑΣΕΙΣ ΔΕΔΟΜΕΝΩΝ"
 
@@ -187,7 +203,7 @@ def test_display_collapses_whitespace_but_matching_stays_on_raw_data(client):
         mock_rank.return_value = [
             TitleMatch(normalized_title="x", score=1.0, surface_forms=["Οικονομετρία\xa0 ΙΙ"])
         ]
-        response = client.get("/entities/search", params={"q": "x"})
+        response = client.get("/entities/search", params={"q": "xy"})
 
     assert response.json()["results"][0]["title"] == "Οικονομετρία ΙΙ"
 
@@ -270,8 +286,13 @@ def test_list_limit_passed_through(client):
 
 
 def test_list_limit_out_of_bounds_rejected(client):
-    assert client.get("/entities/list", params={"class": "university", "limit": 0}).status_code == 422
-    assert client.get("/entities/list", params={"class": "university", "limit": 1001}).status_code == 422
+    assert (
+        client.get("/entities/list", params={"class": "university", "limit": 0}).status_code == 422
+    )
+    assert (
+        client.get("/entities/list", params={"class": "university", "limit": 1001}).status_code
+        == 422
+    )
 
 
 def test_list_default_limit_is_1000(client):
