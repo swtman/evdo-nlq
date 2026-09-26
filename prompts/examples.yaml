@@ -2,8 +2,9 @@
 # Gold example bank for NL → SPARQL evaluation and static few-shot prompting.
 #
 # Promoted from notes/draftedQueries.txt (Q1–Q18) + 3 NOT_ANSWERABLE entries.
-# NL questions (question_english) taken from the original query descriptions.
 # question_greek fields marked "TODO" must be filled in by the author before eval.
+# Greek only (ADR-033, 2026-09-26): users ask in Greek, so the English translations
+# (question_english) were removed; the eval runs every example once, in Greek.
 #
 # MIGRATION NOTE (2026-06-11): all gold_sparql rewritten for the post-overhaul
 # EvdoGraph schema. evdx:Module (course offering) was renamed to evdx:Course;
@@ -54,9 +55,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-001
     source: "notes/draftedQueries.txt#Q1"
-    question_english: >
-      Return all courses that use book 94700120 in the academic year 2022,
-      along with the department and university.
     question_greek: "Σε ποια μαθήματα χρησιμοποιείται το βιβλίο με κωδικό 94700120 το ακαδημαϊκό έτος 2022; Εμφάνισε και το Τμήμα και το Πανεπιστήμιο."
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -91,9 +89,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-002
     source: "notes/draftedQueries.txt#Q2"
-    question_english: >
-      How many courses use books 102070469 or 13909 in 2022, and what are
-      their names? Group by department.
     question_greek: "Πόσα μαθήματα χρησιμοποιούν τα βιβλία 102070469 ή 13909 το 2022 και ποιες είναι οι ονομασίες τους; Ομαδοποίησε ανά Τμήμα."
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -131,9 +126,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-003
     source: "notes/draftedQueries.txt#Q3"
-    question_english: >
-      In how many courses, departments, and universities are books 102070469
-      and 13909 used in 2022?
     question_greek: "Σε πόσα μαθήματα, Τμήματα και Πανεπιστήμια χρησιμοποιούνται τα βιβλία με κωδικούς 102070469 και 13909 το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -167,9 +159,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-004
     source: "notes/draftedQueries.txt#Q4"
-    question_english: >
-      In how many courses, departments, and universities are books 94700120
-      and 12867416 used, broken down per year for 2019–2022?
     question_greek: "Σε πόσα μαθήματα, Τμήματα και Πανεπιστήμια χρησιμοποιούνται τα βιβλία 94700120 και 12867416 ανά ακαδημαϊκό έτος από το 2019 έως το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -202,9 +191,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-005
     source: "notes/draftedQueries.txt#Q5"
-    question_english: >
-      Which departments (with university and course details) adopted books
-      102070469 or 13909 in 2022 that did not use them in 2021?
     question_greek: "Ποια Τμήματα (με στοιχεία Πανεπιστημίου και Μαθημάτων) χρησιμοποίησαν τα βιβλία 102070469 ή 13909 το 2022, ενώ δεν τα χρησιμοποιούσαν το 2021;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -252,9 +238,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-006
     source: "notes/draftedQueries.txt#Q6"
-    question_english: >
-      Which universities (with department and course details) adopted books
-      102070469 or 13909 in 2022 that did not use them in 2021?
     question_greek: "Ποια Πανεπιστήμια (με στοιχεία Τμημάτων και Μαθημάτων) χρησιμοποίησαν τα βιβλία 102070469 ή 13909 το 2022, ενώ δεν τα χρησιμοποιούσαν το 2021;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -303,9 +286,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-007
     source: "notes/draftedQueries.txt#Q7"
-    question_english: >
-      Which specific courses (with department and university) were newly
-      added for books 102070469 or 13909 in 2022 compared to 2021?
     question_greek: "Ποια συγκεκριμένα Μαθήματα (με Τμήμα και Πανεπιστήμιο) εισήγαγαν για πρώτη φορά τα βιβλία 102070469 ή 13909 το 2022 σε σχέση με το 2021;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -356,10 +336,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-008
     source: "notes/draftedQueries.txt#Q8"
-    question_english: >
-      Compare the reach of book group A (codes 94700120, 12867416) vs group B
-      (codes 102070469, 13909) in 2022: how many universities, departments,
-      and courses use each group?
     question_greek: "Σύγκρινε την εμβέλεια της ομάδας βιβλίων 94700120 και 12867416 με την ομάδα 102070469 και 13909 για το 2022: σε πόσα Πανεπιστήμια, Τμήματα και Μαθήματα χρησιμοποιείται η κάθε ομάδα;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -389,9 +365,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-009
     source: "notes/draftedQueries.txt#Q9"
-    question_english: >
-      Which courses (with department and university) use books 102070469 or
-      13909 but NOT book 94700120 in 2022?
     question_greek: "Ποια Μαθήματα (με Τμήμα και Πανεπιστήμιο) χρησιμοποιούν τα βιβλία 102070469 ή 13909 αλλά ΟΧΙ το βιβλίο 94700120 το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -434,9 +407,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-010
     source: "notes/draftedQueries.txt#Q10"
-    question_english: >
-      Which departments (with university and course details) use book 94700120
-      but NOT books 102070469 or 13909 in 2022?
     question_greek: "Ποια Τμήματα (με Πανεπιστήμιο και Μαθήματα) χρησιμοποιούν το βιβλίο 94700120 αλλά ΟΧΙ τα βιβλία 102070469 ή 13909 το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -486,9 +456,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-011
     source: "notes/draftedQueries.txt#Q11"
-    question_english: >
-      Which universities (with department and course details) use book 94700120
-      but NOT books 102070469 or 13909 in 2022?
     question_greek: "Ποια Πανεπιστήμια (με Τμήματα και Μαθήματα) χρησιμοποιούν το βιβλίο 94700120 αλλά ΟΧΙ τα βιβλία 102070469 ή 13909 το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -536,9 +503,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-012
     source: "notes/draftedQueries.txt#Q12"
-    question_english: >
-      Which courses (with department and university) use BOTH book 94700120
-      AND books 102070469 or 13909 in 2022?
     question_greek: "Ποια Μαθήματα (με Τμήμα και Πανεπιστήμιο) χρησιμοποιούν ΚΑΙ το βιβλίο 94700120 ΚΑΙ τα βιβλία 102070469 ή 13909 το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -581,9 +545,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-013
     source: "notes/draftedQueries.txt#Q13"
-    question_english: >
-      Which departments (with university and course details) use BOTH book
-      94700120 AND books 102070469 or 13909 in 2022?
     question_greek: "Ποια Τμήματα (με Πανεπιστήμιο και Μαθήματα) χρησιμοποιούν ΚΑΙ το βιβλίο 94700120 ΚΑΙ τα βιβλία 102070469 ή 13909 το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -632,9 +593,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-014
     source: "notes/draftedQueries.txt#Q14"
-    question_english: >
-      Which universities (with department and course details) use BOTH book
-      94700120 AND books 102070469 or 13909 in 2022?
     question_greek: "Ποια Πανεπιστήμια (με Τμήματα και Μαθήματα) χρησιμοποιούν ΚΑΙ το βιβλίο 94700120 ΚΑΙ τα βιβλία 102070469 ή 13909 το 2022;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -682,9 +640,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-015
     source: "notes/draftedQueries.txt#Q15 (reworked for new schema)"
-    question_english: >
-      Which departments (with their university) offered no courses at all in
-      2022 — i.e. were inactive that year?
     question_greek: "Ποια Τμήματα (με το Πανεπιστήμιό τους) δεν πρόσφεραν κανένα μάθημα το 2022 — δηλαδή ήταν ανενεργά εκείνη τη χρονιά;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -716,9 +671,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-016
     source: "notes/draftedQueries.txt#Q16"
-    question_english: >
-      Which universities had no active courses at all in 2022 — i.e. none of
-      their departments offered any course that year?
     question_greek: "Ποια Πανεπιστήμια δεν είχαν κανένα ενεργό μάθημα το 2022 — δηλαδή κανένα Τμήμα τους δεν πρόσφερε μαθήματα εκείνη τη χρονιά;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -749,9 +701,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-017
     source: "notes/draftedQueries.txt#Q17"
-    question_english: >
-      List all books with their title and count of courses, departments, and
-      universities that use them in 2022, ordered by university count descending.
     question_greek: "Λίστα όλων των βιβλίων με τίτλο και αριθμό Μαθημάτων, Τμημάτων και Πανεπιστημίων που τα χρησιμοποιούν το 2022, ταξινομημένη φθίνουσα ανά Πανεπιστήμια."
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -786,9 +735,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-018
     source: "notes/draftedQueries.txt#Q18"
-    question_english: >
-      List all books with title, department count, and course count for 2022,
-      ordered by department count then course count descending.
     question_greek: "Λίστα βιβλίων με τίτλο, αριθμό Τμημάτων και αριθμό Μαθημάτων για το 2022, ταξινομημένη φθίνουσα πρώτα ανά Τμήματα και μετά ανά Μαθήματα."
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -817,9 +763,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-019
     source: "handwritten"
-    question_english: >
-      What is the average grade a student received in a course that uses
-      book 94700120?
     question_greek: "Ποια είναι η μέση βαθμολογία φοιτητή σε μάθημα που χρησιμοποιεί το βιβλίο με κωδικό 94700120;"
     gold_sparql: "# NOT_ANSWERABLE: EvdoGraph contains no student enrollment or grade data."
     query_shape: not-answerable
@@ -833,9 +776,6 @@ examples:
 
   - id: ex-020
     source: "handwritten"
-    question_english: >
-      How many students enrolled in the Computer Science department at
-      Aristotle University in 2022?
     question_greek: "Πόσοι φοιτητές εγγράφηκαν στο Τμήμα Πληροφορικής του Αριστοτελείου Πανεπιστημίου Θεσσαλονίκης το 2022;"
     gold_sparql: "# NOT_ANSWERABLE: EvdoGraph contains no student enrollment counts."
     query_shape: not-answerable
@@ -853,8 +793,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-021
     source: "handwritten (replaces pre-migration ISBN NOT_ANSWERABLE entry)"
-    question_english: >
-      For the book with code 94700120, what is its title, ISBN, and author(s)?
     question_greek: "Για το βιβλίο με κωδικό 94700120, ποιος είναι ο τίτλος, το ISBN και ο/οι συγγραφέας/είς του;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -886,9 +824,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-022
     source: "handwritten (new for 2026-06-11 schema migration)"
-    question_english: >
-      For the book with code 94700120, who is the publisher and what
-      keywords/topics is it tagged with?
     question_greek: "Για το βιβλίο με κωδικό 94700120, ποιος είναι ο εκδότης και με ποιες λέξεις-κλειδιά/θεματικές είναι σημειωμένο;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -924,8 +859,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-023
     source: "handwritten (Stage 1 grounding)"
-    question_english: >
-      Which books are proposed by AUTH?
     question_greek: "Ποια βιβλία προτείνει το ΑΠΘ;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -955,8 +888,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-024
     source: "handwritten (Stage 1 grounding)"
-    question_english: >
-      Which algorithm books does AUTH propose?
     question_greek: "Ποια βιβλία αλγορίθμων προτείνει το ΑΠΘ;"
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -991,9 +922,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-025
     source: "handwritten (flat-join pattern for 'which books AND which courses')"
-    question_english: >
-      Which books on religious topics are recommended by the University of
-      Piraeus in 2022, and in which courses are they assigned?
     question_greek: "Ποια βιβλία σχετικά με θρησκευτικά θέματα και σε ποια μαθήματα προτείνονται από το Πανεπιστήμιο Πειραιώς το 2022;"
     gold_sparql: |
         PREFIX evdx: <https://w3id.org/evdoxus#>
@@ -1054,9 +982,6 @@ examples:
   # ---------------------------------------------------------------------------
   - id: ex-026
     source: "handwritten (GROUP_CONCAT pattern for 'which books and which courses use them')"
-    question_english: >
-      Which books on religious topics are recommended by the University of
-      Piraeus in 2022? Show each book once with all its courses listed.
     question_greek: "Ποια βιβλία σχετικά με θρησκευτικά θέματα προτείνει το Πανεπιστήμιο Πειραιώς το 2022; Εμφάνισε κάθε βιβλίο μία φορά με όλα τα μαθήματά του."
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>

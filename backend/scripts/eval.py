@@ -49,9 +49,15 @@ query declares — not by column name. A gold query using ?title and a generated
 query using ?t are compared first-column-to-first-column. Different variable
 names are tolerated; wrong column ordering is not.
 
+GREEK ONLY (ADR-033)
+---------------------
+Users ask in Greek (a question may contain English words), so every example runs once, with
+its question_greek; the gold files carry no English translation. Reports keep the word
+"greek" in the header and file name so they line up with the earlier `-greek-` runs.
+
 Usage (from backend/):
-    uv run python scripts/eval.py --provider claude --model claude-haiku-4-5 --language greek
-    uv run python scripts/eval.py --prompt-version 1 --provider fake --language english
+    uv run python scripts/eval.py --provider claude --model claude-haiku-4-5
+    uv run python scripts/eval.py --prompt-version 1 --provider fake
 
 Options:
     --prompt-version  any prompts/nl-to-sparql-v<N>.md on disk (default: PROMPT_VERSION from
@@ -60,7 +66,6 @@ Options:
     --examples-file   gold example file (default: prompts/examples.yaml)
     --provider        claude | gemini | fake (default: claude)
     --model           model name (default: claude-haiku-4-5)
-    --language        greek | english | both (default: both)
     --output          path for the Markdown report (auto-named if omitted)
     --no-skip-eval    include skip_eval: true examples (excluded by default)
     --no-cache        bypass DiskCache for a fresh-LLM eval run
@@ -460,9 +465,8 @@ def _eval_example(
     ex: dict[str, Any],
     pipeline: QueryPipeline,
     sparql_client: SparqlClient,
-    language: str,
 ) -> dict[str, Any]:
-    """Run one gold example through the full eval cycle and return a result record.
+    """Run one gold example (its Greek question) through the eval cycle; return a result record.
 
     WHAT HAPPENS IN THIS FUNCTION (four phases)
     --------------------------------------------
@@ -516,8 +520,7 @@ def _eval_example(
     --------------------
     id               : example ID (e.g. "ex-005")
     query_shape      : shape category (e.g. "simple-lookup", "aggregation")
-    language         : "greek" or "english"
-    question         : the NL question sent to the LLM
+    question         : the NL question sent to the LLM (question_greek)
     gold_sparql      : the reference SPARQL from examples.yaml
     generated_sparql : what the LLM produced (None if the pipeline errored)
     result_match     : True (PASS) | False (FAIL) | None (SKIP / broken gold)
@@ -528,14 +531,13 @@ def _eval_example(
     output_tokens    : LLM response tokens generated
     duration_s       : wall-clock seconds for this entire example
     """
-    question = ex["question_greek"] if language == "greek" else ex["question_english"]
+    question = ex["question_greek"]
     mode = ex["comparison_mode"]
     gold_sparql: str = ex["gold_sparql"].strip()
 
     result: dict[str, Any] = {
         "id": ex["id"],
         "query_shape": ex["query_shape"],
-        "language": language,
         "question": question,
         "gold_sparql": gold_sparql,
         "generated_sparql": None,
@@ -737,7 +739,6 @@ def _render_report(
     prompt_version: int,
     provider: str,
     model: str,
-    language: str,
     run_at: str,
     git_sha: str,
     prompt_sha: str,
@@ -792,7 +793,8 @@ def _render_report(
             shape_stats[s]["pass"] += 1
 
     lines = [
-        f"# Eval Report — prompt v{prompt_version} | {provider}/{model} | {language} | {run_at}",
+        # "greek": fixed since ADR-033 (Greek only), kept for continuity with earlier reports.
+        f"# Eval Report — prompt v{prompt_version} | {provider}/{model} | greek | {run_at}",
         "",
         "## Provenance",
         "",
@@ -836,7 +838,7 @@ def _render_report(
         else:
             status = "SKIP"
         lines.append(f"### [{status}] {r['id']} — {r['query_shape']}")
-        lines.append(f"**Q ({r['language']}):** {r['question']}")
+        lines.append(f"**Q:** {r['question']}")
         if r.get("broken_gold"):
             lines.append(
                 "**Warning: Gold SPARQL failed to execute — excluded from metrics "
@@ -1045,16 +1047,11 @@ def main() -> None:
     Applying --example-id and --shape together is allowed but almost always
     returns 0 results (a specific example only belongs to one shape).
 
-    LANGUAGE LOOP AND REPORT STRUCTURE
-    -----------------------------------
-    With --language both (the default), every example runs TWICE: once with
-    question_greek and once with question_english. The results list contains
-    one entry per (example, language) pair, so N examples → 2N result records.
-    The per-shape accuracy table aggregates both language passes together.
-    This lets you spot whether the model performs differently in Greek vs English,
-    but note that both runs use the same dual-language few-shot prompt — the
-    per-language scores measure question-text differences, not prompt-language
-    differences.
+    ONE PASS, GREEK ONLY (ADR-033)
+    ------------------------------
+    Every example runs once, with its question_greek: N examples → N result records.
+    (Until ADR-033 `--language both` — the default — ran every example twice, the
+    second time with an English translation users never type.)
 
     PROVENANCE GATHERING
     --------------------
@@ -1064,6 +1061,12 @@ def main() -> None:
     completed — if you edited a prompt mid-run, the hash will reflect the
     edited version.
     """
+    args = _build_arg_parser().parse_args()
+    _run(args)
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """The command-line options (see the module docstring). Separate so tests can read them."""
     parser = argparse.ArgumentParser(description="Eval harness for NL->SPARQL.")
     parser.add_argument(
         "--prompt-version",
@@ -1082,11 +1085,6 @@ def main() -> None:
     )
     parser.add_argument("--provider", default="claude", choices=["claude", "gemini", "fake"])
     parser.add_argument("--model", default="claude-haiku-4-5")
-    parser.add_argument(
-        "--language",
-        default="both",
-        choices=["greek", "english", "both"],
-    )
     parser.add_argument("--output", default=None, help="Output .md path (auto-named if omitted)")
     parser.add_argument(
         "--no-skip-eval",
@@ -1112,8 +1110,11 @@ def main() -> None:
         metavar="SHAPE",
         help="Run only examples with this query_shape (e.g. negative-existence)",
     )
-    args = parser.parse_args()
+    return parser
 
+
+def _run(args: argparse.Namespace) -> None:
+    """Validate the gold file, run every selected example once, write the report."""
     # --no-cache bypasses the DiskCache, which normally stores LLM responses on
     # disk keyed by sha256(system + user + model). Bypassing ensures fresh LLM
     # calls for every example — necessary when you want to measure true model
@@ -1166,8 +1167,6 @@ def main() -> None:
         if not examples:
             sys.exit(f"ERROR: no examples with shape={args.shape!r}")
 
-    languages = ["greek", "english"] if args.language == "both" else [args.language]
-
     run_at = datetime.now().strftime("%Y-%m-%dT%H:%M")
     results: list[dict[str, Any]] = []
 
@@ -1175,19 +1174,18 @@ def main() -> None:
     pipeline = _build_pipeline(args.prompt_version, args.provider, args.model)
     grounded = _is_grounded(args.prompt_version)
 
-    for lang in languages:
-        print(
-            f"\nRunning eval: prompt=v{args.prompt_version} "
-            f"({'grounded, per question' if grounded else 'fixed'}) provider={args.provider} "
-            f"model={args.model} lang={lang} examples={examples_path.name}"
-        )
-        for ex in examples:
-            print(f"  {ex['id']} ({ex['query_shape']}) ...", end="", flush=True)
-            result = _eval_example(ex, pipeline, sparql_client, lang)
-            results.append(result)
-            rm = result["result_match"]
-            sym = "PASS" if rm is True else ("SKIP" if rm is None else "FAIL")
-            print(f" {sym} ({result['duration_s']:.1f}s)")
+    print(
+        f"\nRunning eval: prompt=v{args.prompt_version} "
+        f"({'grounded, per question' if grounded else 'fixed'}) provider={args.provider} "
+        f"model={args.model} examples={examples_path.name}"
+    )
+    for ex in examples:
+        print(f"  {ex['id']} ({ex['query_shape']}) ...", end="", flush=True)
+        result = _eval_example(ex, pipeline, sparql_client)
+        results.append(result)
+        rm = result["result_match"]
+        sym = "PASS" if rm is True else ("SKIP" if rm is None else "FAIL")
+        print(f" {sym} ({result['duration_s']:.1f}s)")
 
     # Gather provenance metadata after all examples complete.
     # File hashes reflect the content actually used during this run.
@@ -1197,7 +1195,6 @@ def main() -> None:
         prompt_version=args.prompt_version,
         provider=args.provider,
         model=args.model,
-        language=args.language,
         run_at=run_at,
         git_sha=_git_sha(),
         prompt_sha=_file_sha256(prompt_path),
@@ -1210,7 +1207,8 @@ def main() -> None:
     if args.output:
         out_path = Path(args.output)
     else:
-        slug = f"{run_at[:10]}-v{args.prompt_version}-{args.language}-{args.provider}-{args.model}"
+        # "greek" is fixed (ADR-033) — keeps names in line with the earlier -greek- reports.
+        slug = f"{run_at[:10]}-v{args.prompt_version}-greek-{args.provider}-{args.model}"
         if examples_path.resolve() != _EXAMPLES_PATH.resolve():
             slug += f"-{examples_path.stem}"
         _EVAL_RUNS_DIR.mkdir(parents=True, exist_ok=True)

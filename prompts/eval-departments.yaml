@@ -23,13 +23,12 @@
 # Data: candidates and gold numbers from S29
 # (notes/investigations/title-linking/results/s29_dept_course_counts.txt,
 # data/dept_course_counts_2022.json, GraphDB 2026-09-25). Generated, not real
-# user questions (decision 3 limitation).
+# user questions (decision 3 limitation). Greek only (ADR-033, 2026-09-26).
 
 version: 1
 examples:
   - id: dept-named-01
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Οικονομικών Επιστημών του Πανεπιστημίου Πελοποννήσου;
-    question_english: How many courses did the Department of Economics of the University of the Peloponnese have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -51,7 +50,6 @@ examples:
 
   - id: dept-named-02
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Ηλεκτρολόγων Μηχανικών και Μηχανικών Υπολογιστών του Πολυτεχνείου Κρήτης;
-    question_english: How many courses did the Department of Electrical and Computer Engineering of the Technical University of Crete have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -73,7 +71,6 @@ examples:
 
   - id: dept-named-03
     question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Φυσικής του Πανεπιστημίου Πατρών το 2022;
-    question_english: How many courses did the Department of Physics of the University of Patras offer in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -95,7 +92,6 @@ examples:
 
   - id: dept-named-04
     question_greek: Πόσα μαθήματα είχε το 2022 το Παιδαγωγικό Τμήμα Δημοτικής Εκπαίδευσης του Πανεπιστημίου Κρήτης;
-    question_english: How many courses did the Department of Primary Education of the University of Crete have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -117,7 +113,6 @@ examples:
 
   - id: dept-named-05
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Νοσηλευτικής του Πανεπιστημίου Πελοποννήσου;
-    question_english: How many courses did the Department of Nursing of the University of the Peloponnese have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -139,7 +134,6 @@ examples:
 
   - id: dept-named-06
     question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Πληροφορικής του ΠΑΠΕΙ το 2022;
-    question_english: How many courses did the Department of Informatics of the University of Piraeus offer in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -161,7 +155,6 @@ examples:
 
   - id: dept-named-07
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Ψυχολογίας του Παντείου Πανεπιστημίου;
-    question_english: How many courses did the Department of Psychology of Panteion University have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -183,7 +176,6 @@ examples:
 
   - id: dept-named-08
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Νομικής του ΕΚΠΑ;
-    question_english: How many courses did the School of Law of the National and Kapodistrian University of Athens have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -205,7 +197,6 @@ examples:
 
   - id: dept-named-09
     question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Κοινωνικής Εργασίας του ΠΑΔΑ το 2022;
-    question_english: How many courses did the Department of Social Work of the University of West Attica offer in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -227,7 +218,6 @@ examples:
 
   - id: dept-named-10
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Μουσικών Σπουδών του Πανεπιστημίου Ιωαννίνων;
-    question_english: How many courses did the Department of Music Studies of the University of Ioannina have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -249,7 +239,6 @@ examples:
 
   - id: dept-named-11
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Γεωγραφίας του Χαροκοπείου Πανεπιστημίου;
-    question_english: How many courses did the Department of Geography of Harokopio University have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -271,7 +260,6 @@ examples:
 
   - id: dept-named-12
     question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Κτηνιατρικής του Πανεπιστημίου Θεσσαλίας το 2022;
-    question_english: How many courses did the Department of Veterinary Medicine of the University of Thessaly offer in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -293,7 +281,6 @@ examples:
 
   - id: dept-absent-01
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Νοσηλευτικής του ΑΠΘ;
-    question_english: How many courses did the Department of Nursing of the Aristotle University of Thessaloniki have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -318,7 +305,6 @@ examples:
 
   - id: dept-absent-02
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Ψυχολογίας του ΕΜΠ;
-    question_english: How many courses did the Department of Psychology of the National Technical University of Athens have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -341,7 +327,6 @@ examples:
 
   - id: dept-absent-03
     question_greek: Πόσα μαθήματα προσέφερε το Τμήμα Νομικής του Πανεπιστημίου Πατρών το 2022;
-    question_english: How many courses did the School of Law of the University of Patras offer in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -364,7 +349,6 @@ examples:
 
   - id: dept-absent-04
     question_greek: Πόσα μαθήματα είχε το 2022 το Τμήμα Κτηνιατρικής του ΕΚΠΑ;
-    question_english: How many courses did the Department of Veterinary Medicine of the National and Kapodistrian University of Athens have in 2022?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?c) AS ?NoOfCourses)
@@ -387,7 +371,6 @@ examples:
 
   - id: dept-bare-01
     question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Κοινωνιολογίας;
-    question_english: How many universities have a Department of Sociology?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)
@@ -409,7 +392,6 @@ examples:
 
   - id: dept-bare-02
     question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Αρχιτεκτόνων Μηχανικών;
-    question_english: How many universities have a Department of Architecture?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)
@@ -428,7 +410,6 @@ examples:
 
   - id: dept-bare-03
     question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Βιολογίας;
-    question_english: How many universities have a Department of Biology?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)
@@ -449,7 +430,6 @@ examples:
 
   - id: dept-bare-04
     question_greek: Σε πόσα πανεπιστήμια υπάρχει Τμήμα Ιατρικής;
-    question_english: How many universities have a Department (School) of Medicine?
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       SELECT (COUNT(DISTINCT ?un) AS ?NoOfUniversities)

@@ -90,7 +90,7 @@ Then run the eval harness:
 cd backend
 $env:LLM_PROVIDER = "ollama"
 $env:LLM_MODEL    = "qwen2.5:7b-instruct"
-uv run python scripts/eval.py --prompt-version 2 --provider ollama --model qwen2.5:7b-instruct --language both
+uv run python scripts/eval.py --prompt-version 2 --provider ollama --model qwen2.5:7b-instruct
 ```
 
 Eval reports are saved to `notes/eval-runs/` with full provenance (git SHA,

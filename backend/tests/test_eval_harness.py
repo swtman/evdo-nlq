@@ -104,7 +104,6 @@ def test_report_provenance_records_grounding_inputs(harness) -> None:
         prompt_version=6,
         provider="fake",
         model="fake-v1",
-        language="greek",
         run_at="2026-09-24T12:00",
         git_sha="abc1234",
         prompt_sha="p" * 12,
@@ -116,3 +115,56 @@ def test_report_provenance_records_grounding_inputs(harness) -> None:
     assert "eval-titles.yaml" in report
     assert "entities.db" in report and "snapshot 2026-09-24" in report
     assert "per-question grounding" in report
+
+
+# ---------------------------------------------------------------------------
+# Greek only (branch 4b, ADR-033 — title-linking plan decision 6)
+# ---------------------------------------------------------------------------
+
+
+def test_report_header_still_says_greek(harness) -> None:
+    """Reports keep the word "greek" in the header (and file name) so they line up with the
+    earlier `-greek-` runs, although there is no language choice any more."""
+    report = harness._render_report(
+        [],
+        prompt_version=8,
+        provider="fake",
+        model="fake-v1",
+        run_at="2026-09-26T12:00",
+        git_sha="abc1234",
+        prompt_sha="p" * 12,
+        examples_sha="e" * 12,
+    )
+    assert report.splitlines()[0].startswith("# Eval Report — prompt v8 | fake/fake-v1 | greek |")
+
+
+def test_language_option_is_gone(harness) -> None:
+    """Users ask in Greek only: `--language` (and its default `both`, which ran every example
+    twice) no longer exists."""
+    parser = harness._build_arg_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--language", "greek"])
+    assert not hasattr(parser.parse_args([]), "language")
+
+
+def test_example_without_an_english_question_runs(harness) -> None:
+    """An example with only `question_greek` runs once, with that question, and the record
+    carries no language field."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    pipeline = MagicMock()
+    pipeline.run.return_value = SimpleNamespace(
+        sparql="# NOT_ANSWERABLE: no such data", input_tokens=0, output_tokens=0
+    )
+    example = {
+        "id": "ex-x",
+        "query_shape": "not-answerable",
+        "comparison_mode": "not-answerable",
+        "question_greek": "Ποιος είναι ο καιρός;",
+        "gold_sparql": "# NOT_ANSWERABLE: x",
+    }
+    result = harness._eval_example(example, pipeline, MagicMock())
+    pipeline.run.assert_called_once_with("Ποιος είναι ο καιρός;")
+    assert result["result_match"] is True
+    assert "language" not in result

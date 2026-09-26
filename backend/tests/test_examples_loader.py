@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 
 from app.prompts.examples_loader import (
     REQUIRED_FIELDS,
@@ -102,7 +103,25 @@ class TestSelectFewShot:
         block = select_few_shot(k=10, include_not_answerable=True)
         assert "NOT_ANSWERABLE" in block
 
-    def test_block_has_both_language_questions(self) -> None:
-        block = select_few_shot(k=1)
-        assert "Question (Greek):" in block
-        assert "Question (English):" in block
+    def test_block_has_only_the_greek_question(self) -> None:
+        """Users ask in Greek only (ADR-033): one "Question:" line per example — the English
+        translation no longer takes space in every system prompt."""
+        block = select_few_shot(k=8)
+        assert block.count("Question: ") == block.count("### Example ")
+        assert "Question (English)" not in block
+        assert "Question (Greek)" not in block
+
+
+class TestGreekOnly:
+    def test_english_question_is_not_required(self) -> None:
+        assert "question_english" not in REQUIRED_FIELDS
+        assert "question_greek" in REQUIRED_FIELDS
+
+    def test_gold_files_carry_no_english_questions(self) -> None:
+        """Both gold files are Greek-only (ADR-033) — the eval measures what users ask."""
+        import yaml
+
+        prompts = Path(__file__).resolve().parents[2] / "prompts"
+        for name in ("examples.yaml", "eval-departments.yaml"):
+            examples = yaml.safe_load((prompts / name).read_text(encoding="utf-8"))["examples"]
+            assert not [ex["id"] for ex in examples if "question_english" in ex], name

@@ -43,9 +43,10 @@ _SHAPE_ORDER = [
     "ranking-by-count",
 ]
 
+# Greek only (ADR-033, title-linking plan decision 6): users ask in Greek, so the gold
+# files carry no English translation and the few-shot block shows one question per example.
 REQUIRED_FIELDS = {
     "id",
-    "question_english",
     "question_greek",
     "gold_sparql",
     "query_shape",
@@ -123,14 +124,8 @@ def _render_block(examples: list[dict[str, Any]]) -> str:
         gran = ex.get("granularity", "n/a")
         label = f"{shape} ({gran})" if gran != "n/a" else shape
         sparql = ex["gold_sparql"].strip()
-        q_en = ex["question_english"].strip()
-        q_gr = ex["question_greek"].strip()
-        block = (
-            f"### Example {i} — {label}\n"
-            f"Question (Greek): {q_gr}\n"
-            f"Question (English): {q_en}\n"
-            f"SPARQL:\n{sparql}"
-        )
+        question = ex["question_greek"].strip()
+        block = f"### Example {i} — {label}\nQuestion: {question}\nSPARQL:\n{sparql}"
         parts.append(block)
 
     return "\n\n".join(parts)
