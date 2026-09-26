@@ -9,12 +9,17 @@ stays what ``tests/test_grounding_hints.py`` monkeypatches.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
+from app.grounding.gazetteer import longest_entity_key
 from app.grounding.lexicon import _GREEK_STOPWORDS, _INSTITUTION_GLUE
-from app.grounding.linker import ResolvedEntity, entity_key, resolve_mention
-from app.grounding.normalize import is_series_marker, normalize_greek
+from app.grounding.linker import ResolvedEntity, entity_key, resolve_exact, resolve_mention
+from app.grounding.normalize import (
+    is_content_token,
+    is_series_marker,
+    normalize_greek,
+    word_tokens,
+)
 from app.grounding.stem import MIN_STEM_LEN, topic_stem
 
 # Priority for deduplicating entity matches across window sizes.
@@ -65,14 +70,14 @@ def _tokenize(
         List of raw token strings that survive the filter (original casing
         preserved so that acronym detection like "ΑΠΘ" works at full uppercase).
     """
-    # Unicode-aware: runs of letters (no digits, no punctuation) or runs of digits.
-    raw_tokens: list[str] = re.findall(r"[^\s\W\d]+|\d+", question, flags=re.UNICODE)
-
+    # Word split and the content-word rule are shared with the gazetteer's token-key
+    # indexes (normalize.word_tokens / is_content_token), so questions and institution
+    # labels are cut into words identically — ADR-032.
     result: list[str] = []
     previous_kept_as_content = False
-    for tok in raw_tokens:
+    for tok in word_tokens(question):
         norm = normalize_greek(tok)
-        is_content = len(tok) >= 3 and not tok.isdigit() and norm not in stopwords
+        is_content = is_content_token(tok, stopwords)
         if is_content:
             result.append(tok)
         elif keep_series_markers and previous_kept_as_content and is_series_marker(norm):
@@ -124,12 +129,17 @@ def _resolve_all_windows(
 
     Algorithm
     ---------
-    1.  For every unigram/bigram/trigram window over ``entity_tokens``:
+    1.  For every window over ``entity_tokens`` — 1 to 3 tokens, and longer ones
+        up to ``gazetteer.longest_entity_key()`` words:
         a.  **Glue guard**: skip windows whose tokens are ALL institution/glue
             words (e.g. bare "πανεπιστημιο").  Such windows partial-match every
             "ΠΑΝΕΠΙΣΤΗΜΙΟ X" at ~100 and would inject a random university.
             Multi-word windows with at least one non-glue token are kept.
-        b.  Call ``resolve_mention``; discard windows that return no entity.
+        b.  Windows of 1–3 tokens: ``resolve_mention`` (acronym, exact, fuzzy).
+            Longer windows: ``resolve_exact`` only — they exist so a long name
+            («γεωπονιας ιχθυολογιας υδατινου περιβαλλοντος») matches EXACTLY
+            (ADR-032; S41: median 27 ms per question, 36 before — no fuzzy cost).
+            Discard windows that return no entity.
     2.  Sort surviving candidates by ``(best_priority asc, size desc,
         best_score desc)``:
         - Priority first — acronym unigrams (priority 0, e.g. ΑΠΘ, ΕΚΠΑ) are
@@ -150,6 +160,13 @@ def _resolve_all_windows(
         - Both acronym unigrams (priority 0) sort first and are accepted with
           non-overlapping spans; no fuzzy bigram displaces them.
 
+    Result for "… τμημα βιοχημειας και βιοτεχνολογιας …" (ADR-032):
+        - «και» is not a token, so the window is "βιοχημειας βιοτεχνολογιας"; it
+          matches ΒΙΟΧΗΜΕΙΑΣ ΚΑΙ ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ exactly through the token key and,
+          being 2 tokens, sorts before the exact unigram "βιοτεχνολογιας" →
+          ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ (another university), which then overlaps and is dropped.
+          Before ADR-032 the bigram matched only fuzzily and lost.
+
     Args:
         entity_tokens: Token list produced by
                         ``_tokenize(q, lexicon._ENTITY_STOPWORDS)``.
@@ -163,7 +180,7 @@ def _resolve_all_windows(
     """
     # --- 1. Gather window candidates ------------------------------------------
     candidates: list[_WindowCandidate] = []
-    for size in (1, 2, 3):
+    for size in range(1, max(3, longest_entity_key()) + 1):
         for i in range(len(entity_tokens) - size + 1):
             window_toks = entity_tokens[i : i + size]
 
@@ -172,7 +189,8 @@ def _resolve_all_windows(
                 continue
 
             window_str = " ".join(window_toks)
-            entities = resolve_mention(window_str)
+            # Long windows: exact only (hash lookups) — see step 1b.
+            entities = resolve_mention(window_str) if size <= 3 else resolve_exact(window_str)
             if not entities:
                 continue
 

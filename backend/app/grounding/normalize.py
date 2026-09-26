@@ -274,3 +274,50 @@ def search_words(text: str) -> list[str]:
         ['νοσηλευτικησ', 'λαρισα']
     """
     return _SEARCH_WORD_RE.findall(search_fold(text))
+
+
+# ---------------------------------------------------------------------------
+# Question word tokens — shared by questions and institution labels (ADR-032)
+# ---------------------------------------------------------------------------
+#
+# WHY HERE
+# The words grounding compares with KG names come from a question through
+# ``mentions._tokenize``: runs of letters or digits, words shorter than 3
+# characters, numbers and stopwords («και», «του», …) dropped. An exact match
+# only works if the LABELS are cut into words the same way — before ADR-032 the
+# exact index kept «ΚΑΙ», «&», «,» and «/», so «τμημα βιοχημειας και
+# βιοτεχνολογιας» could never match ΒΙΟΧΗΜΕΙΑΣ ΚΑΙ ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ exactly (S41).
+# Both sides now call these functions: ``mentions._tokenize`` for questions,
+# ``gazetteer`` for its token-key indexes. They live in this module because
+# ``gazetteer`` cannot import ``mentions`` (mentions → linker → gazetteer).
+
+_WORD_TOKEN_RE = re.compile(r"[^\s\W\d]+|\d+", flags=re.UNICODE)
+
+
+def word_tokens(text: str) -> list[str]:
+    """Runs of letters (no digits, no punctuation) or runs of digits, in order."""
+    return _WORD_TOKEN_RE.findall(text)
+
+
+def is_content_token(token: str, stopwords: frozenset[str]) -> bool:
+    """A word grounding keeps: ≥ 3 characters, not a number, not a stopword.
+
+    Args:
+        token: One item of ``word_tokens``.
+        stopwords: Normalized stopwords (``lexicon._GREEK_STOPWORDS`` or
+            ``lexicon._ENTITY_STOPWORDS``).
+    """
+    return len(token) >= 3 and not token.isdigit() and normalize_greek(token) not in stopwords
+
+
+def content_tokens(text: str, stopwords: frozenset[str]) -> list[str]:
+    """The content words of ``text`` — the tokens ``mentions._tokenize`` keeps.
+
+    Raw tokens (original case kept); callers normalize them as needed.
+
+    Examples:
+        >>> from app.grounding.lexicon import _ENTITY_STOPWORDS
+        >>> content_tokens("ΒΙΟΧΗΜΕΙΑΣ ΚΑΙ ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ", _ENTITY_STOPWORDS)
+        ['ΒΙΟΧΗΜΕΙΑΣ', 'ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ']
+    """
+    return [tok for tok in word_tokens(text) if is_content_token(tok, stopwords)]

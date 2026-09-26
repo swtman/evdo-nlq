@@ -48,6 +48,7 @@ RETURN CONTRACT
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from rapidfuzz import fuzz, process
@@ -55,9 +56,12 @@ from rapidfuzz import fuzz, process
 from app.grounding.gazetteer import (
     ACRONYM_MAP,
     get_department_index,
+    get_department_token_index,
     get_normalized_departments,
     get_normalized_universities,
     get_university_index,
+    get_university_token_index,
+    spelling_key,
 )
 from app.grounding.normalize import normalize_greek
 from app.grounding.title_index import INSTITUTION_MATCH_THRESHOLD
@@ -242,8 +246,48 @@ def _stage1_acronym(normalized_mention: str) -> list[ResolvedEntity]:
     ]
 
 
+def _exact_entries[T](
+    normalized_mention: str,
+    index: dict[str, list[T]],
+    token_index: dict[str, list[T]],
+    label_of: Callable[[T], str],
+) -> list[T]:
+    """The exact-match rule of ``_stage2_exact`` for one entity type (ADR-032).
+
+    Args:
+        normalized_mention: The window after ``normalize_greek``.
+        index: ``normalize_greek(label)`` → entries (gazetteer's normalized index).
+        token_index: ``gazetteer.token_key(label)`` → entries.
+        label_of: The canonical label of an entry.
+
+    Returns:
+        The matching entries, in index order, without duplicates.
+    """
+    by_key = token_index.get(normalized_mention, [])
+    same_words = [e for e in by_key if spelling_key(label_of(e)) == normalized_mention]
+    hits = list(index.get(normalized_mention, []))
+    if hits:
+        return hits + [e for e in same_words if e not in hits]
+    return same_words or list(by_key)
+
+
 def _stage2_exact(normalized_mention: str) -> list[ResolvedEntity]:
     """Stage 2 — exact normalized lookup against university and department indices.
+
+    Per entity type (ADR-032, gazetteer "TOKEN-KEY INDEX"): a question window has
+    no «και», «&», «,» or «/», so «βιοχημειασ βιοτεχνολογιασ» can find
+    ΒΙΟΧΗΜΕΙΑΣ ΚΑΙ ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ only through the token key. The rule
+    (``_exact_entries``):
+
+    1. the normalized-label index, as before;
+    2. plus every token-key entry spelled with the SAME words (``spelling_key``
+       equal to the window — only connectors/punctuation differ): «περιφερειακησ
+       οικονομικησ αναπτυξησ» lists both «… ΚΑΙ ΟΙΚΟΝΟΜΙΚΗΣ …» and «… ΟΙΚΟΝΟΜΙΚΗΣ …»;
+    3. only if 1–2 found nothing, the other token-key entries — names with a
+       word too short for a question («… Τ.Ε.», «… Β»), which a plain name like
+       «νοσηλευτικησ» must not pull in.
+
+    S41: 799 (department, university) questions, 0 regressions.
 
     Args:
         normalized_mention: The user mention after ``normalize_greek``.
@@ -254,8 +298,14 @@ def _stage2_exact(normalized_mention: str) -> list[ResolvedEntity]:
     """
     results: list[ResolvedEntity] = []
 
-    # University exact match
-    for canonical in get_university_index().get(normalized_mention, []):
+    # University exact match (normalized label; else token key)
+    universities = _exact_entries(
+        normalized_mention,
+        get_university_index(),
+        get_university_token_index(),
+        label_of=lambda canonical: canonical,
+    )
+    for canonical in universities:
         results.append(
             ResolvedEntity(
                 canonical_label=canonical,
@@ -266,8 +316,14 @@ def _stage2_exact(normalized_mention: str) -> list[ResolvedEntity]:
             )
         )
 
-    # Department exact match
-    for dept_entry in get_department_index().get(normalized_mention, []):
+    # Department exact match (normalized label; else token key)
+    departments = _exact_entries(
+        normalized_mention,
+        get_department_index(),
+        get_department_token_index(),
+        label_of=lambda entry: entry["department"],
+    )
+    for dept_entry in departments:
         results.append(
             ResolvedEntity(
                 canonical_label=dept_entry["department"],
@@ -415,3 +471,23 @@ def resolve_mention(mention: str) -> list[ResolvedEntity]:
 
     # Deduplicate by (label, parent), keeping the highest-priority entry per key.
     return _deduplicate(candidates)
+
+
+def resolve_exact(mention: str) -> list[ResolvedEntity]:
+    """Acronym and exact stages only — no fuzzy matching (ADR-032).
+
+    For question windows longer than 3 tokens (``mentions._resolve_all_windows``):
+    they exist so a long name («γεωπονιας ιχθυολογιας υδατινου περιβαλλοντος») can
+    match EXACTLY; a fuzzy full scan per long window would cost time and add
+    nothing the 1–3 token windows do not already find.
+
+    Args:
+        mention: A user-typed string, as for ``resolve_mention``.
+
+    Returns:
+        Deduplicated ``ResolvedEntity`` objects from the acronym and exact stages.
+    """
+    normalized = normalize_greek(mention)
+    if not normalized:
+        return []
+    return _deduplicate([*_stage1_acronym(normalized), *_stage2_exact(normalized)])

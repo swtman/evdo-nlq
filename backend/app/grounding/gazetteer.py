@@ -39,6 +39,22 @@ parenthetical status suffixes in the raw data (e.g. "(ΚΑΤΑΡΓΗΘΗΚΕ)");
 key is built after `normalize_greek` has stripped those suffixes, so abolished
 departments are still reachable.
 
+TOKEN-KEY INDEX (ADR-032)
+-------------------------
+`get_university_token_index()` / `get_department_token_index()` key every label by
+its TOKEN KEY: the label cut into words exactly as a question is
+(`normalize.content_tokens` with `lexicon._ENTITY_STOPWORDS` — «και», punctuation and
+words under 3 letters dropped), then normalized and joined with spaces. A question
+window never contains «ΚΑΙ», «&», «,» or «/», so without this key
+«βιοχημειας βιοτεχνολογιας» could not match ΒΙΟΧΗΜΕΙΑΣ ΚΑΙ ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ exactly.
+A key can hold two kinds of names: spellings of ONE name that differ only by
+connectors or punctuation («ΔΙΑΤΡΟΦΗΣ & / ΚΑΙ ΔΙΑΙΤΟΛΟΓΙΑΣ») — always listed
+together — and DIFFERENT names that differ by a word too short to be a question
+token («ΝΟΣΗΛΕΥΤΙΚΗΣ Β» vs «ΝΟΣΗΛΕΥΤΙΚΗΣ», «… Τ.Ε.»). `spelling_key` tells them
+apart; `linker._stage2_exact` has the rule.
+`longest_entity_key()` is the longest key in words — how long a question window
+must be to match any name exactly.
+
 NORMALIZED LABEL LISTS (for fuzzy matching)
 ---------------------------------------------
 `get_normalized_universities()` / `get_normalized_departments()` return
@@ -55,10 +71,12 @@ question.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import TypedDict
 
 from app.grounding import db
-from app.grounding.normalize import normalize_greek
+from app.grounding.lexicon import _ENTITY_STOPWORDS
+from app.grounding.normalize import content_tokens, normalize_greek, word_tokens
 
 
 class _GazetteerData(TypedDict):
@@ -68,8 +86,46 @@ class _GazetteerData(TypedDict):
     departments: list[dict[str, str]]
     university_index: dict[str, list[str]]
     department_index: dict[str, list[dict[str, str]]]
+    university_token_index: dict[str, list[str]]
+    department_token_index: dict[str, list[dict[str, str]]]
+    longest_entity_key: int
     normalized_universities: list[tuple[str, str]]
     normalized_departments: list[tuple[str, str, str]]
+
+
+def token_key(label: str) -> str:
+    """A label cut into words exactly as a question is (see "TOKEN-KEY INDEX").
+
+    ``normalize_greek`` first (accents, case, trailing status "(…)" removed), then the
+    question tokenizer's content words, joined with single spaces.
+
+    Examples:
+        >>> token_key("ΒΙΟΧΗΜΕΙΑΣ ΚΑΙ ΒΙΟΤΕΧΝΟΛΟΓΙΑΣ")
+        'βιοχημειασ βιοτεχνολογιασ'
+        >>> token_key("ΔΙΑΤΡΟΦΗΣ & ΔΙΑΙΤΟΛΟΓΙΑΣ (ΚΑΤΑΡΓΗΘΗΚΕ/ΜΕΤΑΦΕΡΘΗΚΕ)")
+        'διατροφησ διαιτολογιασ'
+    """
+    return " ".join(content_tokens(normalize_greek(label), _ENTITY_STOPWORDS))
+
+
+@lru_cache(maxsize=None)
+def spelling_key(label: str) -> str:
+    """A label without its connectors and punctuation, but WITH its short words.
+
+    Two labels with the same spelling key are one name written two ways
+    («… ΚΑΙ ΟΙΚΟΝΟΜΙΚΗΣ …» / «… ΟΙΚΟΝΟΜΙΚΗΣ …», «& / ΚΑΙ»); labels that share a
+    ``token_key`` but not a spelling key differ by a word too short for a question
+    to carry («ΝΟΣΗΛΕΥΤΙΚΗΣ Β», «… Τ.Ε.») and are different departments. See
+    ``linker._stage2_exact`` (ADR-032).
+
+    Examples:
+        >>> spelling_key("ΜΗΧΑΝΟΛΟΓΩΝ ΜΗΧΑΝΙΚΩΝ Τ.Ε.")
+        'μηχανολογων μηχανικων τ ε'
+        >>> spelling_key("ΔΙΑΤΡΟΦΗΣ & ΔΙΑΙΤΟΛΟΓΙΑΣ") == spelling_key("ΔΙΑΤΡΟΦΗΣ ΚΑΙ ΔΙΑΙΤΟΛΟΓΙΑΣ")
+        True
+    """
+    words = (normalize_greek(w) for w in word_tokens(normalize_greek(label)))
+    return " ".join(w for w in words if w not in _ENTITY_STOPWORDS)
 
 # ---------------------------------------------------------------------------
 # ACRONYM_MAP — hand-curated abbreviation → canonical evdx:name mapping
@@ -180,6 +236,19 @@ def _load() -> _GazetteerData:
         key = normalize_greek(dept["department"])
         department_index.setdefault(key, []).append(dept)
 
+    # --- 4b. Token-key indexes (ADR-032) -------------------------------------------
+    # The same labels keyed as a question would spell them — see module docstring
+    # "TOKEN-KEY INDEX". Used by linker._stage2_exact only as a fallback.
+    university_token_index: dict[str, list[str]] = {}
+    for uni in universities:
+        university_token_index.setdefault(token_key(uni), []).append(uni)
+    department_token_index: dict[str, list[dict[str, str]]] = {}
+    for dept in departments:
+        department_token_index.setdefault(token_key(dept["department"]), []).append(dept)
+    longest_key = max(
+        len(key.split()) for key in [*university_token_index, *department_token_index]
+    )
+
     # --- 5. Build normalized label lists (for linker._stage3_fuzzy) --------------
     # Precomputed here, once, so the fuzzy-matching stage never re-runs
     # normalize_greek over the whole gazetteer on every call — see module
@@ -198,6 +267,9 @@ def _load() -> _GazetteerData:
         "departments": departments,
         "university_index": university_index,
         "department_index": department_index,
+        "university_token_index": university_token_index,
+        "department_token_index": department_token_index,
+        "longest_entity_key": longest_key,
         "normalized_universities": normalized_universities,
         "normalized_departments": normalized_departments,
     }
@@ -270,6 +342,31 @@ def get_department_index() -> dict[str, list[dict[str, str]]]:
         `{"university": str, "department": str}` dicts.
     """
     return _load()["department_index"]
+
+
+def get_university_token_index() -> dict[str, list[str]]:
+    """Return `token_key(label)` → `[canonical_label, ...]` for universities (ADR-032).
+
+    A fallback for `linker._stage2_exact` — see module docstring "TOKEN-KEY INDEX".
+    """
+    return _load()["university_token_index"]
+
+
+def get_department_token_index() -> dict[str, list[dict[str, str]]]:
+    """Return `token_key(label)` → `[{"university", "department"}, ...]` (ADR-032).
+
+    A fallback for `linker._stage2_exact` — see module docstring "TOKEN-KEY INDEX".
+    """
+    return _load()["department_token_index"]
+
+
+def longest_entity_key() -> int:
+    """The longest token key of any university or department, in words (ADR-032).
+
+    `mentions._resolve_all_windows` builds question windows up to this length, so a
+    name of any length can match exactly.
+    """
+    return _load()["longest_entity_key"]
 
 
 def get_normalized_universities() -> list[tuple[str, str]]:
