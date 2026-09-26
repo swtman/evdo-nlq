@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from app.grounding.lexicon import _GREEK_STOPWORDS, _INSTITUTION_GLUE
 from app.grounding.linker import ResolvedEntity, entity_key, resolve_mention
 from app.grounding.normalize import is_series_marker, normalize_greek
-from app.grounding.stem import greek_stem
+from app.grounding.stem import MIN_STEM_LEN, topic_stem
 
 # Priority for deduplicating entity matches across window sizes.
 # Lower number = higher semantic confidence.
@@ -263,9 +263,13 @@ def _tokens_used_by_entity(
 def _collect_stems(tokens: list[str], claimed_indices: frozenset[int]) -> list[str]:
     """Stem tokens not claimed by high-priority entity resolution.
 
-    Applies ``greek_stem`` to each unclaimed token and returns unique stems that:
-      - Are at least 4 characters long (``MIN_STEM_LEN``).
-      - Differ from the full normalized token (a no-op stem adds no value).
+    Applies ``stem.topic_stem`` (Snowball, ADR-031) to each unclaimed token and
+    returns unique stems that are at least ``MIN_STEM_LEN`` (4) characters long.
+
+    A stem equal to the whole word is KEPT: the word is still a valid CONTAINS /
+    REGEX string. Dropping such "no-op" stems made «αναλυση» vanish from the hint
+    (bug F2) and also dropped English words. Series markers («ιι», «VIII») are
+    skipped explicitly — before, a 4-letter marker was only stopped by that no-op rule.
 
     Args:
         tokens: Filtered raw tokens.
@@ -274,20 +278,13 @@ def _collect_stems(tokens: list[str], claimed_indices: frozenset[int]) -> list[s
     Returns:
         Ordered list of unique stem strings (insertion order, deduped).
     """
-    from app.grounding.normalize import normalize_greek as _norm
-    from app.grounding.stem import MIN_STEM_LEN
-
     seen: set[str] = set()
     result: list[str] = []
     for idx, tok in enumerate(tokens):
-        if idx in claimed_indices:
+        if idx in claimed_indices or is_series_marker(normalize_greek(tok)):
             continue
-        stem = greek_stem(tok)
+        stem = topic_stem(tok)
         if len(stem) < MIN_STEM_LEN:
-            continue
-        # Skip no-op stems (stem == fully normalized token — stripping nothing).
-        normalized_tok = _norm(tok)
-        if stem == normalized_tok:
             continue
         if stem not in seen:
             seen.add(stem)

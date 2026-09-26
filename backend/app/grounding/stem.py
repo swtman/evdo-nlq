@@ -1,6 +1,29 @@
-"""Greek word stemming for SPARQL CONTAINS query hints.
+"""Greek word stemming — two stemmers for two jobs (ADR-031).
 
-The EvdoGraph KG stores book and course titles in different formats 
+``topic_stem`` + ``stem_pattern`` — the TOPIC STEMS hint (``mentions._collect_stems``)
+----------------------------------------------------------------------------------------
+``topic_stem`` is the Snowball Greek stemmer (Ntais 2006, enhanced by Saroukos 2008), with
+``greek_stem`` as a fallback when Snowball cuts a word below ``MIN_STEM_LEN`` («θεματα» →
+«θεμ»). Chosen by measurement, not by reputation — S39 compared 10 stemmers (Snowball,
+Skroutz, Ntais/Saroukos rule sets, Morfessor, fixed prefixes, this module's ``greek_stem``) on
+Paice's method over the UD Greek treebank and on CONTAINS reach over the KG titles: Snowball
+tied for best (F1 0.851 vs 0.822 for ``greek_stem``) and is the only maintained option; the
+fallback raised F1 to 0.877 (S40c).
+
+``stem_pattern`` turns a stem into a regex with one character class per vowel
+(«αλγοριθμ» → ``[αά]λγ[οό]ρ[ιίϊΐ]θμ``). The KG stores some titles ALL-CAPS accent-free and some
+mixed-case accented; SPARQL ``LCASE`` removes case but not accents, so ONE
+``FILTER(REGEX(LCASE(?title), pattern))`` matches both, wherever the accent sits. The previous
+hint accented only the last vowel (``αλγορ | αλγόρ``), which misses «αλγόριθμος» (S40a: 35 vs
+81 rows on ex-024). σ becomes ``[σς]`` because GraphDB's ``LCASE`` writes a word-final ς.
+REGEX costs no more than CONTAINS on GraphDB (S40a: 0.82–1.00× the time).
+
+``greek_stem`` — FTS5 prefix terms for course/book title CANDIDATES (``title_index/search.py``)
+-----------------------------------------------------------------------------------------------
+Kept for that job only (user decision, branch 4): swapping it changes which titles are
+ranked, which is measured later with the title eval set. Its original description follows.
+
+The EvdoGraph KG stores book and course titles in different formats
 (sometimes ALL-CAPS and accent-free strings and sometimes mixed-case with accents),
 but always in their canonical, uninflected form e.g. 
 Users type inflected Greek words e.g. "αλγοριθμους" (accusative plural).  
@@ -30,6 +53,10 @@ WHY this heuristic over a full morphological analyser?
     Greek inflectional endings that appear in academic/administrative titles and
     is accurate enough for CONTAINS hints — the LLM downstream refines the query.
 """
+
+import re
+
+import snowballstemmer
 
 from app.grounding.normalize import normalize_greek
 
@@ -134,3 +161,88 @@ def greek_stem(word: str) -> str:
                 stem = candidate
 
     return stem
+
+
+# ---------------------------------------------------------------------------
+# Topic stems: Snowball + vowel-class patterns (ADR-031)
+# ---------------------------------------------------------------------------
+
+# One stemmer object for the process: snowballstemmer objects are reusable and
+# stemWord is deterministic (it keeps a small cache of recent words).
+_SNOWBALL = snowballstemmer.stemmer("greek")
+
+# Each normalized (accent-free) vowel → the class of every form it has in KG text
+# after LCASE: plain, accented, with diaeresis, with both. σ → [σς] because
+# GraphDB's LCASE writes a word-final Σ as ς (S40a), so a stem that ends where a
+# title word ends must match ς too.
+_PATTERN_CLASS: dict[str, str] = {
+    "α": "[αά]",
+    "ε": "[εέ]",
+    "η": "[ηή]",
+    "ι": "[ιίϊΐ]",
+    "ο": "[οό]",
+    "υ": "[υύϋΰ]",
+    "ω": "[ωώ]",
+    "σ": "[σς]",
+}
+
+# Stems are runs of letters (``mentions._tokenize`` only yields letter runs);
+# anything else could be a regex metacharacter, so it is refused, not escaped.
+_LETTERS_ONLY = re.compile(r"[^\W\d_]+")
+
+
+def topic_stem(word: str) -> str:
+    """Stem a question word for the Topic-stems hint.
+
+    Snowball Greek on the normalized word (accents removed, lowercase, ς → σ).
+    When Snowball's stem is shorter than ``MIN_STEM_LEN`` — the hint would drop
+    it and the topic would vanish — ``greek_stem``'s stem is used instead if it
+    is long enough (S40c: 1,916 KG title words, e.g. «θεματα» → «θεμ», keep a
+    stem this way; F1 0.851 → 0.877). Non-Greek words pass through unchanged.
+
+    Args:
+        word: One token, any case, with or without accents.
+
+    Returns:
+        The stem, lowercase and accent-free. It may still be shorter than
+        ``MIN_STEM_LEN`` (e.g. a 3-letter word); the caller drops those.
+
+    Examples:
+        >>> topic_stem("αλγορίθμων")
+        'αλγοριθμ'
+        >>> topic_stem("θεματα")
+        'θεματα'
+    """
+    normalized = normalize_greek(word)
+    stem = _SNOWBALL.stemWord(normalized)
+    if len(stem) < MIN_STEM_LEN:
+        fallback = greek_stem(word)
+        if len(fallback) >= MIN_STEM_LEN:
+            return fallback
+    return stem
+
+
+def stem_pattern(stem: str) -> str:
+    """Turn a normalized stem into a regex that ignores accents (and final ς).
+
+    Every vowel becomes a character class of its plain and accented forms, and
+    σ becomes ``[σς]``; other letters stay as they are. Used by the LLM as
+    ``FILTER(REGEX(LCASE(?title), "<pattern>"))`` (prompt v8, Rule 16).
+
+    Args:
+        stem: A stem from ``topic_stem`` — letters only, lowercase, accent-free.
+
+    Returns:
+        The regex pattern string.
+
+    Raises:
+        ValueError: If ``stem`` contains anything but letters (it could be a
+            regex metacharacter).
+
+    Examples:
+        >>> stem_pattern("αλγοριθμ")
+        '[αά]λγ[οό]ρ[ιίϊΐ]θμ'
+    """
+    if not _LETTERS_ONLY.fullmatch(stem):
+        raise ValueError(f"stem must be letters only, got {stem!r}")
+    return "".join(_PATTERN_CLASS.get(ch, ch) for ch in stem)

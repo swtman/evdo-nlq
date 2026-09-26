@@ -9,17 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from app.grounding.lexicon import _GREEK_VOWELS_STR, _TITLE_CLASS_LABELS, _VOWEL_TO_ACCENTED
+from app.grounding.lexicon import _TITLE_CLASS_LABELS
 from app.grounding.linker import ResolvedEntity
 from app.grounding.title_index import TitleMatch
-
-
-def _accent_last_vowel(stem: str) -> str | None:
-    """Return stem with its last vowel accented, or None if no vowel found."""
-    for i in reversed(range(len(stem))):
-        if stem[i] in _GREEK_VOWELS_STR:
-            return stem[:i] + stem[i].translate(_VOWEL_TO_ACCENTED) + stem[i + 1 :]
-    return None
 
 
 def _format_entity_lines(entities: Iterable[ResolvedEntity]) -> list[str]:
@@ -68,9 +60,8 @@ def _format_title_line(match: TitleMatch) -> str:
 
     One line per TITLE, not per surface form — multiple surface forms (e.g.
     the ALL-CAPS accent-free and mixed-case accented KG storage variants of
-    the same title) are joined with " | ", reusing the convention the
-    Topic-stems section already uses for "variants of the same thing", so
-    the model isn't taught a second syntax for the same idea.
+    the same title) are joined with " | ", the block's "variants of the same
+    thing" separator (department lines use it for their universities too).
 
     Example: ``- [Course] "ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΥΠΟΛΟΓΙΣΤΩΝ" | "Αρχιτεκτονική Υπολογιστών"``
 

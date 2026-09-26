@@ -12,8 +12,9 @@ grounding module.  Given a raw user question (Greek or English), it:
      via ``title_index.search.rank_titles`` — searching BOTH the course and
      book corpora (see "COURSE AND BOOK TITLE RESOLUTION" below).
   4. Stems every topic word not claimed by an acronym/exact entity, via
-     ``stem.greek_stem`` — ALWAYS, even when a title candidate was found
-     (see "TITLE CANDIDATES, NOT RESOLUTIONS" below).
+     ``stem.topic_stem`` (Snowball, ADR-031) — ALWAYS, even when a title
+     candidate was found (see "TITLE CANDIDATES, NOT RESOLUTIONS" below) —
+     and lists each stem with its accent-proof regex (``stem.stem_pattern``).
   5. Formats the results into a markdown block ready for injection into the
      system prompt that precedes the LLM SPARQL-generation call.
 
@@ -75,8 +76,10 @@ intent (e.g. "ΑΠΘ") to the canonical KG label before the model runs, so the
 hint block can say "use this exact string".
 
 Topic stems solve the inflection problem: "αλγοριθμων" (genitive plural) does
-not appear verbatim in any book title, but the stem "αλγορ" does appear as a
-CONTAINS substring of the normalized title "ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΔΟΜΕΣ ΔΕΔΟΜΕΝΩΝ".
+not appear verbatim in any book title, but the stem "αλγοριθμ" does appear in
+"ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΔΟΜΕΣ ΔΕΔΟΜΕΝΩΝ". Each stem line also gives the regex the model
+should use — ``- αλγοριθμ → [αά]λγ[οό]ρ[ιίϊΐ]θμ`` — so the accented mixed-case
+titles ("Αλγόριθμοι…") match too; how to use it is Rule 16 of prompt v8.
 
 DEDUPLICATION ACROSS WINDOWS
 ------------------------------
@@ -99,7 +102,7 @@ from __future__ import annotations
 import logging
 
 from app.config import settings
-from app.grounding.hint_lines import _accent_last_vowel, _format_entity_lines, _format_title_line
+from app.grounding.hint_lines import _format_entity_lines, _format_title_line
 from app.grounding.lexicon import _ENTITY_STOPWORDS
 from app.grounding.mentions import (
     _collect_stems,
@@ -107,6 +110,7 @@ from app.grounding.mentions import (
     _tokenize,
     _tokens_used_by_entity,
 )
+from app.grounding.stem import stem_pattern
 from app.grounding.title_index import TitleMatch, rank_titles
 
 logger = logging.getLogger(__name__)
@@ -163,7 +167,7 @@ def build_grounding_hints(question: str) -> str:
     #            ranking and stemming.
     #            Series markers ("Ι", "ΙΙ", "2", "Α") after a content word are
     #            kept so numbered titles can be told apart (decision 4); they
-    #            never produce stems (too short / no-op, see _collect_stems).
+    #            never produce stems (_collect_stems skips series markers).
     topic_tokens = _tokenize(question, keep_series_markers=True)
 
     if not entity_tokens and not topic_tokens:
@@ -262,12 +266,11 @@ def build_grounding_hints(question: str) -> str:
         if entities or title_matches:
             lines.append("")  # blank line before stems section
         lines.append("**Topic stems**:")
+        # "stem → pattern": the stem for the reader, the pattern for the SPARQL
+        # REGEX (prompt v8, Rule 16). One pattern covers accent-free and accented
+        # titles, replacing v7's "stem | stém" pair (ADR-031).
         for stem in stems:
-            accented = _accent_last_vowel(stem)
-            if accented and accented != stem:
-                lines.append(f"- {stem} | {accented}")
-            else:
-                lines.append(f"- {stem}")
+            lines.append(f"- {stem} → {stem_pattern(stem)}")
 
     result = "\n".join(lines)
     logger.info("Grounding output:\n%s", result)

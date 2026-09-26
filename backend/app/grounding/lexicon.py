@@ -167,13 +167,8 @@ _INSTITUTION_GLUE: frozenset[str] = _INSTITUTION_WORDS | frozenset(
     }
 )
 
-# The KG stores titles in both ALL-CAPS accent-free ("ΑΛΓΟΡΙΘΜΟΙ") and
-# mixed-case accented ("Αλγόριθμοι"). SPARQL's LCASE() strips case but NOT
-# Unicode accents, so CONTAINS(LCASE("Αλγόριθμοι"), "αλγορ") is false because
-# ό (U+03CC) ≠ ο (U+03BF). We emit both the plain stem and the version with
-# the last vowel accented to cover both storage styles in one FILTER.
-_GREEK_VOWELS_STR: str = "αεηιουω"
-_VOWEL_TO_ACCENTED: dict[int, str] = str.maketrans("αεηιουω", "άέήίόύώ")
+# (The accented-variant tables for topic stems were removed in branch 4: the
+# stem hint now carries a vowel-class regex built by stem.stem_pattern, ADR-031.)
 
 # Display label per TitleMatch.entity_class — keys must match schema.TITLE_CLASSES.
 _TITLE_CLASS_LABELS: dict[str, str] = {"course": "Course", "book": "Book"}

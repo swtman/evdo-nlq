@@ -965,7 +965,7 @@ examples:
         ?b a evdx:Book .
         ?b evdx:title ?bt .
         OPTIONAL { ?b evdx:keyword ?kw }
-        FILTER (CONTAINS(LCASE(?bt), "αλγορ") || CONTAINS(LCASE(?kw), "αλγορ"))
+        FILTER (REGEX(LCASE(?bt), "[αά]λγ[οό]ρ[ιίϊΐ]θμ") || REGEX(LCASE(?kw), "[αά]λγ[οό]ρ[ιίϊΐ]θμ"))
         ?c a evdx:Course .
         ?c evdx:hasBook ?b .
         ?d a evdx:Department .
@@ -980,9 +980,11 @@ examples:
     skip_eval: true
     few_shot_priority: 22
     notes: >
-      Demonstrates Rule 16: using a truncated stem ("αλγορ") passed via
-      {grounding_hints} within a CONTAINS(LCASE(...)) filter on both
-      evdx:title and the new evdx:keyword property.
+      Demonstrates Rule 16: the topic-stem hint "- αλγοριθμ → [αά]λγ[οό]ρ[ιίϊΐ]θμ"
+      passed via {grounding_hints}, its pattern copied into a REGEX(LCASE(...))
+      filter on both evdx:title and evdx:keyword. The vowel classes match
+      accent-free ALL-CAPS and accented mixed-case titles alike (prompt v8, ADR-031;
+      until v7 the demo used CONTAINS with the stem "αλγορ").
 
   # ---------------------------------------------------------------------------
   # Q25 — book-course-flat-join (books AND courses, topic stem + university)
@@ -1000,7 +1002,7 @@ examples:
         WHERE {
           # 1. START HERE: Find the single specific university (Highly Restrictive)
           ?u a evdx:University .
-          ?u evdx:name "ΟΙΚΟΝΟΜΙΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ" .
+          ?u evdx:name "ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ" .
           
           # 2. Get its departments and its 2022 courses
           ?u evdx:hasDepartment ?d .
@@ -1014,8 +1016,8 @@ examples:
           # 3. Apply the text filter ONLY to this tiny pool of books
           ?b a evdx:Book .
           ?b evdx:title ?bt .
-          FILTER(CONTAINS(LCASE(?bt), "θρησκ") || CONTAINS(LCASE(?bt), "θρήσκ"))
-          
+          FILTER(REGEX(LCASE(?bt), "θρ[ηή][σς]κ[εέ][υύϋΰ]τ"))
+
           # 4. Find all global courses for these specific filtered books
           ?c a evdx:Course .
           ?c evdx:hasBook ?b .
@@ -1024,7 +1026,7 @@ examples:
           # 5. Bring in the keywords last, only for the books that survived the filter
           OPTIONAL {
             ?b evdx:keyword ?kw .
-            FILTER(CONTAINS(LCASE(?kw), "θρησκ") || CONTAINS(LCASE(?kw), "θρήσκ"))
+            FILTER(REGEX(LCASE(?kw), "θρ[ηή][σς]κ[εέ][υύϋΰ]τ"))
           }
         }
         GROUP BY ?b ?bt ?kw
@@ -1040,8 +1042,12 @@ examples:
       SELECT DISTINCT. The result has one row per (book, course) pair — a book
       assigned to three courses produces three rows. Do NOT put ?ct only in
       WHERE (that collapses all course offerings into one row per book). Also
-      demonstrates the two-variant stem hint from Rule 16: θρησκ | θρήσκ
-      covers ALL-CAPS accent-free and mixed-case accented KG titles.
+      demonstrates the topic-stem hint from Rule 16: "- θρησκευτ →
+      θρ[ηή][σς]κ[εέ][υύϋΰ]τ", the pattern copied into REGEX(LCASE(...)) so ALL-CAPS
+      accent-free and mixed-case accented KG titles both match (prompt v8, ADR-031).
+      Gold fix 2026-09-26: the SPARQL bound ΟΙΚΟΝΟΜΙΚΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΘΗΝΩΝ although
+      the question names Πανεπιστήμιο Πειραιώς. Returns 0 rows (Piraeus has one
+      θρησκ… book, in 2025) — a shape demo, hence skip_eval.
 
   # ---------------------------------------------------------------------------
   # Q26 — book-course-group-concat (one row per book, all courses concatenated)
@@ -1055,7 +1061,7 @@ examples:
     gold_sparql: |
       PREFIX evdx: <https://w3id.org/evdoxus#>
       # Grounding hints: [University] ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ
-      # Topic stem: θρησκ | θρήσκ  (ALL-CAPS accent-free + mixed-case accented titles)
+      # Topic stem: θρησκευτ → θρ[ηή][σς]κ[εέ][υύϋΰ]τ  (one REGEX for ALL-CAPS and accented titles)
       SELECT ?bt (GROUP_CONCAT(?ct; SEPARATOR=", ") AS ?Courses)
       WHERE {
         ?c evdx:title ?ct .
@@ -1064,7 +1070,7 @@ examples:
           WHERE {
             ?b a evdx:Book .
             ?b evdx:title ?bt .
-            FILTER(CONTAINS(LCASE(?bt), "θρησκ") || CONTAINS(LCASE(?bt), "θρήσκ"))
+            FILTER(REGEX(LCASE(?bt), "θρ[ηή][σς]κ[εέ][υύϋΰ]τ"))
             ?c a evdx:Course .
             ?c evdx:hasBook ?b .
             ?c evdx:year 2022 .

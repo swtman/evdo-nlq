@@ -1,15 +1,15 @@
-"""Tests for app.grounding.stem — Greek word stemming for SPARQL CONTAINS hints.
+"""Tests for app.grounding.stem — Greek word stemming.
 
 All tests are pure-function, no I/O, no fixtures.
 Run from backend/: uv run pytest tests/test_grounding_stem.py -v
 
-Design rationale:
-    greek_stem() is used to inject a reduced word root into SPARQL
-    CONTAINS(LCASE(?label), "stem") filters.  EvdoGraph stores titles in
-    ALL-CAPS; Greek inflects heavily; the stem must survive all inflectional
-    forms so that a single CONTAINS check matches both nominative and accusative
-    plurals, genitive singulars, etc.  Tests cover the canonical cases from the
-    algorithm spec plus a selection of edge cases.
+Two stemmers, two jobs (ADR-031):
+    topic_stem() + stem_pattern() build the Topic-stems hint: a Snowball stem
+    and a regex with one vowel class per vowel, used by the LLM in
+    FILTER(REGEX(LCASE(?title), "pattern")). Tested at the end of this file.
+    greek_stem() (the hand-written suffix stemmer below) now only builds the
+    FTS5 prefix terms that fetch course/book title CANDIDATES; it stays until
+    that swap can be measured with the title eval set (branch 4, user decision Q2).
 
 NOTE ON SIGMA:
     normalize_greek() (called inside greek_stem) converts both uppercase Σ and
@@ -19,7 +19,12 @@ NOTE ON SIGMA:
     in natural Greek spelling.
 """
 
-from app.grounding.stem import MIN_STEM_LEN, greek_stem
+import re
+
+import pytest
+
+from app.grounding.stem import MIN_STEM_LEN, greek_stem, stem_pattern, topic_stem
+from app.grounding.title_index.search import _fts_query_terms
 
 
 # ---------------------------------------------------------------------------
@@ -196,3 +201,92 @@ def test_word_already_a_stem():
 def test_min_stem_len_is_4():
     """MIN_STEM_LEN is the documented value of 4."""
     assert MIN_STEM_LEN == 4
+
+
+# ---------------------------------------------------------------------------
+# topic_stem — Snowball, with greek_stem as the fallback for too-short stems
+# (ADR-031; stemmer choice S39, fallback S40c)
+# ---------------------------------------------------------------------------
+
+
+def test_topic_stem_groups_all_forms_of_a_word():
+    """Every form of αλγόριθμος gets ONE stem — accents and case do not matter."""
+    forms = ["αλγοριθμων", "αλγορίθμους", "ΑΛΓΟΡΙΘΜΟΙ", "Αλγόριθμοι"]
+    assert {topic_stem(f) for f in forms} == {"αλγοριθμ"}
+
+
+def test_topic_stem_strips_a_nominative_ending():
+    """«αναλυση» gets a real stem — greek_stem left it unchanged and the hint
+    then dropped it (bug F2)."""
+    assert topic_stem("αναλυση") == "αναλυσ"
+    assert topic_stem("αναλύσεις") == "αναλυσ"
+
+
+def test_topic_stem_keeps_a_word_family_apart():
+    """θρησκευτικά → θρησκευτ (not θρησκ): Snowball is adopted as-is, it does not
+    merge θρησκεία into θρησκευτικός (title-linking plan, decision 7)."""
+    assert topic_stem("θρησκευτικα") == "θρησκευτ"
+
+
+def test_topic_stem_falls_back_when_snowball_cuts_too_short():
+    """Snowball gives «θεμ» / «σημ» (< MIN_STEM_LEN), which the hint would drop; the
+    fallback keeps greek_stem's longer stem instead (S40c: F1 0.851 → 0.877)."""
+    assert topic_stem("θεματα") == "θεματα"
+    assert topic_stem("σηματων") == "σηματ"
+
+
+def test_topic_stem_leaves_latin_words_alone():
+    assert topic_stem("python") == "python"
+
+
+def test_topic_stem_empty():
+    assert topic_stem("") == ""
+
+
+# ---------------------------------------------------------------------------
+# stem_pattern — one character class per vowel, so ONE regex matches the
+# accent-free ALL-CAPS and the accented mixed-case KG titles (decision C5)
+# ---------------------------------------------------------------------------
+
+
+def test_stem_pattern_vowel_classes():
+    assert stem_pattern("αλγοριθμ") == "[αά]λγ[οό]ρ[ιίϊΐ]θμ"
+
+
+def test_stem_pattern_sigma_matches_final_form():
+    """GraphDB's LCASE writes a word-final Σ as ς (S40a), so σ must match both."""
+    assert stem_pattern("αναλυσ") == "[αά]ν[αά]λ[υύϋΰ][σς]"
+
+
+def test_stem_pattern_matches_every_storage_form():
+    """Python's str.lower() also writes a final ς — a faithful proxy for LCASE."""
+    pattern = stem_pattern(topic_stem("αλγορίθμων"))
+    for title in ("ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΔΟΜΕΣ", "Αλγόριθμοι και Δομές", "Θεωρία Αλγορίθμων"):
+        assert re.search(pattern, title.lower()), title
+
+
+def test_stem_pattern_whole_word_stem_ending_in_sigma():
+    """A stem that IS a whole word ending in σ must still match the title word,
+    whose LCASE ends in ς."""
+    assert re.search(stem_pattern("θεσμοσ"), "ΘΕΣΜΟΣ".lower())
+
+
+def test_stem_pattern_latin_unchanged():
+    assert stem_pattern("python") == "python"
+
+
+def test_stem_pattern_rejects_non_letters():
+    """Stems are letters only; anything else could be a regex metacharacter."""
+    with pytest.raises(ValueError):
+        stem_pattern("αλγ.*")
+
+
+# ---------------------------------------------------------------------------
+# The title-candidate search keeps greek_stem (user decision Q2, branch 4)
+# ---------------------------------------------------------------------------
+
+
+def test_fts_candidate_terms_still_use_greek_stem():
+    """Swapping these terms changes which course/book titles are ranked; that is
+    measured later with the title eval set, not in this branch."""
+    assert _fts_query_terms("αλγοριθμων") == ["αλγορ"]

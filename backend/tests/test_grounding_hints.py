@@ -131,17 +131,33 @@ def test_university_entity_format() -> None:
     assert "- [University] ΑΡΙΣΤΟΤΕΛΕΙΟ ΠΑΝΕΠΙΣΤΗΜΙΟ ΘΕΣ/ΝΙΚΗΣ" in result
 
 
-def test_stem_bullet_has_accented_variant() -> None:
-    """Stem bullets must show 'plain | accented' to cover mixed-case KG titles.
+def test_stem_bullet_has_vowel_class_pattern() -> None:
+    """Stem bullets show 'stem → pattern' so one REGEX covers every KG storage form.
 
     The KG stores some titles in ALL-CAPS accent-free ("ΑΛΓΟΡΙΘΜΟΙ") and others
     in mixed-case accented ("Αλγόριθμοι"). SPARQL LCASE() strips case but not
-    Unicode accents, so CONTAINS(LCASE("Αλγόριθμοι"), "αλγορ") is false.
-    The hint emits both variants so the LLM generates an OR filter.
+    accents, and the old 'stem | stém' pair accented only the LAST vowel, which
+    misses «αλγόριθμος» (C5; S40a: 35 vs 81 rows on ex-024). A vowel class per
+    vowel matches wherever the accent sits (ADR-031).
     """
     result = build_grounding_hints("αλγοριθμων")
-    # "αλγορ" has last vowel ο → accented variant "αλγόρ"
-    assert "αλγορ | αλγόρ" in result
+    assert "- αλγοριθμ → [αά]λγ[οό]ρ[ιίϊΐ]θμ" in result
+    assert " | αλγ" not in result  # the old accented pair is gone
+
+
+def test_word_without_a_stripped_ending_still_gets_a_stem() -> None:
+    """Bug F2: «αναλυση» was left unchanged by greek_stem and then dropped as a
+    'no-op'; the topic vanished from the hint. Snowball stems it, and a stem equal
+    to the whole word is no longer dropped either."""
+    result = build_grounding_hints("βιβλια για αναλυση")
+    assert "- αναλυσ → " in result
+
+
+def test_latin_content_word_becomes_a_stem() -> None:
+    """English words in a Greek question (the KG has English titles) used to be
+    dropped as no-op stems; now they are listed, pattern unchanged."""
+    result = build_grounding_hints("βιβλια για python")
+    assert "- python → python" in result
 
 
 # ---------------------------------------------------------------------------
@@ -427,3 +443,11 @@ def test_markers_never_become_stems() -> None:
     stem_lines = result.split("**Topic stems**")[-1] if "**Topic stems**" in result else ""
     for marker in ("- ιι", "- 2"):
         assert marker not in stem_lines
+
+
+def test_four_letter_marker_never_becomes_a_stem() -> None:
+    """«VIII» is 4 letters, so the length guard does not stop it; before branch 4
+    the no-op rule did. Series markers are now skipped explicitly."""
+    result = build_grounding_hints("ξενοφωνικης VIII")
+    stem_lines = result.split("**Topic stems**")[-1] if "**Topic stems**" in result else ""
+    assert "viii" not in stem_lines.lower()

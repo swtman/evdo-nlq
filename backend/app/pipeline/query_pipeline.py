@@ -79,7 +79,7 @@ _MAX_RETRIES = 2
 # FEW_SHOT_K worked examples from prompts/examples.yaml. Single source of truth —
 # scripts/eval.py imports both, so an eval run of "the production prompt" is
 # guaranteed to build exactly what the API serves (title-linking plan, C17).
-PROMPT_VERSION: int = 7  # v7 since 2026-09-25 (ADR-027); v6 kept loadable for A/B
+PROMPT_VERSION: int = 8  # v8 since 2026-09-26 (ADR-031, stem regex); v7 kept loadable for A/B
 FEW_SHOT_K: int = 8
 
 
