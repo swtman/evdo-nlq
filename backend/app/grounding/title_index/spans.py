@@ -44,6 +44,10 @@ HOW IT WORKS
    size-first (F7's P1) let a framing verb glued to a near title («διδάσκεται εισαγωγή στον
    προγραμματισμό», 0.86) beat the exact title (1.00) — F7 needed size-first only for a typo'd
    two-word span against an exact one-word title, which the guard now removes anyway.
+   One exception (ADR-036, S48): before a window is accepted, a window that CONTAINS it, covers
+   more content words and scores ≥ ``CONTAINING_SPAN_MIN`` (0.95) is accepted instead — the score-first winner may be a shorter
+   real title nested in the named one («αρωματικά φυτά» inside «(ΦΠ) … ενεργειακά και αρωματικά
+   φυτά»). A framing word glued to a title stays far below 0.95, so the reason for score-first holds.
 6. Each accepted span lists up to ``LINES_PER_SPAN`` titles above the threshold (numbered
    siblings «… Ι», «… ΙΙ»), hydrated by ``search._hydrate`` exactly as ``rank_titles`` does.
 
@@ -57,8 +61,9 @@ beyond the span rules above (a one-word title needs a cue).
 
 Known limits (S45, dev): a title that starts with an article («Τα οικονομικά της υγείας») is
 found without it unless quoted; ``token_sort_ratio`` ignores word order, so a span crossing two
-titles can match a third one (tg-217); a typo in a title's first word can lose to a shorter
-exact title (tg-094); shortened titles («της Γραμμικής») stay topics by design.
+titles can match a third one (tg-217); shortened titles («της Γραμμικής») stay topics by design.
+A title whose first word cannot start a span (short abbreviation, article) is found when its span
+still scores ≥ 0.95 (S48: 269/300 synthetic cases, 31 still missed).
 """
 
 from __future__ import annotations
@@ -80,6 +85,9 @@ from app.grounding.title_index.search import _fts_query_terms, _hydrate
 MAX_SPAN_TOKENS = 14
 # Title lines per accepted span — the numbered siblings (S45: top-3 found 113/115, top-1 111).
 LINES_PER_SPAN = 3
+# Raw score (0-100) at which a window that CONTAINS the score-first winner replaces it (ADR-036,
+# S48): 90 and 95 gave identical results on every set measured; 95 is the stricter of the two.
+CONTAINING_SPAN_MIN = 95.0
 # Text between quotation marks: «…», "…" or “…”.
 _QUOTED_RE = re.compile(r"«([^«»]+)»|\"([^\"]+)\"|“([^“”]+)”")
 # Deterministic class order in the output (and the hint block): courses, then books.
@@ -239,6 +247,46 @@ def _windows(q: SpanQuestion) -> list[_Window]:
 # ---------------------------------------------------------------------------
 
 
+_Scored = tuple[_Window, str, list[tuple[str, float]]]
+
+
+def _containing(item: _Scored, scored: list[_Scored], used: set[int]) -> _Scored | None:
+    """The best window that strictly contains ``item``'s, covers MORE content words, scores ≥
+    ``CONTAINING_SPAN_MIN`` and overlaps nothing accepted yet — or None (ADR-036).
+
+    "More content words": an extension by an article alone does not count. «λέγεται η ανάλυση
+    κυκλωμάτων» — «η ανάλυση κυκλωμάτων» scores ≥ 0.95 against «… Ι» (the letters η and ι differ by
+    one character) and would replace the exact title (S48 variant A95w; costs 2 of 300 synthetic
+    article-first titles, keeps every other gain).
+
+    «(φπ) βιομηχανικα-ενεργειακα και αρωματικα φυτα» (live v9 te-014): «αρωματικα φυτα» is itself
+    an exact course (100), nested in the named title, whose own span scores 96.5 because «φπ» (2
+    letters) cannot start a span. Plain score-first took the nested title and dropped the whole one.
+    The override only fires for a near-complete match of a longer title; a framing verb glued to a
+    title («διδάσκεται εισαγωγή στον προγραμματισμό», 86) stays below it — the reason ADR-035 chose
+    score-first. S48: +45/300 edge-start titles, 0 losses on every set measured.
+    """
+    w = item[0]
+    best: _Scored | None = None
+    for other in scored:
+        big = other[0]
+        if (
+            big.start <= w.start
+            and w.end <= big.end
+            and (big.start, big.end) != (w.start, w.end)
+            and big.content_words > w.content_words
+            and other[2][0][1] >= CONTAINING_SPAN_MIN
+            and not used & set(range(big.start, big.end))
+            and (
+                best is None
+                or (other[2][0][1], big.end - big.start)
+                > (best[2][0][1], best[0].end - best[0].start)
+            )
+        ):
+            best = other
+    return best
+
+
 def _link(q: SpanQuestion, states: dict[str, _IndexState], threshold: float) -> list[SpanMatch]:
     """Score every window against each class's candidates; select; hydrate (steps 3–6)."""
     windows = _windows(q)
@@ -276,18 +324,23 @@ def _link(q: SpanQuestion, states: dict[str, _IndexState], threshold: float) -> 
     used: set[int] = set()
     classes_at: dict[tuple[int, int], set[str]] = {}
     accepted: list[tuple[_Window, str, list[tuple[str, float]]]] = []
-    for w, cls, ranked in scored:
+    for item in scored:
+        w, cls, ranked = item
         key = (w.start, w.end)
         if key in classes_at:
             if cls not in classes_at[key]:
                 classes_at[key].add(cls)
-                accepted.append((w, cls, ranked))
+                accepted.append(item)
             continue
         if used & set(range(w.start, w.end)):
             continue
+        # A window that CONTAINS this one and matches (almost) a whole title wins instead: the
+        # score-first winner may be a shorter real title nested in the named one (step 5, ADR-036).
+        item = _containing(item, scored, used) or item
+        w = item[0]
         used.update(range(w.start, w.end))
-        classes_at[key] = {cls}
-        accepted.append((w, cls, ranked))
+        classes_at[(w.start, w.end)] = {item[1]}
+        accepted.append(item)
 
     accepted.sort(key=lambda a: (a[0].start, _CLASS_ORDER.get(a[1], 9)))
     return [

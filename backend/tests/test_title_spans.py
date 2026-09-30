@@ -35,6 +35,10 @@ COURSES: dict[str, list[str]] = {
     "9": ["Αγγλικά ΙΙ Γ1"],
     "10": ["ΑΓΓΛΙΚΑ ΙΙ"],
     "11": ["ΒΑΣΕΙΣ ΔΕΔΟΜΕΝΩΝ"],
+    # live v9 te-014 (ADR-036): two shorter real courses nested inside a longer one
+    "12": ["(ΦΠ) ΒΙΟΜΗΧΑΝΙΚΑ-ΕΝΕΡΓΕΙΑΚΑ ΚΑΙ ΑΡΩΜΑΤΙΚΑ ΦΥΤΑ"],
+    "13": ["ΑΡΩΜΑΤΙΚΑ ΦΥΤΑ"],
+    "14": ["ΒΙΟΜΗΧΑΝΙΚΑ & ΕΝΕΡΓΕΙΑΚΑ ΦΥΤΑ"],
 }
 BOOKS: dict[str, list[str]] = {
     "1": ["Ανάλυση Κυκλωμάτων"],
@@ -217,6 +221,22 @@ def test_score_first_beats_a_longer_span_with_a_framing_word() -> None:
     ΕΙΣΑΓΩΓΗ ΣΤΟ ΔΙΑΔΙΚΑΣΤΙΚΟ ΠΡΟΓΡΑΜΜΑΤΙΣΜΟ, but the exact 2-word span wins (S45)."""
     spans = _link("σε ποια πανεπιστήμια διδάσκεται η Εισαγωγή στον Προγραμματισμό;")
     assert _titles(spans, "course")[0] == "ΕΙΣΑΓΩΓΗ ΣΤΟΝ ΠΡΟΓΡΑΜΜΑΤΙΣΜΟ"
+
+
+def test_a_containing_span_beats_a_nested_exact_title() -> None:
+    """Live v9 te-014 (ADR-036): «αρωματικα φυτα» is itself an exact course (100) nested in the
+    named title; the span of the whole title scores 96.5 («φπ» cannot start a span). A window that
+    CONTAINS the score-first winner and scores ≥ 0.95 wins instead."""
+    spans = _link("ποια βιβλία προτείνει το μάθημα (φπ) βιομηχανικα-ενεργειακα και αρωματικα φυτα;")
+    course = [s for s in spans if s.entity_class == "course"]
+    assert course[0].matches[0].surface_forms == ["(ΦΠ) ΒΙΟΜΗΧΑΝΙΚΑ-ΕΝΕΡΓΕΙΑΚΑ ΚΑΙ ΑΡΩΜΑΤΙΚΑ ΦΥΤΑ"]
+    assert len(course) == 1  # the nested titles are not offered as separate spans
+
+
+def test_the_nested_title_alone_is_still_found() -> None:
+    """No containing window ≥ 0.95 → score-first as before."""
+    spans = _link("ποια βιβλία προτείνει το μάθημα αρωματικα φυτα;")
+    assert _titles(spans, "course")[0] == "ΑΡΩΜΑΤΙΚΑ ΦΥΤΑ"
 
 
 def test_claimed_tokens_break_spans() -> None:
