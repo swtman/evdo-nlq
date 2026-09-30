@@ -48,7 +48,7 @@ For the evaluation chapter of the thesis you will want to answer "did v2 actuall
 
 | Name | Latest version | Status |
 |---|---|---|
-| nl-to-sparql | v9 | **Active in production** (2026-09-30, ADR-035). v8 + one Rule-16 bullet, "Named titles": grounding now finds course/book titles by spans of the question and lists a title named with a cue («ονομάζεται», «με τίτλο», quotes) as a firm binding, without topic stems for its words. Offline (dev): named titles found 78/115 → 113/115. Live check pending. |
+| nl-to-sparql | v9 | **Active in production** (2026-09-30, ADR-035). v8 + one Rule-16 bullet, "Named titles": grounding now finds course/book titles by spans of the question and lists a title named with a cue («ονομάζεται», «με τίτλο», quotes) as a firm binding, without topic stems for its words. Offline (dev): named titles found 78/115 → 113/115. Live (Haiku 4.5, 2026-09-30): examples 7/20 (= v8, no item flipped), title set dev 16/32 (v8 13/32). |
 | nl-to-sparql | v8 | Kept loadable for A/B (active 2026-09-26 → 2026-09-30, ADR-031). Topic stems from Snowball, one accent-proof REGEX pattern per stem. Live baseline 2026-09-30: examples 7/20, title dev 13/32. |
 | nl-to-sparql | v7 | Kept loadable (active 2026-09-25 → 2026-09-26, ADR-027). Rule 13 rewritten around the answer entity (level of NOT/BOTH conditions, row shape, year inside filters, integer codes) + a worked example that does not overlap the eval set. Live A/B vs v6 on the same corrected golds: strict 9/20 vs 7/20, correct answers 16/20 vs 14/20. |
 | nl-to-sparql | v6 | Kept loadable for A/B (active 2026-09-24 → 2026-09-25). Rule 16 treats matched titles as candidates, topic stems always present, `{few_shot_block}` restored (ADR-022). |
