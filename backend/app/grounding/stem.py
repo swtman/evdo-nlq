@@ -186,7 +186,7 @@ _PATTERN_CLASS: dict[str, str] = {
     "σ": "[σς]",
 }
 
-# Stems are runs of letters (``mentions._tokenize`` only yields letter runs);
+# Stems are runs of letters (``hints.build_grounding_hints`` passes only alphabetic tokens);
 # anything else could be a regex metacharacter, so it is refused, not escaped.
 _LETTERS_ONLY = re.compile(r"[^\W\d_]+")
 

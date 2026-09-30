@@ -213,20 +213,19 @@ def test_bare_panepistimio_emits_no_university() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Class-tagged Resolved title(s) format (dual course/book search) — added for
-# book title linking. rank_titles is monkeypatched so these tests exercise
-# the FORMATTING and DISAMBIGUATION logic only, independent of entities.db
-# contents or real corpus ranking (that's title_index's own test suite).
+# Title lines (branch 6, ADR-035). ``link_title_spans`` is monkeypatched so these
+# tests exercise the SECTIONS and FORMATTING only, independent of entities.db (the
+# span linker has its own suite, tests/test_title_spans.py). Its fake receives the
+# analysed question (a SpanQuestion) and returns SpanMatch objects.
 #
-# The question text is a made-up, non-Greek-word phrase so it can't
-# accidentally resolve as an entity via the real gazetteer/linker — these
-# tests only care about the residual content phrase reaching rank_titles.
+# The question is made of non-words so it cannot resolve as an entity.
 # ---------------------------------------------------------------------------
 
 import app.grounding.hints as hints_module  # noqa: E402
 from app.grounding.title_index import TitleMatch  # noqa: E402
+from app.grounding.title_index.spans import SpanMatch  # noqa: E402
 
-_NONSENSE_QUESTION = "ζωροβατικη μελετη ξενοφωνικης"
+_NONSENSE_QUESTION = "ζωροβατικη μελετη ξενοφωνικης"  # tokens 0, 1, 2
 
 
 def _course_match(norm="ζωροβατικη μελετη", score=0.9, surfaces=None):
@@ -243,11 +242,22 @@ def _book_match(norm="ξενοφωνικης θεωριας", score=0.9, surface
     )
 
 
-def test_course_only_match_formats_with_course_tag(monkeypatch) -> None:
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        return [_course_match()] if entity_class == "course" else []
+def _span(match, start=0, end=2, cued=False):
+    return SpanMatch(start=start, end=end, cued=cued, entity_class=match.entity_class,
+                     matches=[match])
 
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+
+def _fake(*spans):
+    """A link_title_spans stand-in that honours the ``classes`` argument."""
+
+    def fake_link(question, *, threshold, classes):
+        return [s for s in spans if s.entity_class in classes]
+
+    return fake_link
+
+
+def test_course_only_match_formats_with_course_tag(monkeypatch) -> None:
+    monkeypatch.setattr(hints_module, "link_title_spans", _fake(_span(_course_match())))
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
     assert "[Course]" in result
@@ -256,10 +266,7 @@ def test_course_only_match_formats_with_course_tag(monkeypatch) -> None:
 
 
 def test_book_only_match_formats_with_book_tag(monkeypatch) -> None:
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        return [_book_match()] if entity_class == "book" else []
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(hints_module, "link_title_spans", _fake(_span(_book_match(), 2, 3)))
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
     assert "[Book]" in result
@@ -271,11 +278,10 @@ def test_different_titles_both_classes_no_collision_note(monkeypatch) -> None:
     """Course matches title A, book matches a DIFFERENT title B — both lines
     render, but no note: two different titles matching is not an ambiguity,
     and a note there would be factually false."""
-
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        return [_course_match()] if entity_class == "course" else [_book_match()]
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(
+        hints_module, "link_title_spans",
+        _fake(_span(_course_match()), _span(_book_match(), 2, 3)),
+    )
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
     assert "[Course]" in result
@@ -286,14 +292,12 @@ def test_different_titles_both_classes_no_collision_note(monkeypatch) -> None:
 def test_same_title_both_classes_emits_collision_note(monkeypatch) -> None:
     """The SAME normalized title matching both classes must emit both lines
     AND the collision note, naming the colliding title."""
-
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        norm, surface = "ιδια τιτλος", "ΙΔΙΑ ΤΙΤΛΟΣ"
-        if entity_class == "course":
-            return [_course_match(norm=norm, surfaces=[surface])]
-        return [_book_match(norm=norm, surfaces=[surface])]
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    norm, surface = "ιδια τιτλος", "ΙΔΙΑ ΤΙΤΛΟΣ"
+    monkeypatch.setattr(
+        hints_module, "link_title_spans",
+        _fake(_span(_course_match(norm=norm, surfaces=[surface])),
+              _span(_book_match(norm=norm, surfaces=[surface]))),
+    )
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
     assert "[Course]" in result
@@ -303,78 +307,125 @@ def test_same_title_both_classes_emits_collision_note(monkeypatch) -> None:
 
 
 def test_surface_forms_joined_with_pipe(monkeypatch) -> None:
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        if entity_class != "course":
-            return []
-        return [_course_match(surfaces=["ΑΛΦΑ ΒΗΤΑ", "Άλφα Βήτα"])]
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(
+        hints_module, "link_title_spans",
+        _fake(_span(_course_match(surfaces=["ΑΛΦΑ ΒΗΤΑ", "Άλφα Βήτα"]))),
+    )
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
     assert '"ΑΛΦΑ ΒΗΤΑ" | "Άλφα Βήτα"' in result
 
 
 def test_book_linking_disabled_suppresses_book_search(monkeypatch) -> None:
-    calls: list[str] = []
+    seen: list[tuple[str, ...]] = []
 
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        calls.append(entity_class)
-        return [_course_match()] if entity_class == "course" else [_book_match()]
+    def fake_link(question, *, threshold, classes):
+        seen.append(classes)
+        return [s for s in (_span(_course_match()), _span(_book_match(), 2, 3))
+                if s.entity_class in classes]
 
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(hints_module, "link_title_spans", fake_link)
     monkeypatch.setattr(hints_module.settings, "book_linking_enabled", False)
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
-    assert "book" not in calls
-    assert "course" in calls
+    assert seen == [("course",)]
     assert "[Book]" not in result
 
 
+def test_span_threshold_comes_from_settings(monkeypatch) -> None:
+    seen: list[float] = []
+
+    def fake_link(question, *, threshold, classes):
+        seen.append(threshold)
+        return []
+
+    monkeypatch.setattr(hints_module, "link_title_spans", fake_link)
+    monkeypatch.setattr(hints_module.settings, "title_span_threshold", 0.91)
+    build_grounding_hints(_NONSENSE_QUESTION)
+    assert seen == [0.91]
+
+
+def test_linker_receives_the_analysed_question(monkeypatch) -> None:
+    seen = []
+
+    def fake_link(question, *, threshold, classes):
+        seen.append(question)
+        return []
+
+    monkeypatch.setattr(hints_module, "link_title_spans", fake_link)
+    build_grounding_hints("ζωροβατικη μελετη ιι")
+    assert seen and seen[0].tokens == ("ζωροβατικη", "μελετη", "ιι")
+
+
 # ---------------------------------------------------------------------------
-# Branch 1 (fix/title-match-keeps-topic-stems) — decision 1 of the title-linking
-# plan: a matched title is only a CANDIDATE, so the topic stems for the same
-# words must still be emitted, and the hint block carries labels only — the
-# instructions for using them live in prompt v6's Rule 16 (finding C1).
+# Decision 1: an UN-cued title is a candidate (stems kept); a CUED one is named
+# (firm, own section, no stems for its words). Branch 1 + branch 6.
 # ---------------------------------------------------------------------------
+
+
+def _stem_lines(result: str) -> str:
+    return result.split("**Topic stems**")[-1] if "**Topic stems**" in result else ""
 
 
 def test_stems_kept_when_title_candidate_present(monkeypatch) -> None:
     """A title candidate must NOT swallow the topic stems (ex-024 regression:
     'βιβλία αλγορίθμων' bound ΘΕΩΡΙΑ ΑΛΓΟΡΙΘΜΩΝ and lost the 'αλγορ' stem)."""
-
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        return [_course_match()] if entity_class == "course" else []
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(hints_module, "link_title_spans", _fake(_span(_course_match())))
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
     assert "[Course]" in result
-    assert "Topic stems" in result
-    assert "ξενοφωνικ" in result  # stem of 'ξενοφωνικης'
+    assert "ζωροβατικ" in _stem_lines(result)  # a word of the candidate span
+    assert "ξενοφωνικ" in _stem_lines(result)
 
 
 def test_title_section_is_labelled_candidates(monkeypatch) -> None:
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        return [_course_match()] if entity_class == "course" else []
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    monkeypatch.setattr(hints_module, "link_title_spans", _fake(_span(_course_match())))
     result = build_grounding_hints(_NONSENSE_QUESTION)
 
     assert "**Title candidates**" in result
+    assert "**Named titles**" not in result
     assert "Resolved title(s)" not in result
 
 
+def test_cued_span_goes_to_named_titles(monkeypatch) -> None:
+    monkeypatch.setattr(hints_module, "link_title_spans",
+                        _fake(_span(_course_match(), cued=True)))
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+
+    assert "**Named titles**:" in result
+    assert "**Title candidates**" not in result
+    named = result.split("**Named titles**:")[1].split("**Topic stems**")[0]
+    assert "[Course]" in named
+
+
+def test_cued_span_words_get_no_stems(monkeypatch) -> None:
+    """A named title's words are the title, not a topic — only the other words stem."""
+    monkeypatch.setattr(hints_module, "link_title_spans",
+                        _fake(_span(_course_match(), 0, 2, cued=True)))
+    stems = _stem_lines(build_grounding_hints(_NONSENSE_QUESTION))
+
+    assert "ζωροβατικ" not in stems and "μελετ" not in stems
+    assert "ξενοφωνικ" in stems
+
+
+def test_named_section_comes_before_candidates(monkeypatch) -> None:
+    monkeypatch.setattr(
+        hints_module, "link_title_spans",
+        _fake(_span(_course_match(), 0, 2, cued=True), _span(_book_match(), 2, 3)),
+    )
+    result = build_grounding_hints(_NONSENSE_QUESTION)
+    assert result.index("**Named titles**") < result.index("**Title candidates**")
+
+
 def test_hint_block_carries_no_usage_instructions(monkeypatch) -> None:
-    """Usage instructions belong to the versioned prompt (Rule 16 of v6), not
-    to text inlined in hints.py — so the old instruction phrases are gone."""
-
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        norm, surface = "ιδια τιτλος", "ΙΔΙΑ ΤΙΤΛΟΣ"
-        if entity_class == "course":
-            return [_course_match(norm=norm, surfaces=[surface])]
-        return [_book_match(norm=norm, surfaces=[surface])]
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
+    """Usage instructions belong to the versioned prompt (Rule 16), not to text
+    inlined in hints.py — so the old instruction phrases are gone."""
+    norm, surface = "ιδια τιτλος", "ΙΔΙΑ ΤΙΤΛΟΣ"
+    monkeypatch.setattr(
+        hints_module, "link_title_spans",
+        _fake(_span(_course_match(norm=norm, surfaces=[surface]), cued=True),
+              _span(_book_match(norm=norm, surfaces=[surface]))),
+    )
     result = build_grounding_hints(_NONSENSE_QUESTION + " ΑΠΘ")
 
     for phrase in ("do NOT use CONTAINS", "use the exact label in FILTER/VALUES",
@@ -382,20 +433,48 @@ def test_hint_block_carries_no_usage_instructions(monkeypatch) -> None:
         assert phrase not in result, phrase
 
 
-def test_per_class_thresholds_apply_independently(monkeypatch) -> None:
-    """A score that clears the book threshold but not the (higher) course
-    threshold must be accepted for book and dropped for course."""
+# ---------------------------------------------------------------------------
+# Branch 6 end to end on the real entities.db (no monkeypatch): cues, cue words,
+# the department cue.
+# ---------------------------------------------------------------------------
 
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        return [_course_match(score=0.75)] if entity_class == "course" else [_book_match(score=0.75)]
 
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
-    monkeypatch.setattr(hints_module.settings, "course_match_threshold", 0.8)
-    monkeypatch.setattr(hints_module.settings, "book_match_threshold", 0.7)
-    result = build_grounding_hints(_NONSENSE_QUESTION)
+def test_f1_question_names_the_title() -> None:
+    """The question that started the investigation (F1): framing words and «ονομάζεται»."""
+    result = build_grounding_hints(
+        "σε ποιες σχολες υπαρχει μάθημα το οποιο ονομαζεται αναλυση κυκλωματων"
+    )
+    named = result.split("**Named titles**:")[1] if "**Named titles**:" in result else ""
+    assert '"ΑΝΑΛΥΣΗ ΚΥΚΛΩΜΑΤΩΝ"' in named.split("**")[0]
 
-    assert "[Course]" not in result  # 0.75 < 0.8 course threshold
-    assert "[Book]" in result  # 0.75 >= 0.7 book threshold
+
+def test_cue_words_never_become_stems() -> None:
+    stems = _stem_lines(build_grounding_hints("μαθημα που ονομαζεται ζωροβατικη μελετη"))
+    assert "ονομαζ" not in stems
+
+
+def test_department_word_without_cue_keeps_its_stem() -> None:
+    """«φυσικής» here is a topic (ADR-034 finding: 1/4 one-word topics kept a stem)."""
+    stems = _stem_lines(build_grounding_hints("ποια βιβλία φυσικής προτείνει το ΕΚΠΑ;"))
+    assert "φυσικ" in stems
+
+
+def test_department_after_cue_is_claimed() -> None:
+    """After «Τμήμα» the words are the department: no stem, no title span."""
+    result = build_grounding_hints(
+        "Πόσα μαθήματα προσέφερε το Τμήμα Φυσικής του Πανεπιστημίου Πατρών το 2022;"
+    )
+    assert "φυσικ" not in _stem_lines(result)
+    assert "Title candidates" not in result and "Named titles" not in result
+    assert "ΦΥΣΙΚΗΣ" in result  # the entity line is still there
+
+
+def test_multiword_department_after_cue_is_not_a_title() -> None:
+    result = build_grounding_hints(
+        "Πόσα μαθήματα είχε το 2022 το Τμήμα Οικονομικών Επιστημών του Πανεπιστημίου Πελοποννήσου;"
+    )
+    assert "Title candidates" not in result and "Named titles" not in result
+    assert "ΟΙΚΟΝΟΜΙΚΩΝ ΕΠΙΣΤΗΜΩΝ" in result
 
 
 # ---------------------------------------------------------------------------
@@ -405,37 +484,13 @@ def test_per_class_thresholds_apply_independently(monkeypatch) -> None:
 from app.grounding.mentions import _tokenize  # noqa: E402
 
 
-def test_tokenize_keeps_marker_after_content_word() -> None:
-    assert _tokenize("αναλυση κυκλωματων ι", keep_series_markers=True) == [
-        "αναλυση", "κυκλωματων", "ι"]
-    assert _tokenize("Φυσική ΙΙ", keep_series_markers=True) == ["Φυσική", "ΙΙ"]
-    assert _tokenize("Μαθηματικά 2", keep_series_markers=True) == ["Μαθηματικά", "2"]
-    assert _tokenize("αρχιτεκτονικη I", keep_series_markers=True) == ["αρχιτεκτονικη", "I"]
-
-
-def test_tokenize_drops_years_codes_and_unanchored_markers() -> None:
-    # years / book codes are not markers; a marker must follow a kept content word
-    assert "2022" not in _tokenize("βιβλία 2022", keep_series_markers=True)
-    assert "94700120" not in _tokenize("βιβλίο 94700120", keep_series_markers=True)
-    assert _tokenize("ι αναλυση", keep_series_markers=True) == ["αναλυση"]
-    assert "ι" not in _tokenize("το ι", keep_series_markers=True)
+# (Branch 2's keep_series_markers tests were removed in branch 6: titles no longer use
+# _tokenize — markers in title spans are covered by tests/test_title_spans.py.)
 
 
 def test_tokenize_default_unchanged() -> None:
-    """Without the flag (entity tokens) the tokenizer behaves exactly as before."""
+    """Entity tokens: markers, years and short words are dropped, as before."""
     assert _tokenize("αναλυση κυκλωματων ι 2") == ["αναλυση", "κυκλωματων"]
-
-
-def test_title_phrase_carries_the_marker(monkeypatch) -> None:
-    seen: list[str] = []
-
-    def fake_rank_titles(phrase, k=3, *, entity_class="course"):
-        seen.append(phrase)
-        return []
-
-    monkeypatch.setattr(hints_module, "rank_titles", fake_rank_titles)
-    build_grounding_hints("ζωροβατικη μελετη ιι")
-    assert seen and all(p.endswith("ιι") for p in seen)
 
 
 def test_markers_never_become_stems() -> None:

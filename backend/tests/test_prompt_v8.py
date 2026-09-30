@@ -34,8 +34,10 @@ def _topic_stems_bullet(version: int) -> str:
     return system[start : system.index("\n", start)]
 
 
-def test_production_prompt_is_v8() -> None:
-    assert PROMPT_VERSION == 8
+def test_v8_stays_loadable_after_v9() -> None:
+    """Production moved to v9 (branch 6, ADR-035); v8 stays loadable for A/B runs."""
+    assert PROMPT_VERSION >= 8
+    assert "- **Topic stems**:" in load("nl-to-sparql", 8)
 
 
 def test_v8_keeps_v7_slot_layout() -> None:

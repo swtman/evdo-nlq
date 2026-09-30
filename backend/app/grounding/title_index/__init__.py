@@ -11,6 +11,10 @@ API that ties them together.
                  in-memory test-fixture builder.
     search.py    Orchestration and the three public entry points:
                  ``rank_titles``, ``rank_titles_from_corpus``, ``list_titles``.
+    spans.py     Span-based title linking for QUESTIONS (grounding, ADR-035):
+                 ``parse_question``, ``link_title_spans``, ``SpanQuestion``,
+                 ``SpanMatch``. Same key / candidates / scorer / hydration as
+                 ``rank_titles`` — two entry points, one search path.
 
 See ADR-021 for why the split happened and why it takes this particular
 shape. The public contract is unchanged: every name below resolved from
@@ -27,11 +31,21 @@ from app.grounding.title_index.search import (
     rank_titles,
     rank_titles_from_corpus,
 )
+from app.grounding.title_index.spans import (
+    SpanMatch,
+    SpanQuestion,
+    link_title_spans,
+    parse_question,
+)
 
 __all__ = [
     "INSTITUTION_MATCH_THRESHOLD",
+    "SpanMatch",
+    "SpanQuestion",
     "TitleMatch",
+    "link_title_spans",
     "list_titles",
+    "parse_question",
     "rank_titles",
     "rank_titles_from_corpus",
 ]

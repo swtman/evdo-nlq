@@ -71,26 +71,22 @@ class Settings(BaseSettings):
         it resolves entity aliases (e.g. "ΑΠΘ" → canonical evdx:name) and
         computes Greek word stems, then injects the hints into the system prompt.
     course_linking_enabled : bool
-        When True (default), the FTS5 + rapidfuzz (token_sort_ratio) title
-        ranker tries to resolve multi-word course names from the question to
-        exact KG title literals before falling back to stem-CONTAINS hints.
+        When True (default), span-based title linking (``title_index.spans``,
+        ADR-035) looks for course titles named in the question and offers them
+        as exact KG title literals next to the topic stems.
         Set to False (COURSE_LINKING_ENABLED=0) to disable and always use stems.
-    course_match_threshold : float
-        Minimum rapidfuzz token_sort_ratio similarity (0..1 — the value in
-        TitleMatch.score) for a course title match to be accepted as a
-        resolved title.  Matches below this threshold are discarded and the
-        pipeline falls back to stem-CONTAINS.  Default 0.7; tune upward if
-        false positives appear, downward if recall is too low.
     book_linking_enabled : bool
         Same as course_linking_enabled, but for book titles. Separate flag
         (not shared with course_linking_enabled) so either corpus can be
         disabled independently for an A/B comparison.
-    book_match_threshold : float
-        Same as course_match_threshold, but for book titles. Kept as its own
-        setting (not shared with course_match_threshold) because book titles
-        commonly carry subtitles and edition markers that course titles
-        don't, which can pull token_sort_ratio scores down for a genuine
-        match — the two corpora may end up needing different tuning.
+    title_span_threshold : float
+        Minimum rapidfuzz token_sort_ratio similarity (0..1 — the value in
+        TitleMatch.score) between a span of the question and a course/book
+        title. Default 0.85, measured on the frozen dev split (S45): 0.80 let
+        every nonexistent dev title through, 0.90 lost recall. Replaces the
+        per-class 0.7 thresholds of the whole-phrase ranking (removed with it,
+        branch 6): a span holds only the title's words, so a stricter cut-off
+        is possible (F7 had already found 0.85 for windows).
     """
 
     llm_provider: str = Field(default="claude", alias="LLM_PROVIDER")
@@ -108,9 +104,8 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     grounding_enabled: bool = Field(default=True, alias="GROUNDING_ENABLED")
     course_linking_enabled: bool = Field(default=True, alias="COURSE_LINKING_ENABLED")
-    course_match_threshold: float = Field(default=0.7, alias="COURSE_MATCH_THRESHOLD")
     book_linking_enabled: bool = Field(default=True, alias="BOOK_LINKING_ENABLED")
-    book_match_threshold: float = Field(default=0.7, alias="BOOK_MATCH_THRESHOLD")
+    title_span_threshold: float = Field(default=0.85, alias="TITLE_SPAN_THRESHOLD")
 
     # `env_file` tells Pydantic to also look for values inside `.env` (not
     # just in the shell environment). `populate_by_name` allows using the

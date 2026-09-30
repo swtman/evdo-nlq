@@ -167,6 +167,38 @@ _INSTITUTION_GLUE: frozenset[str] = _INSTITUTION_WORDS | frozenset(
     }
 )
 
+# ---------------------------------------------------------------------------
+# Naming cues (branch 6, ADR-035; title-linking plan issue 9a, decisions 1–2)
+# ---------------------------------------------------------------------------
+
+# Words that say "what follows is a NAME": «μάθημα που ονομάζεται …», «με τίτλο …».
+# A title right after one of them is NAMED (a firm binding, prompt v9's "Named titles"),
+# may be a single word (the single-word guard only applies without a cue), and the cue
+# itself is consumed — never part of a span, never a topic stem. None of them is a
+# stopword (F17), which is exactly why «ονομάζεται» used to stay in the compared
+# phrase and push the title under the threshold (F1). Quotation marks («…», "…") are
+# the other cue; they are found on the raw text in title_index/spans.py.
+_TITLE_CUES: frozenset[str] = frozenset(
+    {
+        "ονομαζεται",
+        "ονομαζονται",
+        "λεγεται",
+        "λεγονται",
+        "τιτλο",
+        "τιτλοσ",
+        "τιτλουσ",
+        "ονομα",
+        "ονομασια",
+    }
+)
+
+# Class words that announce a DEPARTMENT name: «το Τμήμα Φυσικής», «του τμήματος …».
+# Only right after one of them does a department match claim its words (no title span,
+# no topic stem); without it the department line is still listed but the words stay
+# available — «ποια βιβλία φυσικής …» is a topic (ADR-034 finding: 1/4 kept a stem),
+# and «Τμήμα Οικονομικών Επιστημών» must not become a course title (S45).
+_DEPARTMENT_CUES: frozenset[str] = frozenset({"τμημα", "τμηματοσ", "τμηματα"})
+
 # (The accented-variant tables for topic stems were removed in branch 4: the
 # stem hint now carries a vowel-class regex built by stem.stem_pattern, ADR-031.)
 

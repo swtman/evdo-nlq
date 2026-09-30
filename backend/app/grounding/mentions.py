@@ -1,6 +1,7 @@
 """Token → entity/stem selection policy for the grounding orchestrator.
 
-Tokenization, sliding-window entity resolution, and stem collection — the
+Tokenization, sliding-window entity resolution, the claim rule for title
+spans and stems (``analyse_question``, ADR-035), and stem collection — the
 logic that decides which tokens of a question become entities, which become
 stems, and which are discarded. Split out (ADR-021) from ``hints.py``, which
 retains only orchestration (``build_grounding_hints``) so its module object
@@ -9,18 +10,14 @@ stays what ``tests/test_grounding_hints.py`` monkeypatches.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.grounding.gazetteer import longest_entity_key
-from app.grounding.lexicon import _GREEK_STOPWORDS, _INSTITUTION_GLUE
+from app.grounding.lexicon import _DEPARTMENT_CUES, _GREEK_STOPWORDS, _INSTITUTION_GLUE
 from app.grounding.linker import ResolvedEntity, entity_key, resolve_exact, resolve_mention
-from app.grounding.normalize import (
-    is_content_token,
-    is_series_marker,
-    normalize_greek,
-    word_tokens,
-)
+from app.grounding.normalize import content_tokens, is_series_marker, normalize_greek
 from app.grounding.stem import MIN_STEM_LEN, topic_stem
+from app.grounding.title_index.spans import SpanQuestion, parse_question
 
 # Priority for deduplicating entity matches across window sizes.
 # Lower number = higher semantic confidence.
@@ -32,13 +29,8 @@ _STAGE_PRIORITY: dict[str, int] = {"acronym": 0, "exact": 1, "fuzzy": 2}
 # ---------------------------------------------------------------------------
 
 
-def _tokenize(
-    question: str,
-    stopwords: frozenset[str] = _GREEK_STOPWORDS,
-    *,
-    keep_series_markers: bool = False,
-) -> list[str]:
-    """Extract word tokens from a Greek/English question string.
+def _tokenize(question: str, stopwords: frozenset[str] = _GREEK_STOPWORDS) -> list[str]:
+    """Extract ENTITY word tokens from a Greek/English question string.
 
     Uses a Unicode-aware regex to pull out runs of letters and runs of digits.
     Then filters:
@@ -46,14 +38,11 @@ def _tokenize(
       - Tokens whose normalized form is in ``stopwords``.
     Digit runs never pass these filters on their own.
 
-    With ``keep_series_markers=True`` a SERIES MARKER is kept although it is
-    short — a roman numeral (Greek or Latin letters, "Ι", "ΙΙ", "I", "IV"), a
-    1-2 digit number, or one of the letters Α Β Γ Δ — but only when it comes
-    directly after a kept content word ("ανάλυση κυκλωμάτων Ι", "Μαθηματικά 2").
-    Without it, "ΑΝΑΛΥΣΗ ΚΥΚΛΩΜΑΤΩΝ Ι" and "… ΙΙ" were indistinguishable to the
-    title ranker (title-linking plan, decision 4). The adjacency rule and the
-    1-2 digit limit keep years ("2022") and book codes ("94700120") — frequent
-    in questions — out of the title phrase. See ``normalize.is_series_marker``.
+    Since branch 6 (ADR-035) this feeds ENTITY resolution only. Title spans and
+    topic stems read ``analyse_question`` (``title_key`` tokens, the key the
+    stored titles use), so the ``keep_series_markers`` option that branch 2 added
+    for the old whole-phrase title ranking is gone — markers are handled by the
+    span rules (a marker may end a span, counts 0 content words).
 
     Args:
         question: Raw user question, any Unicode text.
@@ -62,28 +51,15 @@ def _tokenize(
                    Pass ``lexicon._ENTITY_STOPWORDS`` to retain institution
                    words (e.g. "πανεπιστημιο") for entity disambiguation
                    while still filtering generic stopwords.
-        keep_series_markers: Keep series markers that follow a content word.
-                   Used for TOPIC tokens (title ranking) only; entity
-                   tokens leave it off, so entity resolution is unchanged.
 
     Returns:
         List of raw token strings that survive the filter (original casing
         preserved so that acronym detection like "ΑΠΘ" works at full uppercase).
     """
     # Word split and the content-word rule are shared with the gazetteer's token-key
-    # indexes (normalize.word_tokens / is_content_token), so questions and institution
-    # labels are cut into words identically — ADR-032.
-    result: list[str] = []
-    previous_kept_as_content = False
-    for tok in word_tokens(question):
-        norm = normalize_greek(tok)
-        is_content = is_content_token(tok, stopwords)
-        if is_content:
-            result.append(tok)
-        elif keep_series_markers and previous_kept_as_content and is_series_marker(norm):
-            result.append(tok)
-        previous_kept_as_content = is_content
-    return result
+    # indexes (normalize.content_tokens), so questions and institution labels are cut
+    # into words identically — ADR-032.
+    return content_tokens(question, stopwords)
 
 
 def _sliding_windows(tokens: list[str], size: int) -> list[str]:
@@ -234,43 +210,58 @@ def _resolve_all_windows(
     return best
 
 
-def _tokens_used_by_entity(
-    tokens: list[str],
-    entities: dict[tuple[str, str | None], ResolvedEntity],
-    high_priority_methods: frozenset[str],
-) -> frozenset[int]:
-    """Identify which token indices were claimed by high-priority entity matches.
+def analyse_question(question: str) -> SpanQuestion:
+    """The question as title spans and topic stems see it: tokens, cues, quotes, CLAIMS.
 
-    We only skip stemming for tokens that contributed to an acronym or exact
-    match.  Fuzzy-matched tokens remain candidates for stemming because the
-    fuzzy match may be spurious.
+    ``title_index.spans.parse_question`` does the pure part (``title_key`` tokens,
+    content words, naming cues, quoted runs); this adds which tokens an ENTITY claims.
+    A claimed token is never inside a title span and never becomes a topic stem.
 
-    WHY? A fuzzy match of e.g. "αριστοτελειου" (partial inflection of a long
-    university name) with score 85 is useful as an entity hint but the same
-    word is also useful as a stem.  Blocking it from stemming would lose
-    information; the LLM can use both.
+    Claim rule (branch 6, ADR-035; S45 "deptcue"):
+      - a single token resolving to a university acronym («ΑΠΘ») or, exactly, to a
+        university — as before;
+      - a DEPARTMENT name only right after a department cue («τμήμα», «τμήματος»,
+        «τμήματα» — ``lexicon._DEPARTMENT_CUES``): the longest run of tokens after
+        the cue that ``linker.resolve_exact`` resolves to a department
+        («Τμήμα Οικονομικών Επιστημών» → 2 tokens; «και» inside a name is matched by
+        the token key, ADR-032).
+
+    Before, every single token that resolved exactly to ANY entity was claimed
+    (the former ``_tokens_used_by_entity``). That took «φυσικής» away from «ποια
+    βιβλία φυσικής προτείνει το ΕΚΠΑ» (a topic — ADR-034: 1/4 one-word topics kept a
+    stem) and, with spans, it would have cut titles that contain a department word
+    («Θέματα Κοινωνικής Φιλοσοφίας» — S45: 108 → 113/115 dev titles found without
+    it). Without the cue the department line is still listed (``_resolve_all_windows``
+    is unchanged) — the words just stay available as a topic or inside a title.
+    Fuzzy matches never claim, as before (they may be spurious).
 
     Args:
-        tokens: Filtered raw tokens.
-        entities: Resolved entities dict (``entity_key`` → ResolvedEntity).
-        high_priority_methods: Match methods that count as "entity claimed"
-            (typically {"acronym", "exact"}).
+        question: Raw user question.
 
     Returns:
-        Frozenset of token indices whose text, as a window, was resolved by a
-        high-priority method.  Single-token windows only (multi-token windows
-        are handled by checking membership below).
+        A ``SpanQuestion`` with ``claimed`` filled in.
     """
-    # Build set of normalized single-token strings that were claimed.
-    # Re-resolve each token individually to find those that fire at high priority.
-    claimed_indices: set[int] = set()
-    for idx, tok in enumerate(tokens):
-        matches = resolve_mention(tok)
-        for m in matches:
-            if m.match_method in high_priority_methods:
-                claimed_indices.add(idx)
+    q = parse_question(question)
+    claimed: set[int] = set()
+    for i, tok in enumerate(q.tokens):
+        if q.content[i] and any(
+            m.match_method == "acronym"
+            or (m.match_method == "exact" and m.entity_type == "university")
+            for m in resolve_mention(tok)
+        ):
+            claimed.add(i)
+    # Department names: only after a cue; the longest exact name wins. Twice the longest
+    # key in words leaves room for connectors («και», «&») the key does not count.
+    longest = 2 * max(3, longest_entity_key())
+    for cue_at, tok in enumerate(q.tokens):
+        if tok not in _DEPARTMENT_CUES:
+            continue
+        for end in range(min(len(q.tokens), cue_at + 1 + longest), cue_at + 1, -1):
+            window = " ".join(q.tokens[cue_at + 1 : end])
+            if any(e.entity_type == "department" for e in resolve_exact(window)):
+                claimed.update(range(cue_at + 1, end))
                 break
-    return frozenset(claimed_indices)
+    return replace(q, claimed=frozenset(claimed))
 
 
 # ---------------------------------------------------------------------------

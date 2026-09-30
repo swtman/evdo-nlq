@@ -102,8 +102,73 @@ def test_summary_has_named_and_control_tables(checker) -> None:
         )
     ]
     text = "\n".join(checker.summarize(scores))
-    assert "| **all named** | 1 | 1/1 = 100% | 1/1 = 100% | 0/1 = 0% |" in text
+    assert "| **all named** | 1 | 1/1 = 100% | 1/1 = 100% | 0/1 = 0% | 0/1 = 0% |" in text
     assert "## Controls" in text
+
+
+# Branch 6 (ADR-035): a title named with a cue is listed under its own "Named titles" header.
+NAMED_HINT = """## Resolved entities & terms
+
+**Named titles**:
+- [Course] "ΑΝΑΛΥΣΗ ΚΥΚΛΩΜΑΤΩΝ" | "Ανάλυση Κυκλωμάτων"
+
+**Title candidates**:
+- [Book] "Ανάλυση Κυκλωμάτων και Σημάτων"
+
+**Topic stems**:
+- σηματ → σ[ηή]μ[αά]τ"""
+
+
+def test_a_family_line_counts_every_spelling_on_it(checker) -> None:
+    """A title FAMILY line (ADR-024) lists the tailed variants too, and one of those may sort
+    first (dev tg-020). The expected title is found if ANY surface on the line is it."""
+    hint = (
+        "**Named titles**:\n"
+        '- [Course] "ΒΥΖΑΝΤΙΝΗ  ΦΙΛΟΛΟΓΙΑ (ΒΥΖΑΝΤΙΝΑ ΚΕΙΜΕΝΑ)" | "ΒΥΖΑΝΤΙΝΗ ΦΙΛΟΛΟΓΙΑ"\n'
+        '- [Course] "Βυζαντινή Φιλολογία Ι"'
+    )
+    score = checker.score_item(_named("βυζαντινη φιλολογια"), hint)
+    assert score["found"] and score["top1"] and score["named_firm"]
+    assert not checker.score_item(_named("βυζαντινη φιλολογια ιι"), hint)["found"]
+
+
+def test_parse_hint_records_the_named_section(checker) -> None:
+    parsed = checker.parse_hint(NAMED_HINT)
+    assert parsed["course"] == ["αναλυση κυκλωματων"]  # still a title line of its class
+    assert parsed["named"] == [("course", "αναλυση κυκλωματων")]
+    assert checker.parse_hint(HINT)["named"] == []
+
+
+def test_named_title_under_named_section(checker) -> None:
+    score = checker.score_item(
+        _named("αναλυση κυκλωματων") | {"phrasing": "ονομάζεται"}, NAMED_HINT
+    )
+    assert score["found"] and score["named_firm"]
+    assert not checker.score_item(_named("αναλυση κυκλωματων"), HINT)["named_firm"]
+
+
+def test_control_with_a_named_title_is_a_firm_false_binding(checker) -> None:
+    item = {
+        "id": "t",
+        "kind": "nonexistent",
+        "split": "dev",
+        "class": "course",
+        "expected_titles": [],
+    }
+    assert checker.score_item(item, NAMED_HINT)["firm_false"] is True
+    assert checker.score_item(item, HINT)["firm_false"] is False
+
+
+def test_summary_reports_named_titles(checker) -> None:
+    scores = [
+        checker.score_item(
+            _named("αναλυση κυκλωματων") | {"stratum": "2–3 words", "phrasing": "ονομάζεται"},
+            NAMED_HINT,
+        )
+    ]
+    text = "\n".join(checker.summarize(scores))
+    assert "| phrasing: ονομάζεται | 1 | 1/1 = 100% | 1/1 = 100% | 0/1 = 0% | 1/1 = 100% |" in text
+    assert "a Named title appears" in text
 
 
 LONG_HINT = """## Resolved entities & terms

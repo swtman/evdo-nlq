@@ -6,9 +6,12 @@ For every item of ``prompts/eval-titles-grounding.yaml`` (built by S43) it runs 
 ``build_grounding_hints`` on the question and reads the hint block the LLM would receive:
 
   named / one-word-cued   the question NAMES a title (``expected_titles``, title_key norms):
-      found      — the expected title is among the "Title candidates" lines of its class
-      top-1      — it is the FIRST candidate line of its class
+      found      — the expected title is among the title lines of its class ("Named titles" or
+                   "Title candidates")
+      top-1      — it is the FIRST title line of its class
       wrong class — it appears only under the other class ([Book] for a course, …)
+      under Named titles — listed as NAMED (a cue was found; branch 6, ADR-035): right for the
+                   cued phrasings (quotes, «με τίτλο», «ονομάζεται»), a firm binding elsewhere
   harder questions        a title among other words (user, 2026-09-26):
       long                — + department and university: also ``entities_ok`` (the department line
                             with that label lists the named university; the university line)
@@ -19,7 +22,8 @@ For every item of ``prompts/eval-titles-grounding.yaml`` (built by S43) it runs 
   nonexistent             a plausible title that is not in the KG:
       false candidate — any title candidate appears (it can only be a wrong one)
   topic-control / one-word-topic   the words DESCRIBE a topic (decision 1):
-      false candidate — a title candidate appears anyway (allowed by v8, but a cost)
+      false candidate — a title candidate appears anyway (allowed by v8/v9, but a cost)
+      a Named title appears — worse: the prompt says to bind a named title
       stems ok        — every topic word's stem is in the "Topic stems" lines
 
 WHY A SEPARATE CHECKER (and not eval.py)
@@ -83,15 +87,31 @@ def parse_hint(hint: str) -> dict[str, list]:
     parsed: dict[str, list] = {
         "course": [],
         "book": [],
+        "named": [],  # (class, norm) of the lines under "**Named titles**:" (ADR-035)
+        # Every spelling's title_key, one set per line (same order as "course"/"book"): a
+        # family line (ADR-024) also lists tailed variants, one of which may sort first.
+        "course_keys": [],
+        "book_keys": [],
+        "named_keys": [],  # (class, key set) for the "Named titles" lines
         "stems": [],
         "universities": [],
         "departments": [],
     }
+    section = ""
     for line in hint.splitlines():
+        if line.startswith("**") and line.endswith("**:"):
+            section = line
+            continue
         m = _TITLE_LINE.match(line)
         if m:
-            first = m.group(2).split('" | "')[0].strip('"')
-            parsed[m.group(1).lower()].append(title_key(first))
+            spellings = [s.strip('"') for s in m.group(2).split('" | "')]
+            cls, norm = m.group(1).lower(), title_key(spellings[0])
+            keys = frozenset(title_key(s) for s in spellings)
+            parsed[cls].append(norm)
+            parsed[f"{cls}_keys"].append(keys)
+            if section == "**Named titles**:":
+                parsed["named"].append((cls, norm))
+                parsed["named_keys"].append((cls, keys))
             continue
         m = _STEM_LINE.match(line)
         if m:
@@ -120,8 +140,10 @@ def _entity_found(expected: dict[str, str], parsed: dict[str, list]) -> bool:
 def score_item(item: dict[str, Any], hint: str) -> dict[str, Any]:
     """Score one eval item against the hint block built for its question (pure function)."""
     parsed = parse_hint(hint)
-    own = parsed[item["class"]]
-    other = parsed["book" if item["class"] == "course" else "course"]
+    # One key set per title line: every spelling on the line counts (a family line, ADR-024).
+    own_lines = parsed[f"{item['class']}_keys"]
+    own = set().union(*own_lines)
+    other = set().union(*parsed["book_keys" if item["class"] == "course" else "course_keys"])
     any_candidate = bool(parsed["course"] or parsed["book"])
     score: dict[str, Any] = {
         "id": item["id"],
@@ -133,14 +155,20 @@ def score_item(item: dict[str, Any], hint: str) -> dict[str, Any]:
     }
     if item["kind"] in TITLE_KINDS:
         expected = set(item["expected_titles"])
-        score["found"] = bool(expected & set(own))  # any of them (two-titles: at least one)
-        score["found_all"] = expected <= set(own)
-        score["top1"] = bool(own) and own[0] in expected
-        score["wrong_class"] = not score["found"] and bool(expected & set(other))
+        score["found"] = bool(expected & own)  # any of them (two-titles: at least one)
+        score["found_all"] = expected <= own
+        score["top1"] = bool(own_lines) and bool(own_lines[0] & expected)
+        score["wrong_class"] = not score["found"] and bool(expected & other)
+        # Listed as NAMED (a firm binding): expected for cued phrasings, wrong otherwise.
+        score["named_firm"] = any(
+            cls == item["class"] and keys & expected for cls, keys in parsed["named_keys"]
+        )
         if item.get("expected_entities"):
             score["entities_ok"] = all(_entity_found(x, parsed) for x in item["expected_entities"])
     else:
         score["false_candidate"] = any_candidate
+        # A wrong NAMED title is worse than a wrong candidate: the prompt says to bind it.
+        score["firm_false"] = bool(parsed["named"])
     if item.get("topic_words"):
         wanted = [topic_stem(w) for w in item["topic_words"]]
         wanted = [s for s in wanted if len(s) >= MIN_STEM_LEN]
@@ -159,14 +187,14 @@ def summarize(scores: list[dict]) -> list[str]:
     lines = [
         "## Named titles (the question names a course/book)",
         "",
-        "| group | n | found | top-1 | only under the other class |",
-        "|---|---|---|---|---|",
+        "| group | n | found | top-1 | only under the other class | under Named titles |",
+        "|---|---|---|---|---|---|",
     ]
 
     def row(label: str, group: list[dict]) -> None:
         lines.append(
             f"| {label} | {len(group)} | {_rate(group, 'found')} | {_rate(group, 'top1')} | "
-            f"{_rate(group, 'wrong_class')} |"
+            f"{_rate(group, 'wrong_class')} | {_rate(group, 'named_firm')} |"
         )
 
     row("**all named**", named)
@@ -200,14 +228,15 @@ def summarize(scores: list[dict]) -> list[str]:
         "",
         "## Controls (no title should be bound)",
         "",
-        "| kind | n | a title candidate appears | topic stems present |",
-        "|---|---|---|---|",
+        "| kind | n | a title candidate appears | a Named title appears | topic stems present |",
+        "|---|---|---|---|---|",
     ]
     for kind in ("nonexistent", "topic-control", "one-word-topic"):
         group = [s for s in scores if s["kind"] == kind]
         with_stems = [s for s in group if "stems_ok" in s]
         lines.append(
             f"| {kind} | {len(group)} | {_rate(group, 'false_candidate')} | "
+            f"{_rate(group, 'firm_false')} | "
             f"{_rate(with_stems, 'stems_ok') if with_stems else '–'} |"
         )
     return lines

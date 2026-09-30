@@ -5,27 +5,42 @@ WHAT THIS MODULE DOES
 ``build_grounding_hints(question)`` is the single public entry point for the
 grounding module.  Given a raw user question (Greek or English), it:
 
-  1. Tokenizes the question into individual word tokens.
-  2. Resolves entity mentions (single tokens AND 2/3-token windows) via
-     ``linker.resolve_mention``.
-  3. Finds course/book title CANDIDATES from the residual content words,
-     via ``title_index.search.rank_titles`` — searching BOTH the course and
-     book corpora (see "COURSE AND BOOK TITLE RESOLUTION" below).
-  4. Stems every topic word not claimed by an acronym/exact entity, via
-     ``stem.topic_stem`` (Snowball, ADR-031) — ALWAYS, even when a title
-     candidate was found (see "TITLE CANDIDATES, NOT RESOLUTIONS" below) —
-     and lists each stem with its accent-proof regex (``stem.stem_pattern``).
+  1. Tokenizes the question: entity tokens (``mentions._tokenize``) and the
+     analysed question for titles and stems (``mentions.analyse_question`` —
+     ``title_key`` tokens, naming cues, quotes, entity claims; ADR-035).
+  2. Resolves entity mentions (sliding windows) via ``linker.resolve_mention``.
+  3. Finds the SPANS of the question that name a course/book title, via
+     ``title_index.spans.link_title_spans`` — searching BOTH the course and
+     book corpora (see "COURSE AND BOOK TITLE RESOLUTION" and "SPANS, CUES,
+     NAMED TITLES" below).
+  4. Stems every content word that no entity claimed and no NAMED title
+     covers, via ``stem.topic_stem`` (Snowball, ADR-031) — also the words of
+     a title CANDIDATE (see "TITLE CANDIDATES, NOT RESOLUTIONS" below) — and
+     lists each stem with its accent-proof regex (``stem.stem_pattern``).
   5. Formats the results into a markdown block ready for injection into the
-     system prompt that precedes the LLM SPARQL-generation call.
+     user message that follows the question (ADR-026).
 
 This module owns only orchestration. The token→entity/stem selection policy
-(tokenization, sliding-window resolution, stem collection) lives in
-``mentions.py``; the Greek lexicon data it's built from lives in
+(tokenization, sliding-window resolution, the claim rule, stem collection)
+lives in ``mentions.py``; the Greek lexicon data it's built from lives in
 ``lexicon.py``; the markdown line formatters live in ``hint_lines.py`` (all
 split out here, ADR-021). ``build_grounding_hints`` stays in THIS module
 deliberately — ``tests/test_grounding_hints.py`` monkeypatches
-``hints.rank_titles`` and ``hints.settings`` on this module's own object, so
+``hints.link_title_spans`` and ``hints.settings`` on this module's own object, so
 the function that resolves those names at call time has to keep living here.
+
+SPANS, CUES, NAMED TITLES (branch 6, ADR-035)
+---------------------------------------------
+Until branch 6 every leftover content word was joined into ONE phrase and
+ranked whole against the titles, so framing words («υπάρχει», «ονομάζεται»,
+other entities) pulled the score under the cut-off (finding F1; dev set
+78/115 named titles found). Now ``link_title_spans`` scores every window of
+the question (stopwords allowed inside, never at the edges; ≥ 2 content
+words unless named with a cue) and keeps the best non-overlapping ones
+(S45: 113/115). A span right after a naming cue («ονομάζεται», «με τίτλο»)
+or inside quotation marks is NAMED: it goes under ``**Named titles**`` and
+its words get no stems (decision 1: a cue makes the binding firm; prompt v9
+Rule 16). Every other span is a ``**Title candidates**`` line, with stems.
 
 COURSE AND BOOK TITLE RESOLUTION
 -----------------------------------
@@ -50,8 +65,8 @@ matching is not an ambiguity). See ADR-019.
 
 TITLE CANDIDATES, NOT RESOLUTIONS
 ----------------------------------
-A title that scores above the threshold is emitted as a *candidate*, not a
-confirmed binding, and its words still produce topic stems. The ranker only
+A title that scores above the threshold WITHOUT a naming cue is emitted as a
+*candidate*, not a confirmed binding, and its words still produce topic stems. The ranker only
 measures string similarity; it cannot tell whether the question NAMES a
 title ("μάθημα Ανάλυση Κυκλωμάτων") or DESCRIBES a topic ("βιβλία
 αλγορίθμων", which matches the course ΘΕΩΡΙΑ ΑΛΓΟΡΙΘΜΩΝ). Previously a match
@@ -62,7 +77,7 @@ v6's Rule 16 tells the model how to choose. Title-linking plan, decision 1;
 evidence F10 in notes/investigations/title-linking/.
 
 The section headers in the block are plain labels ("**Entities**:",
-"**Title candidates**:", "**Topic stems**:"); the instructions for using
+"**Named titles**:", "**Title candidates**:", "**Topic stems**:"); the instructions for using
 them live in the versioned prompt, not in this module (finding C1).
 
 WHY INJECT HINTS INTO THE SYSTEM PROMPT?
@@ -108,10 +123,10 @@ from app.grounding.mentions import (
     _collect_stems,
     _resolve_all_windows,
     _tokenize,
-    _tokens_used_by_entity,
+    analyse_question,
 )
 from app.grounding.stem import stem_pattern
-from app.grounding.title_index import TitleMatch, rank_titles
+from app.grounding.title_index.spans import link_title_spans
 
 logger = logging.getLogger(__name__)
 
@@ -124,16 +139,18 @@ def build_grounding_hints(question: str) -> str:
     """Build a grounding hint block to inject into the LLM system prompt.
 
     Takes a raw user question (Greek or English) and returns a formatted
-    markdown string with up to three optional sections:
+    markdown string with up to four optional sections:
 
       - **Entities** — canonical KG labels resolved from the question (exact
         strings to use in SPARQL FILTER/VALUES clauses).
-      - **Title candidates** — course/book titles that closely match words in
-        the question, class-tagged ``[Course]``/``[Book]`` (see
+      - **Named titles** — course/book titles the question names with a cue
+        («ονομάζεται», «με τίτλο», quotes): firm bindings (ADR-035).
+      - **Title candidates** — course/book titles that closely match other
+        words of the question, class-tagged ``[Course]``/``[Book]`` (see
         "COURSE AND BOOK TITLE RESOLUTION" and "TITLE CANDIDATES, NOT
         RESOLUTIONS" in the module docstring).
-      - **Topic stems** — Greek word stems for CONTAINS filters; emitted even
-        when title candidates exist.
+      - **Topic stems** — Greek word stems with their REGEX pattern; emitted
+        even when title candidates exist (not for the words of a named title).
 
     Returns ``""`` (empty string) when the question yields neither entities nor
     useful stems — the caller should skip injection in that case.
@@ -162,71 +179,62 @@ def build_grounding_hints(question: str) -> str:
     #            name fragments form as bigrams (e.g. "πανεπιστημιο πειραια"
     #            scores 92.7 for ΠΑΝΕΠΙΣΤΗΜΙΟ ΠΕΙΡΑΙΩΣ vs bare "πειραια" → ΤΕΙ).
     entity_tokens = _tokenize(question, _ENTITY_STOPWORDS)
-    # Step 1b — topic tokens: full stopword set (including attribute nouns like
-    #            "καθηγητεσ") so only genuine content words survive for title
-    #            ranking and stemming.
-    #            Series markers ("Ι", "ΙΙ", "2", "Α") after a content word are
-    #            kept so numbered titles can be told apart (decision 4); they
-    #            never produce stems (_collect_stems skips series markers).
-    topic_tokens = _tokenize(question, keep_series_markers=True)
+    # Step 1b — the question as title spans and stems see it: title_key tokens,
+    #            content words, naming cues, quotes, and the tokens entities claim
+    #            (acronyms, exact universities, a department after «τμήμα») — ADR-035.
+    analysed = analyse_question(question)
 
-    if not entity_tokens and not topic_tokens:
+    if not entity_tokens and not any(analysed.content):
         logger.info("Grounding output: (no entity/topic tokens — no hints)")
         return ""
 
     # Step 2 — resolve entity mentions using greedy span-disjoint windows.
     entities = _resolve_all_windows(entity_tokens)
 
-    # Step 3 — determine which topic tokens are "claimed" by high-priority hits.
-    high_priority = frozenset({"acronym", "exact"})
-    claimed = _tokens_used_by_entity(topic_tokens, entities, high_priority)
+    # Step 3 — title spans, BOTH classes (see "COURSE AND BOOK TITLE RESOLUTION"
+    # and "SPANS, CUES, NAMED TITLES" in the module docstring).
+    classes = tuple(
+        cls
+        for cls, enabled in (
+            ("course", settings.course_linking_enabled),
+            ("book", settings.book_linking_enabled),
+        )
+        if enabled
+    )
+    spans = (
+        link_title_spans(analysed, threshold=settings.title_span_threshold, classes=classes)
+        if classes
+        else []
+    )
+    named = [s for s in spans if s.cued]
+    candidates = [s for s in spans if not s.cued]
 
-    # Step 4a — title ranking, BOTH classes.
-    # Take the residual content words (unclaimed, non-stopword tokens) as the
-    # candidate phrase for a specific course/book title the user named, e.g.
-    # "αρχιτεκτονικη υπολογιστων" after "ΑΠΘ" is claimed and stopwords removed.
-    # Search course and book independently — see "COURSE AND BOOK TITLE
-    # RESOLUTION" in the module docstring for why this is unconditional
-    # rather than gated on a guessed class.
-    residual_tokens = [t for i, t in enumerate(topic_tokens) if i not in claimed]
-    course_matches: list[TitleMatch] = []
-    book_matches: list[TitleMatch] = []
-    if residual_tokens:
-        phrase = " ".join(residual_tokens)
-        if settings.course_linking_enabled:
-            # Apply acceptance threshold — below it the match is too
-            # uncertain; fall back to stem-CONTAINS for this query.
-            course_matches = [
-                m
-                for m in rank_titles(phrase, k=3, entity_class="course")
-                if m.score >= settings.course_match_threshold
-            ]
-        if settings.book_linking_enabled:
-            book_matches = [
-                m
-                for m in rank_titles(phrase, k=3, entity_class="book")
-                if m.score >= settings.book_match_threshold
-            ]
-    title_matches: list[TitleMatch] = course_matches + book_matches
+    # Step 4 — stem every content word that no entity claimed and no NAMED title
+    # covers. An un-cued title is only a *candidate* (decision 1), so its words keep
+    # their stems for the topic reading (ex-024: "βιβλία αλγορίθμων" matched
+    # ΘΕΩΡΙΑ ΑΛΓΟΡΙΘΜΩΝ and once lost its `αλγορ` stem). Naming cues are not
+    # content words, so «ονομαζ»/«τιτλ» never become stems.
+    in_named = {i for s in named for i in range(s.start, s.end)}
+    stem_tokens = [
+        tok
+        for i, tok in enumerate(analysed.tokens)
+        if analysed.content[i]
+        and i not in analysed.claimed
+        and i not in in_named
+        and tok.isalpha()  # stem_pattern takes letters only («covid19» has no stem)
+    ]
+    stems = _collect_stems(stem_tokens, frozenset())
 
-    # Step 5 — stem every topic word not claimed by an acronym/exact ENTITY.
-    # A matched title does NOT consume its words: it is only a *candidate*
-    # (see "TITLE CANDIDATES, NOT RESOLUTIONS" in the module docstring), so the
-    # stems stay available for the case where the question describes a topic
-    # rather than naming a title (ex-024: "βιβλία αλγορίθμων" matched
-    # ΘΕΩΡΙΑ ΑΛΓΟΡΙΘΜΩΝ and, before this change, lost its `αλγορ` stem).
-    stems = _collect_stems(topic_tokens, claimed)
-
-    # Step 6 — nothing found → bail out early.
-    if not entities and not title_matches and not stems:
+    # Step 5 — nothing found → bail out early.
+    if not entities and not spans and not stems:
         logger.info("Grounding output: (nothing resolved — no hints)")
         return ""
 
-    # Step 7 — format the output block.
+    # Step 6 — format the output block.
     lines: list[str] = ["## Resolved entities & terms", ""]
 
     # Section headers are plain LABELS. How to use each section is explained
-    # in the versioned prompt (Rule 16 of prompts/nl-to-sparql-v6.md), not
+    # in the versioned prompt (Rule 16 of prompts/nl-to-sparql-v9.md), not
     # here — project rule: prompt text lives in prompts/, never inlined in
     # code (title-linking plan, finding C1).
     if entities:
@@ -235,35 +243,37 @@ def build_grounding_hints(question: str) -> str:
         # lists all of them (ADR-028).
         lines.extend(_format_entity_lines(entities.values()))
 
-    if title_matches:
-        if entities:
-            lines.append("")  # blank line between entities and titles
-        lines.append("**Title candidates**:")
-        # Courses first, then books; each group already sorted score-descending
-        # by rank_titles. Deterministic order matters: the LLM DiskCache key is
-        # a hash of the full prompt, so nondeterministic ordering would halve
-        # the cache hit rate for no benefit.
-        for match in course_matches:
-            lines.append(_format_title_line(match))
-        for match in book_matches:
-            lines.append(_format_title_line(match))
+    # Named titles first (the question names them — firm), then candidates.
+    # Within a section: courses, then books; each in question order, best first
+    # per span. Deterministic order matters: the LLM DiskCache key is a hash of
+    # the full prompt, so nondeterministic ordering would halve the cache hit
+    # rate for no benefit.
+    for header, group in (("**Named titles**:", named), ("**Title candidates**:", candidates)):
+        if not group:
+            continue
+        if len(lines) > 2:
+            lines.append("")  # blank line after the previous section
+        lines.append(header)
+        for cls in ("course", "book"):
+            for span in group:
+                if span.entity_class == cls:
+                    lines.extend(_format_title_line(m) for m in span.matches)
 
-        # Collision note — fires ONLY when the SAME normalized title matched
-        # both classes, not merely "a course and a book both matched
-        # something" (two different titles matching is not an ambiguity, and
-        # a note there would be factually false). See module docstring
-        # "COURSE AND BOOK TITLE RESOLUTION".
-        course_norms = {m.normalized_title for m in course_matches}
-        book_norms = {m.normalized_title for m in book_matches}
-        for norm in sorted(course_norms & book_norms):
-            representative = next(
-                m.surface_forms[0] for m in course_matches if m.normalized_title == norm
-            )
-            # A fact only; what to do about it is Rule 16 of prompt v6.
-            lines.append(f'(Note: "{representative}" matched BOTH a Course and a Book.)')
+    # Collision note — fires ONLY when the SAME normalized title matched both
+    # classes, not merely "a course and a book both matched something" (two
+    # different titles matching is not an ambiguity, and a note there would be
+    # factually false). See module docstring "COURSE AND BOOK TITLE RESOLUTION".
+    course_matches = [m for s in spans if s.entity_class == "course" for m in s.matches]
+    book_norms = {m.normalized_title for s in spans if s.entity_class == "book" for m in s.matches}
+    for norm in sorted({m.normalized_title for m in course_matches} & book_norms):
+        representative = next(
+            m.surface_forms[0] for m in course_matches if m.normalized_title == norm
+        )
+        # A fact only; what to do about it is Rule 16 of the prompt.
+        lines.append(f'(Note: "{representative}" matched BOTH a Course and a Book.)')
 
     if stems:
-        if entities or title_matches:
+        if len(lines) > 2:
             lines.append("")  # blank line before stems section
         lines.append("**Topic stems**:")
         # "stem → pattern": the stem for the reader, the pattern for the SPARQL

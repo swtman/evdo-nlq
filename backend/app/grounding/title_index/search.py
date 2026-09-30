@@ -136,6 +136,46 @@ def _acronym_match(state: _IndexState, q_norm: str) -> TitleMatch | None:
 # ---------------------------------------------------------------------------
 
 
+def _hydrate(state: _IndexState, ranked: list[tuple[str, float]], k: int) -> list[TitleMatch]:
+    """Turn ranked ``(key, raw 0-100 score)`` pairs into up to ``k`` ``TitleMatch`` objects.
+
+    Shared by BOTH entry points — ``_rank`` (a phrase: the ΟΝΤΟΛΟΓΙΑ page / API) and
+    ``spans.link_title_spans`` (windows of a question: grounding) — so a title found either
+    way carries the same surface forms, parents and de-duplication (ADR-035: two entry
+    points, one key / candidate generator / scorer / hydration).
+
+    Candidates are full-title keys AND family keys (ADR-024), so a family and one of its
+    members can both score well. The caller over-fetches; any result whose surfaces are all
+    already covered by a better-ranked one is skipped — a member listed after its whole
+    family adds nothing.
+
+    Args:
+        state: The class being queried.
+        ranked: Keys with raw scores, best first, already filtered by the caller's floor.
+        k: Maximum number of matches to return.
+    """
+    results: list[TitleMatch] = []
+    covered: set[str] = set()
+    for norm, score in ranked:
+        if len(results) == k:
+            break
+        surface_forms, parents, variants = _lookup_surfaces_and_parents(state, norm)
+        if surface_forms and set(surface_forms) <= covered:
+            continue
+        covered.update(surface_forms)
+        results.append(
+            TitleMatch(
+                normalized_title=norm,
+                score=score / 100.0,
+                surface_forms=surface_forms,
+                entity_class=state.table,
+                parents=parents,
+                variants=variants,
+            )
+        )
+    return results
+
+
 def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
     """Rank corpus entries against ``phrase`` per ``state.table``'s ``_MatchPolicy``.
 
@@ -179,31 +219,12 @@ def _rank(phrase: str, k: int, state: _IndexState) -> list[TitleMatch]:
     # the scorer differs by class).
     results: list[TitleMatch] = []
     if candidate_norms:
-        # Candidates are full-title keys AND family keys (ADR-024), so a family
-        # and one of its members can both score well. Over-fetch, then skip any
-        # result whose surfaces are all already covered by a better-ranked one —
-        # a member listed after its whole family adds nothing.
         ranked = process.extract(q_norm, candidate_norms, scorer=policy.scorer, limit=k * 4)
-        covered: set[str] = set()
-        for norm, score, _idx in ranked:
-            if len(results) == k:
-                break
-            if not _clears_floor(score, policy):
-                continue
-            surface_forms, parents, variants = _lookup_surfaces_and_parents(state, norm)
-            if surface_forms and set(surface_forms) <= covered:
-                continue
-            covered.update(surface_forms)
-            results.append(
-                TitleMatch(
-                    normalized_title=norm,
-                    score=score / 100.0,
-                    surface_forms=surface_forms,
-                    entity_class=state.table,
-                    parents=parents,
-                    variants=variants,
-                )
-            )
+        results = _hydrate(
+            state,
+            [(norm, score) for norm, score, _idx in ranked if _clears_floor(score, policy)],
+            k,
+        )
 
     if acronym_hit is not None:
         results = [r for r in results if r.normalized_title != acronym_hit.normalized_title]

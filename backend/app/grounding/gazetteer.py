@@ -63,7 +63,7 @@ once here rather than by every caller.  This exists specifically for
 `linker._stage3_fuzzy`, which runs `rapidfuzz.process.extractOne` against
 these lists on every call to `resolve_mention` — and `hints.py` calls
 `resolve_mention` roughly 20 times per question (every 1/2/3-token sliding
-window, plus once more per token in `_tokens_used_by_entity`).  Before this
+window, plus once more per content token in `mentions.analyse_question`).  Before this
 cache existed, `_stage3_fuzzy` re-ran `normalize_greek` over all 46 + 379
 labels on every one of those calls — ~17,000 redundant normalizations per
 question.
