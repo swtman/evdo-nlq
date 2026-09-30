@@ -71,6 +71,8 @@ Options:
     --no-cache        bypass DiskCache for a fresh-LLM eval run
     --example-id      run only this example ID (e.g. ex-005)
     --shape           run only examples with this query_shape (e.g. negative-existence)
+    --split           dev | test — only items of that split (eval-titles.yaml); items without a
+                      split always run (ADR-034)
 
 Outputs a Markdown report to notes/eval-runs/<auto-named>.md (or --output PATH).
 """
@@ -164,7 +166,7 @@ def _canonicalize_sparql(query: str) -> str | None:
       its output format is not documented or guaranteed to be stable across
       rdflib versions. Two machines running different rdflib versions could
       produce different canonical strings for the same query.
-    - The regex ?(\w+) runs on the repr string, which may contain variable-like
+    - The regex ?(\\w+) runs on the repr string, which may contain variable-like
       patterns inside string literals or comments. Those would be incorrectly
       renamed, though this is unlikely with typical SPARQL.
     - "First appearance" order means two queries with the same pattern but
@@ -1110,7 +1112,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="SHAPE",
         help="Run only examples with this query_shape (e.g. negative-existence)",
     )
+    parser.add_argument(
+        "--split",
+        choices=["dev", "test"],
+        default=None,
+        help="Run only items of this split (eval-titles.yaml, ADR-034); items without a split "
+        "(examples.yaml) always run",
+    )
     return parser
+
+
+def _filter_split(examples: list[dict[str, Any]], split: str | None) -> list[dict[str, Any]]:
+    """Keep the items of ``split``; items that have no split are never filtered out (ADR-034).
+
+    The title eval set is split dev/test by title family (decision 3): tune on dev, run test once.
+    """
+    if split is None:
+        return examples
+    return [e for e in examples if e.get("split", split) == split]
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -1166,6 +1185,9 @@ def _run(args: argparse.Namespace) -> None:
         examples = [e for e in examples if e["query_shape"] == args.shape]
         if not examples:
             sys.exit(f"ERROR: no examples with shape={args.shape!r}")
+    examples = _filter_split(examples, args.split)
+    if not examples:
+        sys.exit(f"ERROR: no examples with split={args.split!r}")
 
     run_at = datetime.now().strftime("%Y-%m-%dT%H:%M")
     results: list[dict[str, Any]] = []
@@ -1211,6 +1233,8 @@ def _run(args: argparse.Namespace) -> None:
         slug = f"{run_at[:10]}-v{args.prompt_version}-greek-{args.provider}-{args.model}"
         if examples_path.resolve() != _EXAMPLES_PATH.resolve():
             slug += f"-{examples_path.stem}"
+        if args.split:
+            slug += f"-{args.split}"
         _EVAL_RUNS_DIR.mkdir(parents=True, exist_ok=True)
         out_path = _EVAL_RUNS_DIR / f"{slug}.md"
 

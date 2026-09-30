@@ -147,6 +147,17 @@ def test_language_option_is_gone(harness) -> None:
     assert not hasattr(parser.parse_args([]), "language")
 
 
+def test_split_filter_keeps_items_without_a_split(harness) -> None:
+    """--split selects the title eval set's dev or test items (ADR-034); examples.yaml items have no
+    split and always run."""
+    examples = [{"id": "a", "split": "dev"}, {"id": "b", "split": "test"}, {"id": "c"}]
+    assert [e["id"] for e in harness._filter_split(examples, "dev")] == ["a", "c"]
+    assert [e["id"] for e in harness._filter_split(examples, "test")] == ["b", "c"]
+    assert [e["id"] for e in harness._filter_split(examples, None)] == ["a", "b", "c"]
+    with pytest.raises(SystemExit):
+        harness._build_arg_parser().parse_args(["--split", "train"])
+
+
 def test_example_without_an_english_question_runs(harness) -> None:
     """An example with only `question_greek` runs once, with that question, and the record
     carries no language field."""
