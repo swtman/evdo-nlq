@@ -83,6 +83,7 @@ export default function App() {
         sparql: state.sparql,
         columns: state.columns,
         rows: state.rows,
+        boolean: state.boolean, // ASK answer (ADR-037) so a history re-open shows «Ναι» / «Όχι»
         retries: state.retries,
         inputTokens: state.inputTokens,
         outputTokens: state.outputTokens,
@@ -172,6 +173,8 @@ export default function App() {
   const liveResult = state.status === 'done' ? state : null
   const displayColumns = cachedResult?.columns ?? liveResult?.columns
   const displayRows    = cachedResult?.rows    ?? liveResult?.rows
+  // A cached entry decides on its own (entries saved before ADR-037 have no `boolean`).
+  const displayBoolean = cachedResult ? cachedResult.boolean : liveResult?.boolean
   const displayTokenInfo = cachedResult
     ? { inputTokens: cachedResult.inputTokens, outputTokens: cachedResult.outputTokens, retries: cachedResult.retries }
     : liveResult
@@ -371,6 +374,7 @@ export default function App() {
                 <ResultsTable
                   columns={displayColumns}
                   rows={displayRows}
+                  boolean={displayBoolean}
                   inputTokens={displayTokenInfo.inputTokens}
                   outputTokens={displayTokenInfo.outputTokens}
                   retries={displayTokenInfo.retries}

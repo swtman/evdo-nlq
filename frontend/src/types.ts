@@ -22,6 +22,17 @@ export type ParsedSSEEvent = {
  *   idle → (user submits) → streaming → (done event) → done
  *                                     → (error event) → error → (dismiss) → idle
  */
+/**
+ * What GraphDB returned for one query: the `results` SSE event and POST /sparql/execute.
+ * `boolean` is the answer of an ASK (yes/no) query — the rows then hold the same answer
+ * as one `answer` row — and null for SELECT (ADR-037).
+ */
+export type QueryResults = {
+  columns: string[]
+  rows: Record<string, string | undefined>[]
+  boolean?: boolean | null
+}
+
 export type QueryState =
   | { status: 'idle' }
   | {
@@ -30,6 +41,7 @@ export type QueryState =
       executing?: boolean      // true between sparql_complete and results — GraphDB is running
       columns?: string[]       // arrive with the results event, before DONE is dispatched
       rows?: Record<string, string | undefined>[]
+      boolean?: boolean | null // ASK (yes/no) answer from the results event; null for SELECT (ADR-037)
       rerun?: boolean          // true when streaming state was entered via RERUN_START (not LLM stream)
     }
   | {
@@ -37,6 +49,7 @@ export type QueryState =
       sparql: string
       columns: string[]
       rows: Record<string, string | undefined>[]
+      boolean: boolean | null // ASK (yes/no) answer, null for SELECT — shown as «Ναι» / «Όχι» (ADR-037)
       inputTokens: number   // LLM tokens consumed in the prompt
       outputTokens: number  // LLM tokens produced (the SPARQL)
       retries: number       // how many times the backend retried invalid SPARQL
@@ -60,6 +73,7 @@ export type HistoryEntry = {
   sparql?: string   // undefined when the query errored before any SPARQL was produced
   columns: string[]
   rows: Record<string, string | undefined>[]
+  boolean?: boolean | null // ASK answer (ADR-037); absent in entries saved before it → table as usual
   error?: string    // set when the query ended in an error state
   retries: number
   inputTokens: number

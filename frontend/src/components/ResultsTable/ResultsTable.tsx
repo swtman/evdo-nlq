@@ -9,6 +9,7 @@
  *   - ColumnsMenu     →  show/hide individual columns
  *   - ExportMenu      →  download all rows as CSV/JSON/XML/TSV
  *   - EmptyState      →  shown when rows.length === 0
+ *   - BooleanAnswer   →  shown instead of the table for a yes/no (ASK) answer (ADR-037)
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -18,6 +19,8 @@ import { Pagination } from './Pagination'
 import { ColumnsMenu } from './ColumnsMenu'
 import { ExportMenu } from './ExportMenu'
 import { EmptyState } from './EmptyState'
+import { BooleanAnswer } from './BooleanAnswer'
+import { isBooleanResult } from '../../utils/answer'
 import { useSortedPaged } from '../../hooks/useSortedPaged'
 import type { SortState, ColumnVisibility } from '../../types'
 
@@ -26,6 +29,7 @@ type Row = Record<string, string | undefined>
 type Props = {
   columns: string[]
   rows: Row[]
+  boolean?: boolean | null // ASK (yes/no) answer → BooleanAnswer instead of the table (ADR-037)
   inputTokens: number
   outputTokens: number
   retries: number
@@ -38,6 +42,7 @@ const DEFAULT_PAGE_SIZE = 10
 export function ResultsTable({
   columns,
   rows,
+  boolean,
   inputTokens,
   outputTokens,
   retries,
@@ -158,8 +163,10 @@ export function ResultsTable({
         </div>
       </div>
 
-      {/* ── Table or empty state ── */}
-      {rows.length === 0 ? (
+      {/* ── Yes/no answer, table, or empty state ── */}
+      {isBooleanResult(boolean) ? (
+        <BooleanAnswer value={boolean} />
+      ) : rows.length === 0 ? (
         <EmptyState onExampleSelect={onExampleSelect} />
       ) : (
         <>

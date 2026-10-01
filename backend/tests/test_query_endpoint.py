@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 import pytest
@@ -138,6 +139,63 @@ def test_post_query_stream_yields_sse_events(client, mock_sparql_result):
     assert "event: sparql_complete" in raw
     assert "event: results" in raw
     assert "event: done" in raw
+
+
+# --- ASK (yes/no) results, ADR-037 ---
+
+_ASK_RESULT = SparqlResult(columns=["answer"], rows=[{"answer": "true"}], boolean=True)
+
+
+def test_post_query_returns_the_ask_boolean(client):
+    with (
+        patch("app.api.query.get_provider", return_value=FakeProvider()),
+        patch("app.api.query.SparqlClient") as MockClient,
+    ):
+        MockClient.return_value.execute.return_value = _ASK_RESULT
+        body = client.post(
+            "/query", json={"question": "διδάσκεται;", "provider": "fake", "model": "fake-v1"}
+        ).json()
+    assert body["boolean"] is True
+    assert body["rows"] == [{"answer": "true"}]
+
+
+def test_post_query_select_boolean_is_null(client, mock_sparql_result):
+    with (
+        patch("app.api.query.get_provider", return_value=FakeProvider()),
+        patch("app.api.query.SparqlClient") as MockClient,
+    ):
+        MockClient.return_value.execute.return_value = mock_sparql_result
+        body = client.post(
+            "/query", json={"question": "Ποια βιβλία;", "provider": "fake", "model": "fake-v1"}
+        ).json()
+    assert body["boolean"] is None
+
+
+def test_post_query_stream_results_event_has_the_boolean(client):
+    with (
+        patch("app.api.query.get_provider", return_value=FakeProvider()),
+        patch("app.api.query.SparqlClient") as MockClient,
+    ):
+        MockClient.return_value.execute.return_value = _ASK_RESULT
+        with client.stream(
+            "POST",
+            "/query/stream",
+            json={"question": "διδάσκεται;", "provider": "fake", "model": "fake-v1"},
+        ) as response:
+            raw = response.read().decode()
+    data = raw.split("event: results")[1].split("data: ", 1)[1].split("\r\n")[0].split("\n")[0]
+    assert json.loads(data) == {"columns": ["answer"], "rows": [{"answer": "true"}], "boolean": True}
+
+
+def test_execute_raw_sparql_returns_the_ask_boolean(client):
+    with patch("app.api.query.SparqlClient") as MockClient:
+        MockClient.return_value.execute.return_value = _ASK_RESULT
+        response = client.post(
+            "/sparql/execute",
+            json={"sparql": "PREFIX evdx: <https://w3id.org/evdoxus#>\nASK { ?u a evdx:University }"},
+        )
+    assert response.status_code == 200
+    assert response.json() == {"columns": ["answer"], "rows": [{"answer": "true"}], "boolean": True}
 
 
 # --- H-1: model allowlist tests ---

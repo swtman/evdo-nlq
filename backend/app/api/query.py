@@ -92,6 +92,9 @@ class QueryResponse(BaseModel):
     retries : int
         Number of corrective LLM calls made. 0 means the first attempt
         produced valid SPARQL; max is _MAX_RETRIES (2).
+    boolean : bool | None
+        The answer of an ASK (yes/no) query — the rows then hold the same answer
+        as one ``answer`` row; None for SELECT and NOT_ANSWERABLE (ADR-037).
     """
 
     sparql: str
@@ -102,6 +105,7 @@ class QueryResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     retries: int
+    boolean: bool | None = None
 
 
 class RawSparqlRequest(BaseModel):
@@ -122,11 +126,13 @@ class RawSparqlResponse(BaseModel):
     """Response body for POST /sparql/execute.
 
     Returns only the result columns and rows — no LLM metadata (tokens, retries)
-    because those are not applicable for a direct user-supplied query.
+    because those are not applicable for a direct user-supplied query — plus
+    ``boolean``, the answer of an ASK query (None for SELECT; ADR-037).
     """
 
     columns: list[str]
     rows: list[dict]
+    boolean: bool | None = None
 
 
 def _make_pipeline(request: QueryRequest) -> QueryPipeline:
@@ -307,7 +313,7 @@ def execute_raw_sparql(request: RawSparqlRequest) -> RawSparqlResponse:
             status_code=502,
             detail="The SPARQL endpoint could not execute the query.",
         )
-    return RawSparqlResponse(columns=result.columns, rows=result.rows)
+    return RawSparqlResponse(columns=result.columns, rows=result.rows, boolean=result.boolean)
 
 
 def _event_to_sse(event: PipelineEvent) -> dict:
@@ -322,7 +328,7 @@ def _event_to_sse(event: PipelineEvent) -> dict:
     TokenEvent    → data is a raw string (the token text, NOT JSON-encoded)
     RetryEvent    → data is JSON: {"attempt": N, "error": "..."}
     CompleteEvent → data is a raw string (the SPARQL text, NOT JSON-encoded)
-    ResultsEvent  → data is JSON: {"columns": [...], "rows": [...]}
+    ResultsEvent  → data is JSON: {"columns": [...], "rows": [...], "boolean": true|false|null}
     DoneEvent     → data is JSON: {"provider":"...", "model":"...", ...}
 
     NOTE: TokenEvent and CompleteEvent carry plain strings while the other
@@ -347,7 +353,12 @@ def _event_to_sse(event: PipelineEvent) -> dict:
     if isinstance(event, CompleteEvent):
         return {"event": "sparql_complete", "data": event.sparql}
     if isinstance(event, ResultsEvent):
-        return {"event": "results", "data": json.dumps({"columns": event.columns, "rows": event.rows})}
+        return {
+            "event": "results",
+            "data": json.dumps(
+                {"columns": event.columns, "rows": event.rows, "boolean": event.boolean}
+            ),
+        }
     if isinstance(event, DoneEvent):
         return {
             "event": "done",

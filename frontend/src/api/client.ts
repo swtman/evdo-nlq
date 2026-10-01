@@ -1,4 +1,4 @@
-import type { ParsedSSEEvent } from '../types'
+import type { ParsedSSEEvent, QueryResults } from '../types'
 
 /**
  * Streams a natural-language query through the backend pipeline.
@@ -30,13 +30,13 @@ import type { ParsedSSEEvent } from '../types'
  *   - 502 → GraphDB execution failed; the backend returns a generic message (no internals).
  *   - Network errors propagate as-is.
  *
- * @param sparql  A SPARQL SELECT query string (may be edited by the user).
+ * @param sparql  A SPARQL SELECT or ASK query string (may be edited by the user).
  * @param signal  AbortSignal — pass `controller.signal` to allow cancellation.
  */
 export async function executeSparql(
   sparql: string,
   signal: AbortSignal,
-): Promise<{ columns: string[]; rows: Record<string, string | undefined>[] }> {
+): Promise<QueryResults> {
   // In mock mode, delegate to the local fake implementation.
   if (import.meta.env.VITE_USE_MOCK_API === '1') {
     const { mockExecuteSparql } = await import('./mock')
@@ -62,7 +62,8 @@ export async function executeSparql(
     throw new Error(detail ?? `HTTP ${response.status}: ${response.statusText}`)
   }
 
-  return response.json() as Promise<{ columns: string[]; rows: Record<string, string | undefined>[] }>
+  // `boolean` is set for an ASK (yes/no) query, null for SELECT (ADR-037).
+  return response.json() as Promise<QueryResults>
 }
 
 export async function* streamQuery(

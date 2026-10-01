@@ -41,6 +41,29 @@ def test_run_returns_pipeline_result():
     assert result.output_tokens >= 0
 
 
+_ASK_RESULT = SparqlResult(columns=["answer"], rows=[{"answer": "false"}], boolean=False)
+
+
+def test_run_carries_the_ask_boolean():
+    """ADR-037: a yes/no (ASK) answer reaches the caller as `boolean`, next to its one-row table."""
+    pipeline, _ = _make_pipeline(sparql_result=_ASK_RESULT)
+    result = pipeline.run("διδάσκεται το μάθημα Χ στο ΑΠΘ;")
+    assert result.boolean is False
+    assert result.rows == [{"answer": "false"}]
+
+
+def test_run_select_has_no_boolean():
+    pipeline, _ = _make_pipeline()
+    assert pipeline.run("ποια βιβλία;").boolean is None
+
+
+async def test_results_event_carries_the_ask_boolean():
+    pipeline, _ = _make_pipeline(sparql_result=_ASK_RESULT)
+    events = [e async for e in pipeline.stream_events("διδάσκεται το μάθημα Χ στο ΑΠΘ;")]
+    results = [e for e in events if isinstance(e, ResultsEvent)]
+    assert len(results) == 1 and results[0].boolean is False
+
+
 def test_run_raises_passes_through_sparql_client_error():
     mock_client = MagicMock(spec=SparqlClient)
     mock_client.execute.side_effect = RuntimeError("timeout")

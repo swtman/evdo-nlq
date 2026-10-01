@@ -113,6 +113,12 @@ export const t = {
     'Μαθήματα Πληροφορικής στο ΑΠΘ',
   ],
 
+  /* ── Yes/no answer (ASK query, ADR-037) ────────────────────────────── */
+  answerLabel: 'απάντηση',
+  answerYes:   'Ναι',
+  answerNo:    'Όχι',
+  answerHint:  'ερώτημα ναι/όχι · ASK',
+
   /* ── Ontology page ──────────────────────────────────────────────────── */
   ontologyEyebrow:     'ΓΡΑΦΟΣ ΟΝΤΟΛΟΓΙΑΣ',
   ontologyTitle:       'Η δομή του EvdoGraph',

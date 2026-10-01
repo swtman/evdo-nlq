@@ -1095,6 +1095,38 @@ table.results-table tbody tr:nth-child(n+11) {
   cursor: not-allowed;
 }
 
+/* ─── Yes/no answer (ASK query, ADR-037) ─────────────────────────────────── */
+
+.boolean-answer {
+  padding: 22px 16px 20px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+}
+
+.boolean-answer-label {
+  color: var(--ink-soft);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.boolean-answer-value {
+  margin: 6px 0 8px;
+  font-family: var(--font-body);
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+/* "Yes" takes the accent; "No" stays in plain ink — a "no" is an answer, not an error. */
+.boolean-answer-value.is-yes { color: var(--accent); }
+
+.boolean-answer-hint {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
 /* ─── Empty state ─────────────────────────────────────────────────────────── */
 
 .empty-state {

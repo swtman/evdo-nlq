@@ -24,7 +24,7 @@ from typing import Any, cast
 # talking to a SPARQL endpoint: URL-encoding the query, setting the correct
 # Accept header, and parsing the JSON response.
 # `JSON` is a constant that tells SPARQLWrapper to request results in
-# application/sparql-results+json format (the standard for SELECT queries).
+# application/sparql-results+json format (the standard for SELECT and ASK results).
 from SPARQLWrapper import JSON, SPARQLWrapper
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SparqlResult:
-    """The structured result of a SPARQL SELECT query.
+    """The structured result of a SPARQL SELECT or ASK query.
 
     This is what execute() returns, and what the pipeline forwards to the
     frontend as a ResultsEvent (rendered as a table in the UI).
@@ -49,11 +49,18 @@ class SparqlResult:
         If a query uses OPTIONAL { ... } and a value is missing for a given
         row, that column's value will be None (JSON null) rather than the
         key being absent. The key is always present for every column.
+    boolean : bool | None
+        The answer of an ASK (yes/no) query; ``None`` for SELECT. An ASK result is
+        ALSO given as a one-row table — ``columns == ["answer"]``, ``rows ==
+        [{"answer": "true" | "false"}]`` — so every consumer that reads only
+        columns/rows (export, history, the eval harness) keeps working, and the UI
+        can show «Ναι» / «Όχι» from this field (ADR-037).
 
     """
 
     columns: list[str]
     rows: list[dict[str, Any]]
+    boolean: bool | None = None
 
 
 def validate_sparql(query: str) -> str | None:
@@ -105,20 +112,22 @@ def validate_sparql(query: str) -> str | None:
 
 
 class SparqlClient:
-    """HTTP client for sending SELECT queries to the GraphDB SPARQL endpoint.
+    """HTTP client for sending SELECT and ASK queries to the GraphDB SPARQL endpoint.
 
     Constructed once per request in `_make_pipeline()` inside `app/api/query.py`:
         SparqlClient(settings.graphdb_endpoint)
 
-    Only SELECT queries are supported. CONSTRUCT and ASK queries return
-    different response formats that execute() does not handle.
+    SELECT and ASK are supported (ASK since ADR-037 — the model writes ASK for yes/no
+    questions such as «διδάσκεται το μάθημα Χ στο ΑΠΘ;», and the answer used to be
+    dropped). CONSTRUCT/DESCRIBE return RDF, not a results table, and raise a
+    RuntimeError — measured (S50): GraphDB replies with n-triples bytes.
     """
 
     def __init__(self, endpoint: str) -> None:
         self._endpoint = endpoint
 
     def execute(self, query: str) -> SparqlResult:
-        """Send a SPARQL SELECT query to GraphDB and return structured results.
+        """Send a SPARQL SELECT or ASK query to GraphDB and return structured results.
 
         This is the only method that makes a real network call. It is called
         once per request, in Phase 3 of the pipeline, after the query has
@@ -155,7 +164,7 @@ class SparqlClient:
         Parameters
         ----------
         query : str
-            A syntactically valid SPARQL SELECT query string.
+            A syntactically valid SPARQL SELECT or ASK query string.
 
         Returns
         -------
@@ -193,6 +202,26 @@ class SparqlClient:
             # NOTE: the embedded {exc} detail is intentionally preserved here
             # for operator logs.
             raise RuntimeError(f"SPARQL execution failed: {exc}") from exc
+
+        # Branch on the SHAPE of the reply, not on the query text (ADR-037). GraphDB
+        # answers (S50 probe, Content-Type application/sparql-results+json):
+        #   SELECT → {"head": {"vars": [...]}, "results": {"bindings": [...]}}
+        #   ASK    → {"head": {}, "boolean": true | false}
+        # CONSTRUCT/DESCRIBE come back as n-triples BYTES — before this check,
+        # `raw.get` then crashed with an unhandled AttributeError.
+        if not isinstance(raw, dict) or ("results" not in raw and "boolean" not in raw):
+            logger.error("Unsupported SPARQL result form: %s", type(raw).__name__)
+            raise RuntimeError(
+                "SPARQL execution failed: unsupported result form — only SELECT and ASK "
+                "queries are supported"
+            )
+
+        if "boolean" in raw:
+            answer = bool(raw["boolean"])
+            logger.info("GraphDB result: ASK → %s", answer)
+            return SparqlResult(
+                columns=["answer"], rows=[{"answer": "true" if answer else "false"}], boolean=answer
+            )
 
         # Extract column names from "head".vars — defensive .get() in case
         # the response is missing the key (malformed but non-crashing response).

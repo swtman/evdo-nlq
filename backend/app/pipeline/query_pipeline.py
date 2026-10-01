@@ -163,12 +163,16 @@ class ResultsEvent:
     rows : list[dict]
         One dict per result row. Keys are column names; values are strings
         (or None for unbound OPTIONAL variables).
+    boolean : bool | None
+        The answer of an ASK (yes/no) query, else None. The rows then hold the
+        same answer as one ``answer`` row (SparqlResult, ADR-037).
 
     The route handler maps this to SSE event name: `results`.
     """
 
     columns: list[str]
     rows: list[dict]
+    boolean: bool | None = None
 
 
 @dataclass
@@ -219,6 +223,7 @@ class PipelineResult:
     input_tokens: int
     output_tokens: int
     retries: int
+    boolean: bool | None = None  # the ASK answer, else None (ADR-037)
 
 # ---------------------------------------------------------------------------
 # Pipeline
@@ -393,6 +398,7 @@ class QueryPipeline:
             sparql=sparql,
             columns=result.columns,
             rows=result.rows,
+            boolean=result.boolean,
             provider=self._provider_name,
             model=self._model_name,
             input_tokens=total_input,
@@ -579,7 +585,7 @@ class QueryPipeline:
 
         # ── Phase 3: execute against GraphDB ──
         result = self._sparql_client.execute(full_sparql)
-        yield ResultsEvent(columns=result.columns, rows=result.rows)
+        yield ResultsEvent(columns=result.columns, rows=result.rows, boolean=result.boolean)
 
         # ── Phase 4: done ──
         yield DoneEvent(

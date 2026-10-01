@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { executeSparql, streamQuery } from '../api/client'
-import type { Provider, QueryState } from '../types'
+import type { Provider, QueryResults, QueryState } from '../types'
 
 /**
  * Discriminated-union action type for the query state machine.
@@ -15,7 +15,7 @@ type Action =
   | { type: 'SUBMIT' }
   | { type: 'TOKEN'; payload: string }
   | { type: 'COMPLETE'; payload: string }
-  | { type: 'RESULTS'; payload: { columns: string[]; rows: Record<string, string | undefined>[] } }
+  | { type: 'RESULTS'; payload: QueryResults }
   | { type: 'DONE'; payload: { inputTokens: number; outputTokens: number; retries: number } }
   | { type: 'ERROR'; payload: string }
   | { type: 'DISMISS_ERROR' }
@@ -54,7 +54,13 @@ function reducer(state: QueryState, action: Action): QueryState {
     case 'RESULTS':
       // Store query results and clear the executing flag — GraphDB has responded.
       if (state.status !== 'streaming') return state
-      return { ...state, columns: action.payload.columns, rows: action.payload.rows, executing: false }
+      return {
+        ...state,
+        columns: action.payload.columns,
+        rows: action.payload.rows,
+        boolean: action.payload.boolean ?? null, // ASK answer (ADR-037); null for SELECT
+        executing: false,
+      }
 
     case 'DONE':
       // Transition to the terminal `done` state; pull columns/rows from streaming state.
@@ -64,6 +70,7 @@ function reducer(state: QueryState, action: Action): QueryState {
         sparql: state.sparql,
         columns: state.columns ?? [],
         rows: state.rows ?? [],
+        boolean: state.boolean ?? null,
         inputTokens: action.payload.inputTokens,
         outputTokens: action.payload.outputTokens,
         retries: action.payload.retries,
@@ -163,7 +170,7 @@ export function useQueryStream() {
               break
 
             case 'results': {
-              const parsed = JSON.parse(data) as { columns: string[]; rows: Record<string, string | undefined>[] }
+              const parsed = JSON.parse(data) as QueryResults // incl. `boolean` for ASK (ADR-037)
               dispatch({ type: 'RESULTS', payload: parsed })
               break
             }
@@ -213,8 +220,8 @@ export function useQueryStream() {
 
     void (async () => {
       try {
-        const { columns, rows } = await executeSparql(sparql, controller.signal)
-        dispatch({ type: 'RESULTS', payload: { columns, rows } })
+        const results = await executeSparql(sparql, controller.signal)
+        dispatch({ type: 'RESULTS', payload: results })
         dispatch({ type: 'DONE', payload: { inputTokens: 0, outputTokens: 0, retries: 0 } })
       } catch (err) {
         if (err instanceof Error && err.name !== 'AbortError') {
