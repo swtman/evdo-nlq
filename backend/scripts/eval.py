@@ -19,20 +19,43 @@ HOW IT WORKS (in one picture)
     [1] Feed the NL question to the pipeline  →  generated SPARQL (LLM only, no GraphDB)
     [2] Execute gold SPARQL against GraphDB   →  gold result set
     [3] Execute generated SPARQL (LIMIT stripped) against GraphDB  →  gen result set
-    [4] Compare result sets  →  PASS or FAIL
+    [4] Score the two result sets  →  intent / strict / F1 (+ answer kind, failure cause)
     [5] Secondary: compare query AST structure  →  structural similarity
   │
   ▼
-  Markdown report in notes/eval-runs/
+  Markdown report in notes/eval-runs/ (+ a JSON sidecar with every per-item score)
 
-METRICS
---------
-- Primary metric: result-set match — do both queries return the same data rows?
-  This is what users care about: the right answer, regardless of how the query
-  was written.
-- Secondary metric: AST canonical match — do the queries have the same
-  structure after normalising variable names? Useful supplementary evidence,
-  but less reliable than result-set match (see _canonicalize_sparql).
+METRICS (ADR-038 — three numbers, never one)
+--------------------------------------------
+All three are execution-based: the answer is judged, not the query text. The rules live in
+app/evaluation/metrics.py (pure functions); interval and test maths in app/evaluation/stats.py.
+- Macro F1 QALD — the HEADLINE: per-question precision/recall/F over answer sets with QALD-9's
+  empty-answer rules, averaged over items (partial credit for near misses). The established
+  metric for question answering over knowledge graphs (QALD-9 ranking; TEXT2SPARQL'25).
+- Intent-based match (Floratou et al., CIDR 2024, §4 — a recent proposal for SQL, adapted):
+  pass/fail; rows as a true set, gold columns matched to generated columns by content in any
+  order, extra generated columns allowed, a "none" accepted as ASK false / empty SELECT / 0.
+- Strict execution match — the rule every report used before ADR-038 (positional columns,
+  "set" = multiset); kept so old and new numbers stay comparable.
+Every rate gets a 95% interval (Wilson; bootstrap for F1). Secondary: AST canonical match —
+same structure after normalising variable names (see _canonicalize_sparql).
+
+LEAKAGE: ITEMS SHOWN IN THE PROMPT ARE NOT SCORED (ADR-038)
+------------------------------------------------------------
+When the evaluated file is the few-shot bank (prompts/examples.yaml) and the prompt has a
+{few_shot_block} slot, the examples the prompt shows (examples_loader.few_shot_ids) are listed
+in their own report section and left out of the headline numbers — the model has seen their
+gold query, so they do not test it. One bridge row keeps "strict over every item", the basis
+of the reports written before ADR-038.
+
+REPEATED RUNS AND RE-SCORING
+----------------------------
+--runs N (needs --no-cache) runs the whole set N times — LLM output varies between runs even at
+"deterministic" settings (Atil et al., arXiv:2408.04667) and the DiskCache would hide it — and
+writes one report per run plus a summary (mean ± SD, per-item passes k/N).
+--rescore REPORT.md calls no LLM: it takes the generated queries from an existing report,
+re-executes gold and generated queries, and scores them with today's rules.
+Paired comparison of two runs (McNemar, paired bootstrap): scripts/compare_runs.py A.json B.json.
 
 GOLD EXECUTION FAILURES
 ------------------------
@@ -44,10 +67,9 @@ model failure, and must not make the accuracy score look worse than it really is
 
 COMPARISON SEMANTICS
 ---------------------
-Result-set values are compared POSITIONALLY — in the SELECT column order each
-query declares — not by column name. A gold query using ?title and a generated
-query using ?t are compared first-column-to-first-column. Different variable
-names are tolerated; wrong column ordering is not.
+Column NAMES never matter (?title vs ?t). The strict metric compares columns POSITIONALLY —
+in the SELECT order each query declares — so a swapped column order fails it; the intent and
+F1 metrics match columns by CONTENT instead, so it does not (app/evaluation/metrics.py).
 
 GREEK ONLY (ADR-033)
 ---------------------
@@ -73,17 +95,24 @@ Options:
     --shape           run only examples with this query_shape (e.g. negative-existence)
     --split           dev | test — only items of that split (eval-titles.yaml); items without a
                       split always run (ADR-034)
+    --runs N          run the set N times (N > 1 needs --no-cache); one report per run + summary
+    --rescore REPORT  score the generated queries of an existing report again — no LLM call;
+                      the examples file and prompt version are read from the report
 
-Outputs a Markdown report to notes/eval-runs/<auto-named>.md (or --output PATH).
+Outputs a Markdown report to notes/eval-runs/<auto-named>.md (or --output PATH) and, next to
+it, a .json sidecar with every per-item score (the input of scripts/compare_runs.py).
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
+import json
 import logging
 import os
 import re
+import statistics
 import subprocess
 import sys
 import time
@@ -97,16 +126,28 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import yaml
 
 from app.config import settings
+from app.evaluation.metrics import (
+    NOT_ANSWERABLE,
+    answer_kind,
+    f1_qald,
+    failure_cause,
+    intent_match,
+    strict_match,
+)
+from app.evaluation.metrics import row_values as _row_values  # noqa: F401 — old name (S47/S49)
+from app.evaluation.metrics import rows_to_multiset as _rows_to_multiset  # noqa: F401 — old name
+from app.evaluation.stats import bootstrap_ci, wilson
 from app.grounding import db as grounding_db
 from app.llm.factory import get_provider
 from app.ontology.loader import load_summary
 from app.pipeline.query_pipeline import (
+    FEW_SHOT_K,
     PROMPT_VERSION,
     PipelineResult,
     QueryPipeline,
     _is_not_answerable,  # shared with production pipeline to guarantee identical detection logic
 )
-from app.prompts.examples_loader import select_few_shot
+from app.prompts.examples_loader import few_shot_ids, select_few_shot
 from app.prompts.loader import fill, load, load_user_template
 from app.sparql.client import SparqlClient, SparqlResult, validate_sparql
 
@@ -216,91 +257,10 @@ def _canonicalize_sparql(query: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _row_values(row: dict[str, Any], columns: list[str]) -> tuple:
-    """Extract a row's values in SELECT-declaration order as a plain tuple.
-
-    WHAT IS "POSITIONAL" ORDERING AND WHY DOES IT MATTER?
-    -------------------------------------------------------
-    SPARQL SELECT results carry column names (variables like ?title, ?count).
-    When comparing a gold query to a generated query, the two may use different
-    variable names but produce equivalent data. For example:
-
-        Gold query SELECT:  SELECT ?title ?author
-        Gen  query SELECT:  SELECT ?t ?a
-        Same data:          ("Algorithms", "Knuth") in both cases
-
-    If we compared by column NAME, every row would fail because "title" != "t".
-    Instead, we compare by POSITION: first column of gold against first column
-    of generated, second against second, and so on.
-
-    The `columns` parameter comes from SparqlResult.columns, which preserves
-    the original SELECT declaration order from the SPARQL query — not
-    alphabetical order, not GraphDB's internal order.
-
-    WHY DOES None BECOME ''?
-    ------------------------
-    In SPARQL, a variable can be "unbound" in a particular row — for example,
-    OPTIONAL { ?x :isbn ?isbn } leaves ?isbn absent for books without an ISBN.
-    SparqlClient returns that absence as Python None (not the string "None").
-
-    Python 3's sorted() raises TypeError when comparing None to a string:
-        sorted([None, "Aristotle"])  →  TypeError
-
-    Replacing None with '' makes every value a string so sorting is safe.
-    Both gold and generated results get the same treatment, so the comparison
-    is still fair — a None in gold matches a None in generated (both become '').
-
-    Parameters
-    ----------
-    row : dict[str, Any]
-        A single result row as returned by SparqlClient (column name -> value).
-    columns : list[str]
-        Column names in the order they appear in the SELECT clause.
-
-    Returns
-    -------
-    tuple
-        Values in declaration order, with None replaced by ''.
-    """
-    return tuple("" if row.get(col) is None else row[col] for col in columns)
-
-
-def _rows_to_multiset(result: SparqlResult) -> list[tuple]:
-    """Convert all result rows to a sorted list of value tuples.
-
-    WHAT IS A MULTISET?
-    --------------------
-    A set contains each unique element exactly once (no duplicates).
-    A multiset (also called a "bag") allows duplicates but has no meaningful
-    order — it is like a list where only the counts matter, not the sequence.
-
-    SPARQL SELECT results are semantically multisets: duplicate rows are
-    allowed, but row ORDER is not guaranteed (unless you add ORDER BY). To
-    compare two multisets for equality, we sort them both: if the sorted lists
-    are equal, the multisets are equal regardless of the original row order.
-
-    WHY SORT RATHER THAN USE A frozenset?
-    --------------------------------------
-    frozenset would deduplicate rows, treating {A, A, B} == {A, B}. We want
-    multiset semantics: {A, A, B} != {A, B} because duplicate rows are
-    meaningful in a query result. Sorting a list preserves duplicates while
-    making the order deterministic for comparison.
-
-    NOTE: This function is used only for comparison_mode == 'set'. The
-    'ordered' mode uses the raw, unsorted row list directly in _compare_results.
-
-    Parameters
-    ----------
-    result : SparqlResult
-        The full result object returned by SparqlClient.execute().
-
-    Returns
-    -------
-    list[tuple]
-        Sorted list of per-row value tuples; equal if and only if both result
-        sets contain the same rows with the same multiplicities.
-    """
-    return sorted(_row_values(r, result.columns) for r in result.rows)
+# The row helpers and the strict rule moved to app/evaluation/metrics.py (ADR-038). They are
+# imported above under their old private names (_row_values, _rows_to_multiset) and
+# _compare_results stays below as a thin alias, because the evidence scripts (S47, S49) and the
+# tests load this module and call them by those names.
 
 
 def _strip_limit(sparql: str) -> str:
@@ -360,107 +320,53 @@ def _strip_limit(sparql: str) -> str:
 
 
 def _compare_results(gold: SparqlResult, gen: SparqlResult, mode: str) -> bool:
-    """Return True if the generated result set matches the gold result set.
+    """The STRICT metric (``app.evaluation.metrics.strict_match``), under its old name.
 
-    HOW TO CHOOSE A comparison_mode FOR examples.yaml
-    ---------------------------------------------------
-    The comparison_mode field in each gold example tells this function what
-    kind of equality to check. Choose the mode that matches the semantics of
-    the gold SPARQL query:
+    HOW TO CHOOSE A comparison_mode FOR A GOLD FILE
+    -----------------------------------------------
+    "set"     — row order is irrelevant (most items). Strict compares a multiset (duplicates
+                count); intent and F1 compare true sets.
+    "ordered" — the question asks for an order (ORDER BY, top-N): rows must come in the gold's
+                order (strict: every row; intent: the distinct rows).
+    "scalar"  — the answer is ONE row (a COUNT, a single lookup); 0 or 2+ rows fail. A gold
+                COUNT of 0 is read as a "no" by the intent and F1 metrics (answer kind
+                "zero-or-no", ADR-038) — no extra field is needed in the (frozen) gold files.
+    "not-answerable" — decided before scoring (``_score_generated``); never reaches here.
 
-    "set" — unordered multiset comparison (most common mode).
-        Use when the query has no ORDER BY, or when row order is irrelevant.
-        Both result sets are sorted before comparison, so row order differences
-        are ignored. Duplicate rows must still match.
-
-        Example: "List all books by Aristotle."
-          Gold returns:  [("Nicomachean Ethics",), ("Politics",)]
-          Gen  returns:  [("Politics",), ("Nicomachean Ethics",)]
-          → PASS (same rows, different order — doesn't matter)
-
-    "ordered" — strict row-order comparison.
-        Use when the query uses ORDER BY and the order is semantically
-        meaningful (e.g. a top-N ranking). Both the VALUES and the ROW ORDER
-        must match.
-
-        Example: "List the 3 most-enrolled courses, descending."
-          Gold returns: [("CS101", 500), ("MATH201", 400), ("PHY301", 300)]
-          Gen  returns: [("CS101", 500), ("PHY301", 300), ("MATH201", 400)]
-          → FAIL (same rows, wrong order)
-
-    "scalar" — single-row, single-or-multi-column comparison.
-        Use when the query returns exactly one row (e.g. a COUNT, an average,
-        or a single-value lookup). If either result has 0 or 2+ rows, returns
-        False immediately — a scalar query that returns multiple rows is wrong
-        regardless of the values.
-
-        Example: "How many textbooks are in the database?"
-          Gold returns: [("42",)]
-          Gen  returns: [("42",)]
-          → PASS
-
-        Example: "How many textbooks...?"
-          Gen  returns: []       (model produced a broken query)
-          → FAIL (0 rows, expected 1)
-
-    "not-answerable" — handled BEFORE this function is called.
-        This mode is intercepted in _eval_example and never reaches here.
-        Included in _KNOWN_COMPARISON_MODES for startup validation only.
-
-    POSITIONAL COMPARISON (important — read this)
-    ----------------------------------------------
-    Values are extracted in each result's own SELECT column order (not
-    alphabetical by name). This means a gold query using ?Universities and
-    a generated query using ?numUniversities are compared first-column-to-
-    first-column. Different variable names are tolerated; swapped column ORDER
-    is treated as a failure — if the LLM puts ?departments before ?universities
-    when gold has them in the opposite order, the comparison fails even though
-    the same data is present.
-
-    This is intentional: for scalar and multi-column results, column position
-    carries semantic meaning (e.g. the first column is always the university
-    name, the second is always the count).
-
-    Parameters
-    ----------
-    gold : SparqlResult
-        The result of executing the gold SPARQL against GraphDB.
-    gen : SparqlResult
-        The result of executing the generated (LIMIT-stripped) SPARQL.
-    mode : str
-        One of "set", "ordered", "scalar". Raises ValueError for anything else
-        (startup validation in main() should have caught typos already).
-
-    Returns
-    -------
-    bool
-        True if the result sets match according to the chosen mode.
-
-    Raises
-    ------
-    ValueError
-        If mode is not a known value. Should not fire during normal runs
-        because main() validates all modes at startup.
+    Raises ``ValueError`` for an unknown mode (main() validates every mode at startup).
     """
-    if mode == "set":
-        return _rows_to_multiset(gold) == _rows_to_multiset(gen)
-    if mode == "ordered":
-        # Row order matters here — do NOT sort.
-        return (
-            [_row_values(r, gold.columns) for r in gold.rows]
-            == [_row_values(r, gen.columns) for r in gen.rows]
-        )
-    if mode == "scalar":
-        # Both results must have exactly one row; positional comparison within it.
-        if len(gold.rows) != 1 or len(gen.rows) != 1:
-            return False
-        return _row_values(gold.rows[0], gold.columns) == _row_values(gen.rows[0], gen.columns)
-    raise ValueError(f"Unknown comparison_mode: {mode!r}")
+    return strict_match(gold, gen, mode)
 
 
 # ---------------------------------------------------------------------------
 # Per-example eval
 # ---------------------------------------------------------------------------
+
+
+def _new_record(ex: dict[str, Any]) -> dict[str, Any]:
+    """An unscored result record for one gold item (fields: see ``_eval_example``)."""
+    return {
+        "id": ex["id"],
+        "query_shape": ex["query_shape"],
+        "question": ex["question_greek"],
+        "gold_sparql": ex["gold_sparql"].strip(),
+        "generated_sparql": None,
+        "result_match": None,
+        "intent_match": None,
+        "precision": None,
+        "recall": None,
+        "f1": None,
+        "answer_kind": None,
+        "cause": None,
+        "shown": False,
+        "title_offered": None,
+        "ast_match": None,
+        "error": None,
+        "broken_gold": False,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "duration_s": 0.0,
+    }
 
 
 def _eval_example(
@@ -470,153 +376,168 @@ def _eval_example(
 ) -> dict[str, Any]:
     """Run one gold example (its Greek question) through the eval cycle; return a result record.
 
-    WHAT HAPPENS IN THIS FUNCTION (four phases)
-    --------------------------------------------
-    For every non-NOT_ANSWERABLE example, the eval cycle runs four phases:
+    WHAT HAPPENS IN THIS FUNCTION
+    -----------------------------
+    [1] LLM GENERATION — pipeline.run(question) calls the LLM and returns the generated SPARQL
+        (the _GenerateOnlyPipeline skips GraphDB; this harness executes the queries itself).
+        For an item that names titles (``expected_titles``) the grounding block the prompt
+        carried is checked too: did it offer every expected title? (``title_offered``)
+    [2]–[4] EXECUTE AND SCORE — ``_score_generated``, shared with --rescore: the gold query,
+        then the generated one (trailing LIMIT stripped), then the three metrics.
 
-    [1] LLM GENERATION — pipeline.run(question) calls the LLM and returns
-        the generated SPARQL. The pipeline is a _FixedSystemPipeline subclass
-        that SKIPS GraphDB execution — it only calls the LLM. This is
-        intentional: the eval harness needs to execute the query itself (with
-        LIMIT stripped and with proper error handling for gold failures).
-
-    [2] GOLD EXECUTION — the gold query from examples.yaml is executed against
-        GraphDB to get the reference result set. If this fails (network error,
-        broken gold query, GraphDB timeout), the example is EXCLUDED from
-        metrics rather than counted as a model failure:
-            result_match = None   (not False — excluded, not penalised)
-            broken_gold = True    (flagged separately in the report)
-
-    [3] GENERATED EXECUTION — the LLM's query is executed with its trailing
-        LIMIT/OFFSET stripped (see _strip_limit) so we compare the full result
-        set, not a page of 20 rows.
-
-    [4] COMPARISON — _compare_results() checks whether the two result sets
-        match according to this example's comparison_mode.
-
-    WHY IS BROKEN GOLD EXCLUDED (result_match=None) INSTEAD OF FAILED (False)?
-    ---------------------------------------------------------------------------
-    If GraphDB is down or a gold query has a semantic bug that rdflib's offline
-    validator missed, executing it raises an exception. This is an infrastructure
-    or data quality problem — it tells us nothing about whether the model
-    produced good SPARQL. Counting it as a model failure would make accuracy
-    look lower than it really is.
-
-    result_match=None is the signal to _render_report to exclude this example
-    from the pass/total denominator entirely. The broken_gold=True flag causes
-    the report to list it separately with a warning.
-
-    NOT_ANSWERABLE PATH (handled at the top, before the four phases)
-    ----------------------------------------------------------------
-    When comparison_mode == "not-answerable", the gold answer is a comment
-    (# NOT_ANSWERABLE: ...), not executable SPARQL. GraphDB is never called.
-    The eval simply checks whether the pipeline also returned a NOT_ANSWERABLE
-    comment. If yes → PASS, if no → FAIL.
-
-    The check uses _is_not_answerable() imported directly from query_pipeline.py
-    so that the eval and production pipeline use the exact same detection logic
-    (same regex, same case-insensitivity). If the detection logic ever changes
-    in the pipeline, the eval automatically picks up the change.
+    WHY IS BROKEN GOLD EXCLUDED (scores None) INSTEAD OF FAILED (False)?
+    --------------------------------------------------------------------
+    If GraphDB is down or a gold query has a semantic bug that rdflib's offline validator
+    missed, the gold cannot be executed. That says nothing about the model, so the item leaves
+    the denominator (every score None, ``broken_gold`` True) instead of counting as a failure.
 
     RESULT RECORD FIELDS
     --------------------
-    id               : example ID (e.g. "ex-005")
-    query_shape      : shape category (e.g. "simple-lookup", "aggregation")
-    question         : the NL question sent to the LLM (question_greek)
-    gold_sparql      : the reference SPARQL from examples.yaml
-    generated_sparql : what the LLM produced (None if the pipeline errored)
-    result_match     : True (PASS) | False (FAIL) | None (SKIP / broken gold)
-    ast_match        : True | False | None (not applicable or parse failed)
-    error            : human-readable description of any exception
-    broken_gold      : True if the gold query itself failed to execute
-    input_tokens     : LLM prompt tokens consumed
-    output_tokens    : LLM response tokens generated
-    duration_s       : wall-clock seconds for this entire example
+    id, query_shape, question, gold_sparql, generated_sparql (None if the pipeline failed)
+    result_match   : STRICT verdict (the pre-ADR-038 rule — the name is kept for continuity)
+    intent_match   : intent-based pass/fail verdict (ADR-038)
+    precision, recall, f1 : this item's QALD-9 P/R/F (``f1_qald``) — the mean f1 is the headline
+    answer_kind    : not-answerable | zero-or-no | count | list (read from the gold result)
+    cause          : why the item did not pass every metric (``failure_cause``), else None
+    shown          : the prompt shows this item as a worked example (set by _run; not scored)
+    title_offered  : grounding offered every expected title (title items only), else None
+    ast_match      : True | False | None (not applicable or unparseable)
+    error, broken_gold, input_tokens, output_tokens, duration_s
+    Scores are None for an excluded item (broken gold).
     """
-    question = ex["question_greek"]
-    mode = ex["comparison_mode"]
-    gold_sparql: str = ex["gold_sparql"].strip()
-
-    result: dict[str, Any] = {
-        "id": ex["id"],
-        "query_shape": ex["query_shape"],
-        "question": question,
-        "gold_sparql": gold_sparql,
-        "generated_sparql": None,
-        "result_match": None,
-        "ast_match": None,
-        "error": None,
-        "broken_gold": False,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "duration_s": 0.0,
-    }
-
+    record = _new_record(ex)
     t0 = time.perf_counter()
+    try:
+        pr = pipeline.run(record["question"])
+    except Exception as exc:
+        record["error"] = f"Pipeline error: {exc}"
+        generated = None
+    else:
+        generated = pr.sparql
+        record["generated_sparql"] = pr.sparql
+        record["input_tokens"] = pr.input_tokens
+        record["output_tokens"] = pr.output_tokens
+        record["title_offered"] = _title_offered(ex, getattr(pipeline, "last_user", None))
+    _score_generated(ex, generated, sparql_client, record)
+    record["duration_s"] = round(time.perf_counter() - t0, 2)
+    return record
 
-    # ── NOT_ANSWERABLE path ───────────────────────────────────────────────────
-    # The gold is a comment, not SPARQL — no GraphDB calls. Just check whether
-    # the LLM also returned a NOT_ANSWERABLE comment.
+
+def _score_generated(
+    ex: dict[str, Any],
+    generated: str | None,
+    sparql_client: SparqlClient,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute the gold and the generated query and fill every score of ``record``.
+
+    Shared by live runs (``_eval_example``) and --rescore (``_rescore``), so a re-scored report
+    is scored exactly like a fresh one. ``generated`` is None when there is no query (the
+    pipeline failed). Order matters:
+
+    - NOT_ANSWERABLE items: no GraphDB call; pass iff the model also said NOT_ANSWERABLE
+      (``_is_not_answerable`` is imported from the production pipeline — identical detection).
+    - the GOLD runs first: if it fails the item is excluded (see ``_eval_example``).
+    - no query, or a NOT_ANSWERABLE comment for an answerable question, or a query GraphDB
+      rejects → "no answer": every match False, F1 = (1, 0, 0) per QALD-9 (0 on an empty gold).
+    - otherwise the three metrics of app/evaluation/metrics.py, plus the answer kind and the
+      failure cause; AST match only when both queries parse.
+    """
+    mode = ex["comparison_mode"]
     if mode == "not-answerable":
+        ok = generated is not None and _is_not_answerable(generated)
+        score = 1.0 if ok else 0.0
+        record.update(result_match=ok, intent_match=ok, precision=score, recall=score, f1=score)
+        record["answer_kind"] = NOT_ANSWERABLE
+        if not ok:
+            record["cause"] = (
+                "pipeline error" if generated is None else "answered a not-answerable question"
+            )
+        return record
+
+    try:
+        gold = sparql_client.execute(record["gold_sparql"])
+    except Exception as exc:
+        record["error"] = f"Gold SPARQL execution error: {exc}"
+        record["broken_gold"] = True
+        return record  # every score stays None — excluded, not the model's fault
+
+    gen: SparqlResult | None = None
+    failure: str | None = None
+    if generated is None:
+        failure = "pipeline error"
+        record["ast_match"] = False
+    elif _is_not_answerable(generated):
+        failure = "said not answerable"  # a comment, not a query — never sent to GraphDB
+    else:
         try:
-            pr = pipeline.run(question)
-            is_na = _is_not_answerable(pr.sparql)
-            result["generated_sparql"] = pr.sparql
-            result["result_match"] = is_na
-            result["ast_match"] = None  # AST comparison makes no sense for a comment
-            result["input_tokens"] = pr.input_tokens
-            result["output_tokens"] = pr.output_tokens
+            gen = sparql_client.execute(_strip_limit(generated))
         except Exception as exc:
-            result["error"] = str(exc)
-            result["result_match"] = False
-        result["duration_s"] = round(time.perf_counter() - t0, 2)
-        return result
+            record["error"] = f"Generated SPARQL execution error: {exc}"
+            failure = "execution error"
 
-    # ── Phase 1: LLM generation ───────────────────────────────────────────────
-    # The pipeline's _FixedSystemPipeline.run() calls the LLM and returns only
-    # the generated SPARQL — GraphDB execution is intentionally skipped there.
-    try:
-        pr = pipeline.run(question)
-        result["generated_sparql"] = pr.sparql
-        result["input_tokens"] = pr.input_tokens
-        result["output_tokens"] = pr.output_tokens
-    except Exception as exc:
-        result["error"] = f"Pipeline error: {exc}"
-        result["result_match"] = False
-        result["ast_match"] = False
-        result["duration_s"] = round(time.perf_counter() - t0, 2)
-        return result
+    strict = gen is not None and strict_match(gold, gen, mode)
+    intent = gen is not None and intent_match(gold, gen, mode)
+    p, r, f = f1_qald(gold, gen, mode)
+    record.update(result_match=strict, intent_match=intent, precision=p, recall=r, f1=f)
+    record["answer_kind"] = answer_kind(gold, mode)
+    record["cause"] = failure_cause(
+        gold, gen, mode, strict=strict, intent=intent, f1=f, error=failure
+    )
+    if gen is not None and generated is not None:
+        gold_ast = _canonicalize_sparql(record["gold_sparql"])
+        gen_ast = _canonicalize_sparql(generated)
+        # None == None would read two unparseable queries as "the same structure".
+        record["ast_match"] = None if gold_ast is None or gen_ast is None else gold_ast == gen_ast
+    return record
 
-    # ── Phase 2: execute gold SPARQL ─────────────────────────────────────────
-    # A failure here is an infra/gold-data problem, NOT a model failure.
-    # We exclude this example from metrics (result_match=None) rather than
-    # marking it as a model error (result_match=False).
-    try:
-        gold_result: SparqlResult = sparql_client.execute(gold_sparql)
-    except Exception as exc:
-        result["error"] = f"Gold SPARQL execution error: {exc}"
-        result["result_match"] = None   # excluded — not the model's fault
-        result["broken_gold"] = True
-        result["duration_s"] = round(time.perf_counter() - t0, 2)
-        return result
 
-    # ── Phase 3: execute generated SPARQL (LIMIT stripped) ───────────────────
-    # Strip only the outermost trailing LIMIT so we compare the full result set.
-    # LIMIT inside subqueries is preserved by the anchored regex in _strip_limit.
-    try:
-        gen_result: SparqlResult = sparql_client.execute(_strip_limit(pr.sparql))
-    except Exception as exc:
-        result["error"] = f"Generated SPARQL execution error: {exc}"
-        result["result_match"] = False
-        result["ast_match"] = None
-        result["duration_s"] = round(time.perf_counter() - t0, 2)
-        return result
+_CHECK_TITLES_PATH = Path(__file__).with_name("check_titles.py")
+_check_titles: Any = None  # scripts/check_titles.py, loaded on first use (scripts/ is no package)
 
-    # ── Phase 4: compare ─────────────────────────────────────────────────────
-    result["result_match"] = _compare_results(gold_result, gen_result, mode)
-    result["ast_match"] = _canonicalize_sparql(gold_sparql) == _canonicalize_sparql(pr.sparql)
-    result["duration_s"] = round(time.perf_counter() - t0, 2)
-    return result
+
+def _title_offered(ex: dict[str, Any], user_message: Any) -> bool | None:
+    """Did grounding offer every expected title of a title item? (S44/S47's split.)
+
+    Uses check_titles.score_item(...)["found_all"] on the user message the prompt carried (the
+    grounding hints are in it since ADR-026) — the same definition as the S47 analysis ("title
+    offered 21 → 28/32"). None for items that name no title, or when no prompt was captured.
+    """
+    global _check_titles
+    if not ex.get("expected_titles") or not isinstance(user_message, str):
+        return None
+    if _check_titles is None:
+        spec = importlib.util.spec_from_file_location("check_titles", _CHECK_TITLES_PATH)
+        assert spec is not None and spec.loader is not None
+        _check_titles = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_check_titles)
+    kind = "two-titles" if len(ex["expected_titles"]) > 1 else "named"
+    item = {**ex, "kind": kind, "split": ex.get("split", "")}
+    return bool(_check_titles.score_item(item, user_message)["found_all"])
+
+
+def _rescore(
+    examples: list[dict[str, Any]],
+    generated: dict[str, str | None],
+    sparql_client: SparqlClient,
+) -> list[dict[str, Any]]:
+    """Score the generated queries of an earlier run again — no LLM call (--rescore, ADR-038).
+
+    ``generated`` maps item id → the query the report recorded (None = the pipeline failed).
+    Only items present in the report are scored; nothing is invented for the others. Tokens
+    and times stay 0 (they belong to the original run), and ``title_offered`` stays None (old
+    reports did not store the grounding hints).
+    """
+    results = []
+    for ex in examples:
+        if ex["id"] not in generated:
+            continue
+        record = _new_record(ex)
+        record["generated_sparql"] = generated[ex["id"]]
+        if record["generated_sparql"] is None:
+            record["error"] = "No generated query in the report (pipeline error in that run)"
+        results.append(_score_generated(ex, record["generated_sparql"], sparql_client, record))
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +657,83 @@ def _entities_db_fingerprint() -> str:
     return f"{digest} (snapshot {snapshot})"
 
 
+def _shown_ids(prompt_version: int, examples_path: Path) -> list[str]:
+    """Ids of the evaluated file's items that the prompt SHOWS as worked examples (leakage).
+
+    Only the few-shot bank (prompts/examples.yaml) can leak, and only into a prompt with a
+    ``{few_shot_block}`` slot — v1 and v5 have none (ADR-022). The k is the one the prompt is
+    built with: 6 for the fixed v2–v4 prompts (``_build_pipeline``), ``FEW_SHOT_K`` for grounded
+    prompts (production ``_build_prompt``). Same selection code as the prompt (``few_shot_ids``).
+    Measured 2026-10-02 for v9: ex-001, 002, 015, 019 are evaluated AND shown (ADR-038).
+    """
+    if examples_path.resolve() != _EXAMPLES_PATH.resolve():
+        return []
+    template = load("nl-to-sparql", prompt_version) + (
+        load_user_template("nl-to-sparql", prompt_version) or ""
+    )
+    if "{few_shot_block}" not in template:
+        return []
+    return few_shot_ids(FEW_SHOT_K if _is_grounded(prompt_version) else 6)
+
+
+def _scored(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The items behind the headline: evaluated (gold executed) and not shown in the prompt."""
+    return [r for r in results if r.get("result_match") is not None and not r.get("shown")]
+
+
+def _pct(k: int, n: int) -> str:
+    return f"{k / n:.0%}" if n else "—"
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _headline(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """The three headline numbers of one run over its scored items, with 95% intervals."""
+    scored = _scored(results)
+    n = len(scored)
+    intent = sum(r["intent_match"] is True for r in scored)
+    strict = sum(r["result_match"] is True for r in scored)
+    f1s = [r["f1"] for r in scored]
+    return {
+        "n": n,
+        "intent": intent,
+        "intent_ci": wilson(intent, n),
+        "strict": strict,
+        "strict_ci": wilson(strict, n),
+        "f1": _mean(f1s),
+        "f1_ci": bootstrap_ci(f1s),
+        "precision": _mean([r["precision"] for r in scored]),
+        "recall": _mean([r["recall"] for r in scored]),
+    }
+
+
+def _breakdown_rows(groups: dict[str, list[dict[str, Any]]]) -> list[str]:
+    """Table rows "| group | n | macro F1 | intent | strict |" for grouped scored items."""
+    rows = []
+    for name, items in sorted(groups.items()):
+        n = len(items)
+        intent = sum(r["intent_match"] is True for r in items)
+        strict = sum(r["result_match"] is True for r in items)
+        rows.append(
+            f"| {name} | {n} | {_mean([r['f1'] for r in items]):.2f} | "
+            f"{intent} ({_pct(intent, n)}) | {strict} ({_pct(strict, n)}) |"
+        )
+    return rows
+
+
+def _cause_rows(items: list[dict[str, Any]]) -> list[str]:
+    """Table rows "| cause | n | item ids |", most frequent cause first."""
+    by_cause: dict[str, list[str]] = {}
+    for r in items:
+        by_cause.setdefault(r["cause"] or "?", []).append(r["id"])
+    ordered = sorted(by_cause.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    return [f"| {cause} | {len(ids)} | {', '.join(ids)} |" for cause, ids in ordered] or [
+        "| — | 0 | |"
+    ]
+
+
 def _render_report(
     results: list[dict[str, Any]],
     prompt_version: int,
@@ -748,51 +746,46 @@ def _render_report(
     examples_name: str = "examples.yaml",
     grounded: bool = False,
     entities_db: str = "n/a",
+    shown_ids: list[str] | None = None,
+    extra_provenance: list[tuple[str, str]] | None = None,
 ) -> str:
-    """Render the full Markdown eval report from per-example result records.
+    """Render the Markdown eval report from per-item result records (ADR-038 layout).
 
-    The report has four sections:
-      1. Provenance — git SHA, file hashes, run timestamp.
-      2. Summary — overall accuracy, AST accuracy, cost, broken-gold count.
-      3. Per-shape accuracy — table breaking down pass/fail by query category.
-      4. Per-example results — one subsection per example with SPARQL details.
+    Sections: Provenance · Summary (macro F1 QALD = the headline, then intent and strict, each
+    with a 95% interval, over the SCORED items; one bridge row "strict over all items" = the
+    basis of the pre-ADR-038 reports) · Shown in the prompt (not scored) · Per answer type ·
+    Per query shape · Error analysis by cause · Per-example results.
 
-    EVALABLE vs BROKEN GOLD
-    -------------------------
-    `evalable` is the subset of results where result_match is not None — i.e.
-    examples that completed without a broken gold or other exclusion. Accuracy
-    is computed over this subset only (not over all examples). This way, a
-    broken gold does not make the accuracy look artificially lower.
+    WHY MACRO F1 IS THE HEADLINE (user decision 2026-10-02, after checking the literature)
+    -------------------------------------------------------------------------------------
+    It is the established metric for question answering over knowledge graphs: QALD-9 ranks
+    systems by "Macro F1 QALD" (CEUR-WS Vol-2241 p. 62) and TEXT2SPARQL'25 by the per-question
+    F1 average (CEUR-WS Vol-4094, preface). Intent-based match (Floratou et al. 2024) is a recent
+    proposal for SQL that we adapt; strict is this harness's own baseline.
 
-    STATUS SYMBOLS
-    ---------------
-    PASS : result_match is True
-    FAIL : result_match is False
-    SKIP : result_match is None (broken gold or other exclusion)
+    SCORED vs EXCLUDED
+    ------------------
+    Scored = gold executed (not broken) AND not shown in the prompt (``record["shown"]``, set by
+    _run from ``shown_ids``). Broken-gold items have no score; shown items are scored but listed
+    apart, because the model saw their gold query.
+
+    STATUS SYMBOLS (per-example headers) — the item's pass/fail verdict by the intent rule (F1
+    is a 0–1 score per item, given on the line below):
+    PASS = intent True · FAIL = intent False · SKIP = not scored (broken gold)
     """
-    evalable = [r for r in results if r.get("result_match") is not None]
-    passed = [r for r in evalable if r["result_match"] is True]
+    shown_ids = shown_ids or []
+    evaluated = [r for r in results if r.get("result_match") is not None]
+    scored = _scored(results)
+    shown = [r for r in evaluated if r.get("shown")]
     broken_gold = [r for r in results if r.get("broken_gold")]
-    total = len(evalable)
-    accuracy = len(passed) / total if total else 0.0
-
-    ast_evalable = [r for r in evalable if r.get("ast_match") is not None]
-    ast_passed = [r for r in ast_evalable if r["ast_match"] is True]
-    ast_accuracy = len(ast_passed) / len(ast_evalable) if ast_evalable else 0.0
+    h = _headline(results)
+    strict_all = sum(r["result_match"] is True for r in evaluated)
+    ast_evalable = [r for r in scored if r.get("ast_match") is not None]
+    ast_passed = sum(r["ast_match"] is True for r in ast_evalable)
 
     total_input = sum(r.get("input_tokens", 0) for r in results)
     total_output = sum(r.get("output_tokens", 0) for r in results)
     total_time = sum(r.get("duration_s", 0.0) for r in results)
-
-    # Per-shape breakdown counts only evalable examples.
-    shape_stats: dict[str, dict[str, int]] = {}
-    for r in evalable:
-        s = r["query_shape"]
-        if s not in shape_stats:
-            shape_stats[s] = {"pass": 0, "total": 0}
-        shape_stats[s]["total"] += 1
-        if r["result_match"] is True:
-            shape_stats[s]["pass"] += 1
 
     lines = [
         # "greek": fixed since ADR-033 (Greek only), kept for continuity with earlier reports.
@@ -809,37 +802,119 @@ def _render_report(
         + ("per-question grounding (production `_build_prompt`)" if grounded
            else "fixed, no grounding hints") + " |",
         f"| entities.db sha256[:12] | `{entities_db}` |",
+        "| metrics | macro F1 QALD (headline), intent-based match, strict execution match "
+        "(ADR-038) |",
+        f"| shown in the prompt (not scored) | {', '.join(sorted(shown_ids)) or 'none'} |",
+    ]
+    lines += [f"| {field} | {value} |" for field, value in extra_provenance or []]
+
+    (ilo, ihi), (slo, shi), (flo, fhi) = h["intent_ci"], h["strict_ci"], h["f1_ci"]
+    lines += [
         "",
         "## Summary",
         "",
-        "| Metric | Value |",
-        "|---|---|",
-        f"| Result-set match (primary) | **{len(passed)}/{total} = {accuracy:.0%}** |",
-        f"| AST canonical match (secondary) | {len(ast_passed)}/{len(ast_evalable)} = {ast_accuracy:.0%} |",
-        f"| Broken-gold excluded | {len(broken_gold)} |",
-        f"| Total input tokens | {total_input} |",
-        f"| Total output tokens | {total_output} |",
-        f"| Total wall time (s) | {total_time:.1f} |",
+        f"Scored items: {h['n']}"
+        + (f" ({len(shown)} more are shown in the prompt — not scored, see below)" if shown else "")
+        + ". 95% intervals: Wilson for rates, bootstrap (10,000 resamples) for macro F1.",
+        "",
+        "| Metric | Value | 95% interval |",
+        "|---|---|---|",
+        f"| Macro F1 QALD (headline) — mean per-item F1 (P / R) | **{h['f1']:.2f}** "
+        f"(P {h['precision']:.2f} / R {h['recall']:.2f}) | {flo:.2f}–{fhi:.2f} |",
+        f"| Intent-based match | {h['intent']}/{h['n']} = {_pct(h['intent'], h['n'])} | "
+        f"{ilo:.0%}–{ihi:.0%} |",
+        f"| Strict execution match | {h['strict']}/{h['n']} = {_pct(h['strict'], h['n'])} | "
+        f"{slo:.0%}–{shi:.0%} |",
+        f"| Strict, all items incl. shown (pre-ADR-038 basis) | {strict_all}/{len(evaluated)} = "
+        f"{_pct(strict_all, len(evaluated))} | |",
+        f"| AST canonical match (secondary) | {ast_passed}/{len(ast_evalable)} = "
+        f"{_pct(ast_passed, len(ast_evalable))} | |",
+        f"| Broken-gold excluded | {len(broken_gold)} | |",
+        f"| Total input tokens | {total_input} | |",
+        f"| Total output tokens | {total_output} | |",
+        f"| Total wall time (s) | {total_time:.1f} | |",
+        "",
+        "## Shown in the prompt (not scored)",
+        "",
+    ]
+    if shown:
+        lines += [
+            "Worked examples of the prompt's few-shot block: the model saw their gold query, so "
+            "they do not test it (leakage, ADR-038).",
+            "",
+            "| Item | Intent | Strict | F1 |",
+            "|---|---|---|---|",
+        ]
+        lines += [
+            f"| {r['id']} | {r['intent_match']} | {r['result_match']} | {r['f1']:.2f} |"
+            for r in shown
+        ]
+    else:
+        lines.append("None — no evaluated item is a worked example of this prompt.")
+
+    lines += [
+        "",
+        "## Per answer type",
+        "",
+        "Read from the gold result: count = one row of numbers, zero-or-no = a gold that says "
+        "\"none\" (COUNT 0 / ASK false — answered by 0, ASK false or no rows), list = anything "
+        "else.",
+        "",
+        "| Answer type | n | Macro F1 | Intent | Strict |",
+        "|---|---|---|---|---|",
+    ]
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    by_shape: dict[str, list[dict[str, Any]]] = {}
+    for r in scored:
+        by_kind.setdefault(r["answer_kind"], []).append(r)
+        by_shape.setdefault(r["query_shape"], []).append(r)
+    lines += _breakdown_rows(by_kind)
+    lines += [
         "",
         "## Per-shape accuracy",
         "",
-        "| Query shape | Pass | Total | % |",
-        "|---|---|---|---|",
+        "| Query shape | n | Macro F1 | Intent | Strict |",
+        "|---|---|---|---|---|",
     ]
-    for shape, st in sorted(shape_stats.items()):
-        pct = st["pass"] / st["total"] if st["total"] else 0.0
-        lines.append(f"| {shape} | {st['pass']} | {st['total']} | {pct:.0%} |")
+    lines += _breakdown_rows(by_shape)
+
+    artefacts = [r for r in scored if r["intent_match"] and not r["result_match"]]
+    failures = [r for r in scored if not r["intent_match"]]
+    lines += [
+        "",
+        "## Error analysis by cause",
+        "",
+        "Metric artefacts — strict fails, intent passes (the answer is right, the strict rule "
+        "is not):",
+        "",
+        "| Cause | n | Items |",
+        "|---|---|---|",
+        *_cause_rows(artefacts),
+        "",
+        "Real failures — intent fails:",
+        "",
+        "| Cause | n | Items |",
+        "|---|---|---|",
+        *_cause_rows(failures),
+    ]
+    titled = [r for r in scored if r.get("title_offered") is not None]
+    if titled:
+        offered = [r for r in titled if r["title_offered"]]
+        missed = [r for r in titled if not r["title_offered"]]
+        lines += [
+            "",
+            "Intent passes by whether grounding offered the expected title(s) (S44's split): "
+            f"offered {sum(bool(r['intent_match']) for r in offered)}/{len(offered)} · "
+            f"not offered {sum(bool(r['intent_match']) for r in missed)}/{len(missed)} — "
+            f"not offered: {', '.join(r['id'] for r in missed) or 'none'}.",
+        ]
 
     lines += ["", "## Per-example results", ""]
     for r in results:
-        rm = r.get("result_match")
-        if rm is True:
-            status = "PASS"
-        elif rm is False:
-            status = "FAIL"
-        else:
-            status = "SKIP"
-        lines.append(f"### [{status}] {r['id']} — {r['query_shape']}")
+        im, rm = r.get("intent_match"), r.get("result_match")
+        status = "PASS" if im is True else ("FAIL" if im is False else "SKIP")
+        tag = " · shown in prompt (not scored)" if r.get("shown") else ""
+        lines.append(f"### [{status}] {r['id']} — {r['query_shape']}{tag}")
         lines.append(f"**Q:** {r['question']}")
         if r.get("broken_gold"):
             lines.append(
@@ -848,13 +923,24 @@ def _render_report(
             )
         if r.get("error"):
             lines.append(f"**Error:** `{r['error']}`")
+        f1 = (
+            f"{r['f1']:.2f} (P {r['precision']:.2f} / R {r['recall']:.2f})"
+            if r.get("f1") is not None else "—"
+        )
+        offered = (
+            f" | **Title offered:** {r['title_offered']}"
+            if r.get("title_offered") is not None else ""
+        )
+        lines.append(
+            f"**Intent:** {im} | **Strict:** {rm} | **F1:** {f1} | "
+            f"**Kind:** {r.get('answer_kind') or '—'} | **Cause:** {r.get('cause') or '—'}{offered}"
+        )
         toks = f"tokens: {r.get('input_tokens', 0)}in/{r.get('output_tokens', 0)}out"
         lines.append(
-            f"**Result match:** {rm} | **AST match:** {r.get('ast_match')} | "
-            f"**Time:** {r.get('duration_s', 0):.1f}s | {toks}"
+            f"**AST match:** {r.get('ast_match')} | **Time:** {r.get('duration_s', 0):.1f}s | {toks}"
         )
-        # Show gold SPARQL on failures so the reader can spot the difference.
-        if r.get("gold_sparql") and rm is False:
+        # Show the gold SPARQL whenever a metric failed, so the reader can spot the difference.
+        if r.get("gold_sparql") and (rm is False or im is False):
             gold = r["gold_sparql"].strip()
             lines.append(
                 f"<details><summary>Gold SPARQL</summary>\n\n```sparql\n{gold}\n```\n</details>"
@@ -867,6 +953,125 @@ def _render_report(
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _report_json(results: list[dict[str, Any]], meta: dict[str, Any]) -> dict[str, Any]:
+    """The JSON sidecar of a report: run metadata + every per-item record (all scores).
+
+    It is what scripts/compare_runs.py pairs between two runs — no Markdown parsing needed.
+    """
+    return {"meta": meta, "items": [dict(r) for r in results]}
+
+
+def _render_runs_summary(
+    runs: list[list[dict[str, Any]]], *, title: str, shown_ids: list[str]
+) -> str:
+    """Summary of N runs of the same set (--runs N): spread of each metric and per-item stability.
+
+    LLM output varies between runs even at "deterministic" settings (Atil et al.,
+    arXiv:2408.04667: up to 15% accuracy). Per run: the three numbers (macro F1 first — the
+    headline); across runs: mean ± SD (sample SD) and min–max; per item: its mean F1 and in how
+    many runs it passed (intent / strict) — an item that passes 1/3 is not a stable success.
+    """
+    heads = [_headline(run) for run in runs]
+    lines = [
+        f"# Eval runs summary — {title} | {len(runs)} uncached runs",
+        "",
+        f"Shown in the prompt (not scored): {', '.join(sorted(shown_ids)) or 'none'}. Each run "
+        "has its own report (…-runK.md) and JSON sidecar.",
+        "",
+        "## Per run",
+        "",
+        "| Run | Scored | Macro F1 (headline) | Intent | Strict |",
+        "|---|---|---|---|---|",
+    ]
+    for i, h in enumerate(heads, 1):
+        lines.append(
+            f"| {i} | {h['n']} | {h['f1']:.2f} | {h['intent']}/{h['n']} = "
+            f"{_pct(h['intent'], h['n'])} | {h['strict']}/{h['n']} = {_pct(h['strict'], h['n'])} |"
+        )
+
+    def spread(values: list[float], fmt: str) -> str:
+        sd = statistics.stdev(values) if len(values) > 1 else 0.0
+        return (
+            f"{format(_mean(values), fmt)} ± {format(sd, fmt)} | "
+            f"{format(min(values), fmt)}–{format(max(values), fmt)}"
+        )
+
+    rates = {
+        "Intent-based match": [h["intent"] / h["n"] if h["n"] else 0.0 for h in heads],
+        "Strict execution match": [h["strict"] / h["n"] if h["n"] else 0.0 for h in heads],
+    }
+    lines += ["", "## Spread across runs", "", "| Metric | Mean ± SD | Min–max |", "|---|---|---|"]
+    lines.append(f"| Macro F1 QALD (headline) | {spread([h['f1'] for h in heads], '.2f')} |")
+    lines += [f"| {name} | {spread(values, '.0%')} |" for name, values in rates.items()]
+
+    per_item: dict[str, list[dict[str, Any]]] = {}
+    for run in runs:
+        for r in _scored(run):
+            per_item.setdefault(r["id"], []).append(r)
+    lines += [
+        "",
+        "## Per-item stability (scored items)",
+        "",
+        "| Item | Mean F1 | Intent passes | Strict passes |",
+        "|---|---|---|---|",
+    ]
+    for item_id, records in per_item.items():
+        n = len(records)
+        lines.append(
+            f"| {item_id} | {_mean([r['f1'] for r in records]):.2f} | "
+            f"{sum(bool(r['intent_match']) for r in records)}/{n} | "
+            f"{sum(bool(r['result_match']) for r in records)}/{n} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Reading an existing report (--rescore)
+# ---------------------------------------------------------------------------
+
+_REPORT_HEADER = re.compile(r"^# Eval Report — prompt v(\d+) \| ([^/|]+)/(\S+) \|", re.M)
+_EXAMPLES_ROW = re.compile(r"^\| (\S+\.yaml) sha256\[:12\] \| `([^`]*)` \|", re.M)
+_PROVENANCE_ROW = re.compile(r"^\| ([^|]+?) \| `?([^|`]*)`? \|$", re.M)
+_ITEM_HEADER = re.compile(r"^### \[(?:PASS|FAIL|SKIP)\] (\S+)", re.M)
+
+
+def _parse_report(text: str) -> tuple[dict[str, Any], dict[str, str | None]]:
+    """Read an eval report: (run metadata, item id → generated SPARQL or None).
+
+    Works for every report this harness has written (old and new layouts): the header gives
+    the prompt version and provider/model, the Provenance table the examples file and its
+    hash, and each "### [PASS|FAIL|SKIP] id" block its "Generated SPARQL" details (None when
+    the pipeline failed and no query was recorded). The S49 parsing, made reusable.
+    """
+    head = _REPORT_HEADER.search(text)
+    if head is None:
+        raise ValueError("not an eval report: no '# Eval Report — prompt vN | provider/model' header")
+    examples = _EXAMPLES_ROW.search(text)
+    meta = {
+        "prompt_version": int(head[1]),
+        "provider": head[2].strip(),
+        "model": head[3].strip(),
+        "examples_name": examples[1] if examples else "examples.yaml",
+        "examples_sha": examples[2] if examples else "",
+    }
+    generated: dict[str, str | None] = {}
+    for m in _ITEM_HEADER.finditer(text):
+        block = text[m.end():].split("\n### ", 1)[0]
+        query = None
+        if "Generated SPARQL" in block:
+            part = block.split("Generated SPARQL", 1)[1]
+            if "```sparql\n" in part:
+                query = part.split("```sparql\n", 1)[1].split("```", 1)[0].strip()
+        generated[m[1]] = query
+    return meta, generated
+
+
+def _provenance_rows(text: str) -> dict[str, str]:
+    """The Provenance table of a report as {field: value} (backticks removed)."""
+    section = text.split("## Provenance", 1)[-1].split("\n## ", 1)[0]
+    return {m[1].strip(): m[2].strip() for m in _PROVENANCE_ROW.finditer(section)}
 
 
 # ---------------------------------------------------------------------------
@@ -988,6 +1193,9 @@ def _build_pipeline(prompt_version: int, provider_name: str, model: str) -> Quer
                 system, user = fixed_system, question
             else:
                 system, user = self._build_prompt(question)
+            # Kept for the report's "title offered" check (_title_offered): the grounding
+            # hints this question got are in the user message since ADR-026.
+            self.last_user = user
             sparql, ti, to, retries = self._generate_with_retry(system, user, ontology)
             # Return empty columns/rows — the eval harness executes GraphDB itself.
             return PipelineResult(
@@ -1063,6 +1271,8 @@ def main() -> None:
     completed — if you edited a prompt mid-run, the hash will reflect the
     edited version.
     """
+    # A Windows console may use a legacy code page (cp1253) without "→"/"−" — print UTF-8.
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     args = _build_arg_parser().parse_args()
     _run(args)
 
@@ -1119,6 +1329,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Run only items of this split (eval-titles.yaml, ADR-034); items without a split "
         "(examples.yaml) always run",
     )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Run the set N times (N > 1 needs --no-cache): one report per run + a summary of "
+        "the spread (ADR-038)",
+    )
+    parser.add_argument(
+        "--rescore",
+        type=Path,
+        default=None,
+        metavar="REPORT",
+        help="Score the generated queries of an existing report again (no LLM call); the "
+        "examples file and prompt version are read from the report (ADR-038)",
+    )
     return parser
 
 
@@ -1132,34 +1358,23 @@ def _filter_split(examples: list[dict[str, Any]], split: str | None) -> list[dic
     return [e for e in examples if e.get("split", split) == split]
 
 
-def _run(args: argparse.Namespace) -> None:
-    """Validate the gold file, run every selected example once, write the report."""
-    # --no-cache bypasses the DiskCache, which normally stores LLM responses on
-    # disk keyed by sha256(system + user + model). Bypassing ensures fresh LLM
-    # calls for every example — necessary when you want to measure true model
-    # performance rather than replaying cached responses from a previous run.
-    if args.no_cache:
-        os.environ["LLM_CACHE_DISABLED"] = "1"
+def _load_gold_file(examples_path: Path) -> list[dict[str, Any]]:
+    """Load a gold file and validate it before any token is spent (see ``main``).
 
-    # Load all examples from the gold bank (or the file given with --examples-file).
-    examples_path: Path = args.examples_file
+    Every comparison_mode must be known (a typo would make every comparison fail silently) and
+    every gold query (except NOT_ANSWERABLE comments) must parse — checked on ALL items, not only
+    the selected ones, so a broken skip_eval item is caught too.
+    """
     if not examples_path.exists():
         sys.exit(f"ERROR: examples file not found: {examples_path}")
     raw = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
     all_examples: list[dict[str, Any]] = raw.get("examples", [])
 
-    # Validate comparison_mode values before spending any tokens.
-    # We check all examples (not just the filtered subset) so that a typo in
-    # a skip_eval example is still caught — it would cause a crash if ever run.
     for ex in all_examples:
         mode = ex.get("comparison_mode", "")
         if mode not in _KNOWN_COMPARISON_MODES:
             sys.exit(f"ERROR: example {ex.get('id')} has unknown comparison_mode={mode!r}")
 
-    # Validate gold SPARQL syntax before spending any tokens.
-    # rdflib's offline parser is fast (no network) and catches most mistakes.
-    # NOT_ANSWERABLE examples are skipped — their "gold" is a comment string
-    # (# NOT_ANSWERABLE: ...), not executable SPARQL.
     broken_gold: list[str] = []
     for ex in all_examples:
         if ex.get("comparison_mode") == "not-answerable":
@@ -1172,6 +1387,46 @@ def _run(args: argparse.Namespace) -> None:
             f"ERROR: broken gold SPARQL in {examples_path.name} -- fix before running eval:\n"
             + "\n".join(broken_gold)
         )
+    return all_examples
+
+
+def _write_report(
+    out_path: Path, results: list[dict[str, Any]], meta: dict[str, Any], **render: Any
+) -> None:
+    """Write the Markdown report and its JSON sidecar (same name, .json)."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(_render_report(results, **render), encoding="utf-8")
+    sidecar = out_path.with_suffix(".json")
+    sidecar.write_text(
+        json.dumps(_report_json(results, meta), ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    print(f"\nReport written to: {out_path}\n          sidecar: {sidecar.name}")
+
+
+def _run(args: argparse.Namespace) -> None:
+    """Validate the arguments and the gold file, run every selected example, write the reports."""
+    if args.runs < 1:
+        sys.exit("ERROR: --runs must be at least 1")
+    if args.runs > 1 and not args.no_cache:
+        sys.exit(
+            "ERROR: --runs N > 1 needs --no-cache — the DiskCache would replay the same answers, "
+            "so every run would be identical and the spread zero (ADR-038)."
+        )
+    if args.rescore is not None:
+        if args.runs > 1:
+            sys.exit("ERROR: --rescore re-scores one existing report; it takes no --runs")
+        _rescore_report(args.rescore, args.output)
+        return
+
+    # --no-cache bypasses the DiskCache, which normally stores LLM responses on
+    # disk keyed by sha256(system + user + model). Bypassing ensures fresh LLM
+    # calls for every example — necessary when you want to measure true model
+    # performance rather than replaying cached responses from a previous run.
+    if args.no_cache:
+        os.environ["LLM_CACHE_DISABLED"] = "1"
+
+    examples_path: Path = args.examples_file
+    all_examples = _load_gold_file(examples_path)
 
     # Apply example filters.
     examples = all_examples
@@ -1189,58 +1444,137 @@ def _run(args: argparse.Namespace) -> None:
     if not examples:
         sys.exit(f"ERROR: no examples with split={args.split!r}")
 
-    run_at = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    results: list[dict[str, Any]] = []
-
     sparql_client = SparqlClient(settings.graphdb_endpoint)
     pipeline = _build_pipeline(args.prompt_version, args.provider, args.model)
     grounded = _is_grounded(args.prompt_version)
-
-    print(
-        f"\nRunning eval: prompt=v{args.prompt_version} "
-        f"({'grounded, per question' if grounded else 'fixed'}) provider={args.provider} "
-        f"model={args.model} examples={examples_path.name}"
-    )
-    for ex in examples:
-        print(f"  {ex['id']} ({ex['query_shape']}) ...", end="", flush=True)
-        result = _eval_example(ex, pipeline, sparql_client)
-        results.append(result)
-        rm = result["result_match"]
-        sym = "PASS" if rm is True else ("SKIP" if rm is None else "FAIL")
-        print(f" {sym} ({result['duration_s']:.1f}s)")
-
-    # Gather provenance metadata after all examples complete.
-    # File hashes reflect the content actually used during this run.
+    shown_ids = _shown_ids(args.prompt_version, examples_path)
     prompt_path = _REPO_ROOT / "prompts" / f"nl-to-sparql-v{args.prompt_version}.md"
-    report = _render_report(
-        results,
-        prompt_version=args.prompt_version,
-        provider=args.provider,
-        model=args.model,
-        run_at=run_at,
-        git_sha=_git_sha(),
-        prompt_sha=_file_sha256(prompt_path),
-        examples_sha=_file_sha256(examples_path),
-        examples_name=examples_path.name,
-        grounded=grounded,
-        entities_db=_entities_db_fingerprint(),
-    )
 
+    first_run_at = datetime.now().strftime("%Y-%m-%dT%H:%M")
     if args.output:
-        out_path = Path(args.output)
+        out_base = Path(args.output)
     else:
         # "greek" is fixed (ADR-033) — keeps names in line with the earlier -greek- reports.
-        slug = f"{run_at[:10]}-v{args.prompt_version}-greek-{args.provider}-{args.model}"
+        slug = f"{first_run_at[:10]}-v{args.prompt_version}-greek-{args.provider}-{args.model}"
         if examples_path.resolve() != _EXAMPLES_PATH.resolve():
             slug += f"-{examples_path.stem}"
         if args.split:
             slug += f"-{args.split}"
-        _EVAL_RUNS_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = _EVAL_RUNS_DIR / f"{slug}.md"
+        out_base = _EVAL_RUNS_DIR / f"{slug}.md"
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(report, encoding="utf-8")
-    print(f"\nReport written to: {out_path}")
+    runs: list[list[dict[str, Any]]] = []
+    for run in range(1, args.runs + 1):
+        run_at = datetime.now().strftime("%Y-%m-%dT%H:%M")
+        print(
+            f"\nRunning eval{f' (run {run}/{args.runs})' if args.runs > 1 else ''}: "
+            f"prompt=v{args.prompt_version} "
+            f"({'grounded, per question' if grounded else 'fixed'}) provider={args.provider} "
+            f"model={args.model} examples={examples_path.name}"
+        )
+        results: list[dict[str, Any]] = []
+        for ex in examples:
+            print(f"  {ex['id']} ({ex['query_shape']}) ...", end="", flush=True)
+            result = _eval_example(ex, pipeline, sparql_client)
+            result["shown"] = result["id"] in shown_ids
+            results.append(result)
+            im, rm = result["intent_match"], result["result_match"]
+            sym = "SKIP" if im is None else ("PASS" if im else "FAIL")
+            note = " (shown in prompt)" if result["shown"] else ""
+            print(f" {sym} intent, strict {rm}{note} ({result['duration_s']:.1f}s)")
+        runs.append(results)
+
+        # Provenance is gathered after the run: the hashes reflect the files actually used.
+        out_path = (
+            out_base if args.runs == 1
+            else out_base.with_name(f"{out_base.stem}-run{run}{out_base.suffix}")
+        )
+        git_sha, prompt_sha = _git_sha(), _file_sha256(prompt_path)
+        examples_sha = _file_sha256(examples_path)
+        meta = {
+            "prompt_version": args.prompt_version, "provider": args.provider, "model": args.model,
+            "run_at": run_at, "git_sha": git_sha, "prompt_sha": prompt_sha,
+            "examples_file": examples_path.name, "examples_sha": examples_sha,
+            "split": args.split, "no_cache": args.no_cache, "run": run, "runs": args.runs,
+            "shown_ids": shown_ids,
+        }
+        extra = [("run", f"{run} of {args.runs} (uncached)")] if args.runs > 1 else []
+        _write_report(
+            out_path, results, meta,
+            prompt_version=args.prompt_version, provider=args.provider, model=args.model,
+            run_at=run_at, git_sha=git_sha, prompt_sha=prompt_sha, examples_sha=examples_sha,
+            examples_name=examples_path.name, grounded=grounded,
+            entities_db=_entities_db_fingerprint(), shown_ids=shown_ids,
+            extra_provenance=extra,
+        )
+
+    if args.runs > 1:
+        summary_path = out_base.with_name(f"{out_base.stem}-runs{args.runs}-summary.md")
+        summary_path.write_text(
+            _render_runs_summary(
+                runs, title=f"prompt v{args.prompt_version} | {args.provider}/{args.model} | "
+                f"{examples_path.name}{f' ({args.split})' if args.split else ''}",
+                shown_ids=shown_ids,
+            ),
+            encoding="utf-8",
+        )
+        print(f"Runs summary written to: {summary_path}")
+
+
+def _rescore_report(report_path: Path, output: str | None) -> None:
+    """--rescore: score an existing report's generated queries with today's rules (no LLM).
+
+    The examples file and prompt version come from the report itself; the gold queries are
+    re-executed from TODAY's file (a warning says so if its hash changed since the run). The
+    new report keeps the original run's provenance (git HEAD, prompt hash, entities.db) and
+    adds who scored it and when. Output: <report>-rescored.md (+ .json) unless --output.
+    """
+    text = report_path.read_text(encoding="utf-8")
+    meta, generated = _parse_report(text)
+    original = _provenance_rows(text)
+    examples_path = _REPO_ROOT / "prompts" / meta["examples_name"]
+    all_examples = _load_gold_file(examples_path)
+    examples_sha = _file_sha256(examples_path)
+    if meta["examples_sha"] and meta["examples_sha"] != examples_sha:
+        print(
+            f"WARNING: {meta['examples_name']} changed since the report was written "
+            f"({meta['examples_sha']} → {examples_sha}); today's gold queries are used."
+        )
+    unknown = sorted(set(generated) - {e["id"] for e in all_examples})
+    if unknown:
+        print(f"WARNING: items no longer in {meta['examples_name']} are skipped: {unknown}")
+
+    print(f"\nRe-scoring {report_path.name}: {len(generated)} items, no LLM call")
+    results = _rescore(all_examples, generated, SparqlClient(settings.graphdb_endpoint))
+    shown_ids = _shown_ids(meta["prompt_version"], examples_path)
+    for r in results:
+        r["shown"] = r["id"] in shown_ids
+
+    scored_at = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    run_at = text.splitlines()[0].rsplit("|", 1)[-1].strip()  # header: "… | greek | <run_at>"
+    out_path = Path(output) if output else report_path.with_name(f"{report_path.stem}-rescored.md")
+    prompt_field = f"nl-to-sparql-v{meta['prompt_version']}.md sha256[:12]"
+    scorer_sha = _git_sha()
+    extra = [
+        ("rescored from", f"`{report_path.name}` — its generated queries; no LLM call"),
+        ("scored by", f"git `{scorer_sha}`, {scored_at} (ADR-038 metrics)"),
+        (f"{meta['examples_name']} at the original run", f"`{meta['examples_sha'] or '?'}`"),
+    ]
+    run_meta = {
+        **meta, "run_at": run_at, "git_sha": original.get("git HEAD", "?"),
+        "prompt_sha": original.get(prompt_field, "?"), "examples_file": meta["examples_name"],
+        "examples_sha_now": examples_sha, "rescored_from": report_path.name,
+        "scored_by": scorer_sha, "scored_at": scored_at, "shown_ids": shown_ids,
+    }
+    _write_report(
+        out_path, results, run_meta,
+        prompt_version=meta["prompt_version"], provider=meta["provider"], model=meta["model"],
+        run_at=run_at, git_sha=original.get("git HEAD", "?"),
+        prompt_sha=original.get(prompt_field, "?"), examples_sha=examples_sha,
+        examples_name=meta["examples_name"],
+        grounded="per-question" in original.get("system prompt", ""),
+        entities_db=original.get("entities.db sha256[:12]", "n/a"), shown_ids=shown_ids,
+        extra_provenance=extra,
+    )
 
 
 if __name__ == "__main__":

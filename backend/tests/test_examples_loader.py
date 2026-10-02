@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.prompts.examples_loader import (
     REQUIRED_FIELDS,
+    few_shot_ids,
     load_examples,
     select_few_shot,
 )
@@ -110,6 +113,24 @@ class TestSelectFewShot:
         assert block.count("Question: ") == block.count("### Example ")
         assert "Question (English)" not in block
         assert "Question (Greek)" not in block
+
+
+class TestFewShotIds:
+    """few_shot_ids(k) names the examples select_few_shot(k) shows — the eval leaves them out of
+    its headline numbers (leakage, ADR-038)."""
+
+    @pytest.mark.parametrize("k", [3, 6, 8])
+    def test_ids_are_exactly_the_rendered_examples(self, k: int) -> None:
+        block = select_few_shot(k=k)
+        rendered = [ex["id"] for ex in load_examples() if ex["question_greek"].strip() in block]
+        assert sorted(few_shot_ids(k)) == sorted(rendered)
+        assert len(few_shot_ids(k)) == block.count("### Example ")
+
+    def test_production_k_today(self) -> None:
+        """Measured 2026-10-02 (plan mode): these 8 are in every production prompt."""
+        assert sorted(few_shot_ids(8)) == [
+            "ex-001", "ex-002", "ex-015", "ex-019", "ex-023", "ex-024", "ex-025", "ex-026"
+        ]
 
 
 class TestGreekOnly:

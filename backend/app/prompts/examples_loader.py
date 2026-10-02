@@ -87,6 +87,21 @@ def select_few_shot(k: int = 8, *, include_not_answerable: bool = True) -> str:
 
     The returned string is ready to substitute into {few_shot_block}.
     """
+    return _render_block(_select(k, include_not_answerable))
+
+
+def few_shot_ids(k: int = 8, *, include_not_answerable: bool = True) -> list[str]:
+    """The ids of the examples ``select_few_shot(k)`` shows, in the order it shows them.
+
+    The eval harness leaves these out of its headline numbers when it evaluates this same file:
+    an item the prompt shows as a worked example is not a held-out test of the model (leakage,
+    ADR-038). Same selection code as the prompt, so the two cannot drift apart.
+    """
+    return [ex["id"] for ex in _select(k, include_not_answerable)]
+
+
+def _select(k: int, include_not_answerable: bool) -> list[dict[str, Any]]:
+    """The examples behind ``select_few_shot`` / ``few_shot_ids`` (one per shape, up to k)."""
     examples = load_examples()
 
     # Filter out examples marked as skip for few-shot (extremely high priority)
@@ -103,7 +118,7 @@ def select_few_shot(k: int = 8, *, include_not_answerable: bool = True) -> str:
             seen_shapes[shape] = ex
 
     # Sort selected examples by shape order, then by few_shot_priority.
-    selected = sorted(
+    return sorted(
         seen_shapes.values(),
         key=lambda e: (
             _SHAPE_ORDER.index(e["query_shape"])
@@ -112,8 +127,6 @@ def select_few_shot(k: int = 8, *, include_not_answerable: bool = True) -> str:
             e.get("few_shot_priority", 99),
         ),
     )[:k]
-
-    return _render_block(selected)
 
 
 def _render_block(examples: list[dict[str, Any]]) -> str:
