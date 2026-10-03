@@ -69,6 +69,13 @@ This starts the full stack **plus** a local Ollama service. On first launch,
 `qwen2.5:3b-instruct` (~2 GB) is downloaded automatically. Subsequent starts
 are instant.
 
+**Native (no Docker):** install Ollama for Windows (`winget install Ollama.Ollama`),
+`ollama pull qwen2.5-coder:1.5b`, start the backend as usual and choose `ollama` in
+the UI's model dropdown — installed models are discovered automatically. On a CPU the
+first question takes ~1.5 min (the model reads the whole ~7.6k-token prompt), later
+ones ~25 s while the model stays loaded. `OLLAMA_NUM_CTX` / `OLLAMA_TIMEOUT` /
+`OLLAMA_KEEP_ALIVE` in `.env` tune this (see ADR-039 for the measurements).
+
 > **Quality note:** Small local models produce lower-quality SPARQL for Greek
 > ontology queries compared to Claude/Gemini. Expect ~30–50% more errors.
 > This path is intended for "see it work without a key," not for thesis

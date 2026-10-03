@@ -117,6 +117,9 @@ def get_provider(name: str, model: str) -> LLMProvider:
                 model=model,
                 base_url=settings.ollama_base_url,
                 cache=cache,
+                num_ctx=settings.ollama_num_ctx,
+                timeout=settings.ollama_timeout,
+                keep_alive=settings.ollama_keep_alive,
             )
 
         case _:

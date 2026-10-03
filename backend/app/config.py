@@ -49,6 +49,19 @@ class Settings(BaseSettings):
         In Docker Compose, compose overrides this to http://ollama:11434 so
         the backend container can reach the ollama service by its service name.
         Only used when LLM_PROVIDER=ollama.
+    ollama_num_ctx : int
+        Context window (tokens) requested from Ollama on every call. Without
+        it Ollama uses its 4096-token default and silently drops the start of
+        the ~7.6k-token production prompt (ADR-039). Ollama reserves memory
+        for the whole window up front, so keep it near prompt + max output.
+    ollama_timeout : float
+        Seconds to wait for Ollama. A CPU reads the full prompt before the
+        first token arrives — measured 98 s (1.5B) and 192 s (3B) on the dev
+        laptop — so this is far above the cloud providers' needs.
+    ollama_keep_alive : str
+        How long Ollama keeps the model loaded after a call (Ollama duration,
+        e.g. "30m"). While loaded, the static system prompt stays in its
+        prefix cache, so later questions skip re-reading it (86 s → 3.6 s).
     graphdb_endpoint : str
         Full URL of the GraphDB SPARQL endpoint. The pipeline sends validated
         SPARQL queries here to get results.
@@ -94,6 +107,9 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = Field(default=SecretStr(""), alias="ANTHROPIC_API_KEY")
     gemini_api_key: SecretStr = Field(default=SecretStr(""), alias="GEMINI_API_KEY")
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
+    ollama_num_ctx: int = Field(default=12288, alias="OLLAMA_NUM_CTX")
+    ollama_timeout: float = Field(default=600.0, alias="OLLAMA_TIMEOUT")
+    ollama_keep_alive: str = Field(default="30m", alias="OLLAMA_KEEP_ALIVE")
     graphdb_endpoint: str = Field(
         default="http://lod.csd.auth.gr:7200/repositories/EvdoGraph",
         alias="GRAPHDB_ENDPOINT",

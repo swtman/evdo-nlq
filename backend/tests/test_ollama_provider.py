@@ -168,3 +168,71 @@ def test_provider_satisfies_protocol(tmp_path):
     from app.llm.base import LLMProvider
     provider = _make_provider(tmp_path)
     assert isinstance(provider, LLMProvider)
+
+
+# ---------------------------------------------------------------------------
+# Context window, timeout and keep-alive (ADR-039)
+# ---------------------------------------------------------------------------
+# Without num_ctx Ollama uses its 4096-token default and silently drops the
+# start of the ~7.6k-token production prompt (measured: 2,050 of 7,585 tokens
+# reached the model). These tests pin that every request carries the window,
+# the keep-alive and the configured timeout.
+
+def _make_tuned_provider(tmp_path):
+    from app.llm.ollama_provider import OllamaProvider
+
+    return OllamaProvider(
+        model="qwen2.5-coder:1.5b",
+        base_url="http://localhost:11434",
+        cache=DiskCache(str(tmp_path / "cache")),
+        num_ctx=12288,
+        timeout=600.0,
+        keep_alive="30m",
+    )
+
+
+def _mock_stream_response(lines):
+    resp = MagicMock()
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    resp.iter_lines = MagicMock(return_value=iter(lines))
+    return resp
+
+
+def test_generate_sends_num_ctx_keep_alive_and_timeout(tmp_path):
+    provider = _make_tuned_provider(tmp_path)
+
+    with patch("httpx.post", return_value=_mock_generate_response("SELECT *")) as mock_post:
+        provider.generate("system", "user", max_tokens=512)
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["options"] == {"num_predict": 512, "num_ctx": 12288}
+    assert payload["keep_alive"] == "30m"
+    assert mock_post.call_args.kwargs["timeout"] == 600.0
+
+
+def test_stream_sends_num_ctx_keep_alive_and_timeout(tmp_path):
+    provider = _make_tuned_provider(tmp_path)
+    resp = _mock_stream_response(_mock_stream_lines(["SELECT *"]))
+
+    with patch("httpx.stream", return_value=resp) as mock_stream:
+        list(provider.stream("system", "user", max_tokens=512).tokens)
+
+    payload = mock_stream.call_args.kwargs["json"]
+    assert payload["stream"] is True
+    assert payload["options"] == {"num_predict": 512, "num_ctx": 12288}
+    assert payload["keep_alive"] == "30m"
+    assert mock_stream.call_args.kwargs["timeout"] == 600.0
+
+
+def test_defaults_apply_when_not_given(tmp_path):
+    """A provider built without the new arguments still sends a full-size window."""
+    provider = _make_provider(tmp_path)
+
+    with patch("httpx.post", return_value=_mock_generate_response("SELECT *")) as mock_post:
+        provider.generate("system", "user")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["options"]["num_ctx"] == 12288
+    assert payload["keep_alive"] == "30m"
+    assert mock_post.call_args.kwargs["timeout"] == 600.0

@@ -10,7 +10,7 @@ OLLAMA API USED
 ---------------
 POST /api/generate
   Non-streaming: {"model": ..., "system": ..., "prompt": ..., "stream": false,
-                  "options": {"num_predict": N}}
+                  "options": {"num_predict": N, "num_ctx": C}, "keep_alive": "30m"}
   Streaming:     same but "stream": true; response is ndjson lines.
 
 Each streaming line: {"response": "<token>", "done": false}
@@ -19,13 +19,25 @@ Final line:          {"response": "", "done": true,
 
 Ollama is typically available at http://localhost:11434 (native) or
 http://ollama:11434 (inside Docker Compose, where the service name resolves).
+
+CONTEXT WINDOW, TIMEOUT, KEEP-ALIVE (ADR-039)
+---------------------------------------------
+- ``num_ctx`` is sent on EVERY call. Ollama's default window is 4096 tokens;
+  the production prompt (v9 + few-shot + grounding) is ~7.6k, and Ollama does
+  not fail on overflow — it silently drops the start of the prompt (measured:
+  2,050 of 7,585 tokens reached the model, which then wrote invalid SPARQL).
+- The timeout is long because a CPU reads the whole prompt before the first
+  token is sent (98 s for a 1.5B model, 192 s for 3B, on the dev laptop).
+- ``keep_alive`` keeps the model loaded between questions. The system prompt
+  is identical for every question (ADR-026), so a loaded model reuses it from
+  its prefix cache: the second question read the prompt in 3.6 s, not 86 s.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator
+from typing import Any, Iterator
 
 import httpx
 
@@ -42,7 +54,16 @@ class OllamaProvider:
     The model name must match an installed Ollama model (e.g. "qwen2.5:3b-instruct").
     """
 
-    def __init__(self, model: str, base_url: str, cache: DiskCache) -> None:
+    def __init__(
+        self,
+        model: str,
+        base_url: str,
+        cache: DiskCache,
+        *,
+        num_ctx: int = 12288,
+        timeout: float = 600.0,
+        keep_alive: str = "30m",
+    ) -> None:
         """
         Parameters
         ----------
@@ -52,10 +73,32 @@ class OllamaProvider:
             Ollama server base URL, e.g. "http://localhost:11434".
         cache : DiskCache
             Shared disk cache — same as used by Claude/Gemini providers.
+        num_ctx : int
+            Context window in tokens (settings.ollama_num_ctx). Must fit the
+            whole prompt plus the answer, or Ollama truncates the prompt.
+        timeout : float
+            Seconds to wait for Ollama (settings.ollama_timeout).
+        keep_alive : str
+            How long Ollama keeps the model loaded afterwards
+            (settings.ollama_keep_alive), e.g. "30m".
         """
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._cache = cache
+        self._num_ctx = num_ctx
+        self._timeout = timeout
+        self._keep_alive = keep_alive
+
+    def _payload(self, system: str, user: str, max_tokens: int, *, stream: bool) -> dict[str, Any]:
+        """Build the /api/generate request body shared by generate() and stream()."""
+        return {
+            "model": self._model,
+            "system": system,
+            "prompt": user,
+            "stream": stream,
+            "options": {"num_predict": max_tokens, "num_ctx": self._num_ctx},
+            "keep_alive": self._keep_alive,
+        }
 
     # ------------------------------------------------------------------
     # generate() — non-streaming path
@@ -69,14 +112,8 @@ class OllamaProvider:
 
         response = httpx.post(
             f"{self._base_url}/api/generate",
-            json={
-                "model": self._model,
-                "system": system,
-                "prompt": user,
-                "stream": False,
-                "options": {"num_predict": max_tokens},
-            },
-            timeout=120.0,
+            json=self._payload(system, user, max_tokens, stream=False),
+            timeout=self._timeout,
         )
         response.raise_for_status()
         data = response.json()
@@ -117,14 +154,8 @@ class OllamaProvider:
             with httpx.stream(
                 "POST",
                 f"{self._base_url}/api/generate",
-                json={
-                    "model": self._model,
-                    "system": system,
-                    "prompt": user,
-                    "stream": True,
-                    "options": {"num_predict": max_tokens},
-                },
-                timeout=120.0,
+                json=self._payload(system, user, max_tokens, stream=True),
+                timeout=self._timeout,
             ) as response:
                 for line in response.iter_lines():
                     if not line:

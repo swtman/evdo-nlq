@@ -66,3 +66,18 @@ def test_get_provider_ollama_skips_allowlist_check():
         mock_httpx.Client.return_value = MagicMock()
         provider = get_provider("ollama", "llama3:latest")
         assert provider is not None
+
+
+def test_get_provider_ollama_passes_context_settings(monkeypatch):
+    """The factory hands OLLAMA_NUM_CTX / OLLAMA_TIMEOUT / OLLAMA_KEEP_ALIVE to the provider."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ollama_num_ctx", 8192)
+    monkeypatch.setattr(settings, "ollama_timeout", 300.0)
+    monkeypatch.setattr(settings, "ollama_keep_alive", "10m")
+
+    provider = get_provider("ollama", "qwen2.5-coder:1.5b")
+
+    assert provider._num_ctx == 8192
+    assert provider._timeout == 300.0
+    assert provider._keep_alive == "10m"
